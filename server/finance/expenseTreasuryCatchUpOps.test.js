@@ -10,6 +10,9 @@ import {
   isExpenseUnpostedForVoid,
   listExpensesClearableForReimport,
   listExpensesMissingBankPosting,
+  rebuildTreasuryBalancesFromLedger,
+  resolveTillForExpense,
+  syncImportedExpensesToCashier,
   voidUnpostedImportedExpense,
   EXPENSE_REIMPORT_CONFIRM_PHRASE,
 } from './expenseTreasuryCatchUpOps.js';
@@ -259,5 +262,75 @@ describe.skipIf(!mysqlOk)('expense treasury catch-up (imported refunds)', () => 
     expect(db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = ?`).get(keepId)).toBeTruthy();
     const after = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasuryId).balance);
     expect(after).toBe(before + preview.restoreCashNgn);
+  });
+
+  it('rebuilds a drifted till balance and posts leftover expenses onto Cash vs POS', () => {
+    db.prepare(
+      `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, branch_id, opening_balance_ngn)
+       VALUES ('Yola Cash', 'Cash', 2000000, 'Cash', 'YL-CASH-SYNC', ?, 2000000)`
+    ).run(DEFAULT_BRANCH_ID);
+    db.prepare(
+      `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, branch_id, opening_balance_ngn)
+       VALUES ('Yola POS', 'POS', 3000000, 'Bank', 'YL-POS-SYNC', ?, 3000000)`
+    ).run(DEFAULT_BRANCH_ID);
+    const cashId = Number(db.prepare(`SELECT id FROM treasury_accounts WHERE acc_no = 'YL-CASH-SYNC'`).get()?.id);
+    const posId = Number(db.prepare(`SELECT id FROM treasury_accounts WHERE acc_no = 'YL-POS-SYNC'`).get()?.id);
+
+    const memo = commitExpenseBulkImport(
+      db,
+      ACTOR,
+      [
+        {
+          date: '2026-09-05',
+          amountNgn: 25_000,
+          category: 'Refund',
+          reference: 'SYNC-CASH-1',
+          description: 'Cash refund',
+          paymentMethod: 'Yola Cash',
+          include: true,
+        },
+        {
+          date: '2026-09-07',
+          amountNgn: 40_000,
+          category: 'Refund',
+          reference: 'SYNC-POS-1',
+          description: 'POS refund',
+          paymentMethod: 'Yola POS',
+          include: true,
+        },
+      ],
+      DEFAULT_BRANCH_ID,
+      { requireTreasury: false }
+    );
+    expect(memo.ok, JSON.stringify(memo)).toBe(true);
+
+    const cashBefore = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cashId).balance);
+    const posBefore = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(posId).balance);
+
+    const cashExp = db.prepare(`SELECT * FROM expenses WHERE reference = 'SYNC-CASH-1'`).get();
+    const posExp = db.prepare(`SELECT * FROM expenses WHERE reference = 'SYNC-POS-1'`).get();
+    expect(resolveTillForExpense(db, cashExp, treasuryId)).toBe(cashId);
+    expect(resolveTillForExpense(db, posExp, treasuryId)).toBe(posId);
+
+    const synced = syncImportedExpensesToCashier(db, ACTOR, {
+      workspaceBranchId: DEFAULT_BRANCH_ID,
+      category: 'Refund',
+    });
+    expect(synced.ok, JSON.stringify(synced)).toBe(true);
+    expect(synced.postedCount).toBeGreaterThanOrEqual(2);
+
+    expect(Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cashId).balance)).toBe(
+      cashBefore - 25_000
+    );
+    expect(Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(posId).balance)).toBe(
+      posBefore - 40_000
+    );
+
+    db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(cashBefore, cashId);
+    const rebuilt = rebuildTreasuryBalancesFromLedger(db, DEFAULT_BRANCH_ID);
+    expect(rebuilt.ok).toBe(true);
+    expect(Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cashId).balance)).toBe(
+      cashBefore - 25_000
+    );
   });
 });

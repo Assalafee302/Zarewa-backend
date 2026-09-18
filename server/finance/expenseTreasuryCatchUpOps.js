@@ -8,13 +8,17 @@
 import { appendAuditLog, assertPeriodOpen } from '../controlOps.js';
 import { assertEntityBranchForWorkspaceWrite, assertTreasuryAccountForWorkspace } from '../branchScope.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
-import { roundMoney, tableExists } from '../ap2ReceivedBasisOps.js';
+import { hasColumn, roundMoney, tableExists } from '../ap2ReceivedBasisOps.js';
 import { resolveListLimit, sqlLimitOffsetClause } from '../listQueryOpts.js';
 import { branchWhere } from '../readModel.js';
 import { tryPostExpensePaymentGlTx } from '../accountingPostingOps.js';
 import { syncFixedAssetFromCapexExpense } from '../fixedAssetAutomationOps.js';
 import { insertTreasuryMovementTx } from '../writeOps.js';
-import { resolveDefaultBranchTreasuryAccount, resolveTreasuryAccountId } from '../expenseBulkImport.js';
+import {
+  listBranchTreasuryAccountsForImport,
+  resolveDefaultBranchTreasuryAccount,
+  resolveTreasuryAccountId,
+} from '../expenseBulkImport.js';
 
 const MAX_BULK = 500;
 
@@ -198,6 +202,175 @@ export function summarizeBranchExpenseCashPosting(db, branchId, opts = {}) {
       count: Number(row.n) || 0,
       amountNgn: roundMoney(row.amt),
     })),
+  };
+}
+
+/**
+ * Cash vs POS from the expense payment column — so refunds do not all land on one default till.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ payment_method?: string, reference?: string, branch_id?: string }} exp
+ * @param {number} [fallbackAccountId]
+ */
+export function resolveTillForExpense(db, exp, fallbackAccountId = 0) {
+  const bid = String(exp?.branch_id || '').trim();
+  const paymentMethod = String(exp?.payment_method || '').trim();
+  if (paymentMethod) {
+    const exact = resolveTreasuryAccountId(db, paymentMethod, bid);
+    if (exact.id) return Number(exact.id);
+  }
+  const accounts = listBranchTreasuryAccountsForImport(db, bid);
+  if (/pos/i.test(paymentMethod)) {
+    const pos = accounts.find((a) => /pos/i.test(String(a.name || '')));
+    if (pos) return Number(pos.id);
+  }
+  if (/cash/i.test(paymentMethod)) {
+    const namedCash = accounts.find((a) => /^cash$/i.test(String(a.name || '').trim()));
+    if (namedCash) return Number(namedCash.id);
+    const cashType = accounts.find((a) => String(a.type || '').trim().toLowerCase() === 'cash');
+    if (cashType) return Number(cashType.id);
+  }
+  const fallback = Number(fallbackAccountId) || 0;
+  if (fallback) return fallback;
+  return Number(resolveDefaultBranchTreasuryAccount(db, bid).id) || 0;
+}
+
+/**
+ * Set live till/bank balances to opening + every cash-book line (fixes drift when a movement
+ * existed but `treasury_accounts.balance` was not updated).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} branchId
+ */
+export function rebuildTreasuryBalancesFromLedger(db, branchId) {
+  const bid = String(branchId || '').trim();
+  if (!bid) return { ok: false, error: 'Select a workspace branch first.' };
+  const hasOpening = hasColumn(db, 'treasury_accounts', 'opening_balance_ngn');
+  const openingSql = hasOpening ? 'opening_balance_ngn' : '0';
+  const accounts = db
+    .prepare(
+      `SELECT id, name, type, balance, ${openingSql} AS opening_balance_ngn, branch_id
+       FROM treasury_accounts
+       WHERE TRIM(COALESCE(branch_id, '')) = ?
+          OR (TRIM(COALESCE(branch_id, '')) = '' AND ? = ?)
+       ORDER BY id`
+    )
+    .all(bid, bid, DEFAULT_BRANCH_ID);
+  const sumStmt = db.prepare(
+    `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE treasury_account_id = ?`
+  );
+  const upd = db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`);
+  const rebuilt = [];
+  for (const acc of accounts) {
+    const id = Number(acc.id);
+    const opening = roundMoney(acc.opening_balance_ngn);
+    const movementSum = roundMoney(sumStmt.get(id)?.s);
+    const next = roundMoney(opening + movementSum);
+    const prev = roundMoney(acc.balance);
+    if (next !== prev) upd.run(next, id);
+    rebuilt.push({
+      treasuryAccountId: id,
+      accountName: acc.name || `#${id}`,
+      accountType: acc.type || '',
+      previousBalanceNgn: prev,
+      nextBalanceNgn: next,
+      deltaNgn: roundMoney(next - prev),
+    });
+  }
+  return { ok: true, branchId: bid, accounts: rebuilt };
+}
+
+/**
+ * Post every expense still missing a till line onto Cash/POS from its payment method, then
+ * rebuild live balances so Cashier desk matches the cash book.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {object|null} actor
+ * @param {{ workspaceBranchId?: string, workspaceViewAll?: boolean, treasuryAccountId?: number, category?: string }} payload
+ */
+export function syncImportedExpensesToCashier(db, actor, payload = {}) {
+  const bid = String(payload.workspaceBranchId || '').trim();
+  if (!bid) return { ok: false, error: 'Select a workspace branch first.' };
+  if (payload.workspaceViewAll) {
+    return { ok: false, error: 'Turn off all-branches view. Update one branch at a time.' };
+  }
+
+  const category = String(payload.category || '').trim();
+  const fallbackId =
+    Number(payload.treasuryAccountId) || Number(resolveDefaultBranchTreasuryAccount(db, bid).id) || 0;
+  const catSql = category ? ` AND TRIM(e.category) = ?` : '';
+  const catArgs = category ? [category] : [];
+  const missing = db
+    .prepare(
+      `SELECT e.*
+       FROM expenses e
+       LEFT JOIN treasury_movements tm
+         ON tm.source_kind = 'EXPENSE' AND tm.source_id = e.expense_id
+        AND tm.amount_ngn < 0
+        AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+       WHERE TRIM(COALESCE(e.branch_id, '')) = ?${catSql}
+         AND tm.id IS NULL
+       ORDER BY e.date ASC, e.expense_id ASC
+       LIMIT ${MAX_BULK}`
+    )
+    .all(bid, ...catArgs);
+
+  const posted = [];
+  const failed = [];
+  for (const exp of missing) {
+    const tillId = resolveTillForExpense(db, exp, fallbackId);
+    if (!tillId) {
+      failed.push({
+        expenseID: exp.expense_id,
+        error: 'Pick the Cash or POS account this refund was paid from.',
+      });
+      continue;
+    }
+    const r = attachTreasuryToImportedExpense(
+      db,
+      exp.expense_id,
+      {
+        treasuryAccountId: tillId,
+        workspaceBranchId: bid,
+        workspaceViewAll: false,
+      },
+      actor
+    );
+    if (r.ok) posted.push(r);
+    else failed.push({ expenseID: exp.expense_id, error: r.error || 'Could not deduct.' });
+  }
+
+  const rebuilt = rebuildTreasuryBalancesFromLedger(db, bid);
+  if (!rebuilt.ok) return rebuilt;
+  const changed = (rebuilt.accounts || []).filter((a) => a.deltaNgn !== 0);
+  const newlyPosted = posted.filter((p) => !p.alreadyOnTreasury);
+  const summary = summarizeBranchExpenseCashPosting(db, bid, { category });
+
+  const bits = [];
+  if (newlyPosted.length) {
+    bits.push(`Deducted ${newlyPosted.length} expense(s) from Cash/POS`);
+  } else if (!missing.length) {
+    bits.push('Every expense on this branch already has a till line');
+  }
+  if (changed.length) {
+    bits.push(
+      `corrected ${changed.length} live balance(s): ${changed
+        .map((a) => `${a.accountName} ₦${a.previousBalanceNgn.toLocaleString('en-NG')} → ₦${a.nextBalanceNgn.toLocaleString('en-NG')}`)
+        .join('; ')}`
+    );
+  } else {
+    bits.push('live till balances already match the cash book');
+  }
+  if (failed.length) bits.push(`${failed.length} row(s) could not post`);
+
+  return {
+    ok: failed.length === 0 || newlyPosted.length > 0 || changed.length > 0,
+    postedCount: newlyPosted.length,
+    failedCount: failed.length,
+    posted,
+    failed,
+    rebuiltAccounts: rebuilt.accounts,
+    balanceChangedCount: changed.length,
+    summary,
+    message: `${bits.join('. ')}.`,
   };
 }
 

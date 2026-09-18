@@ -200,7 +200,7 @@ import {
   assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { parseListQuery, sendPaginatedList } from './listPagination.js';
-import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
+import { financeHistoryListOpts, productionHistoryListOpts, treasuryHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
 import { humanizeValidationMessage } from './validationLabels.js';
 import { permissionGuidanceMessage } from './permissionMessages.js';
@@ -4913,7 +4913,7 @@ export function registerHttpApi(app, db) {
       const raw = listSalesReceipts(db, branchScope);
       const ledger = listLedgerEntries(db, branchScope);
       const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
-      const tm = listTreasuryMovements(db, branchScope, financeHistoryListOpts());
+      const tm = listTreasuryMovements(db, branchScope, treasuryHistoryListOpts());
       const rows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate);
       res.json({ ok: true, startDate, endDate, branchScope, rows });
     } catch (e) {
@@ -4982,7 +4982,7 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const expenses = listExpenses(db, branchScope, financeHistoryListOpts());
-      const treasuryMovements = listTreasuryMovements(db, branchScope, financeHistoryListOpts());
+      const treasuryMovements = listTreasuryMovements(db, branchScope, treasuryHistoryListOpts());
       const { detail, summaryByCategory } = expensesPackReport(expenses, startDate, endDate, treasuryMovements);
       res.json({ ok: true, startDate, endDate, branchScope, detail, summaryByCategory });
     } catch (e) {
@@ -5014,7 +5014,7 @@ export function registerHttpApi(app, db) {
         purchaseOrders: listPurchaseOrders(db, branchScope),
         coilLots: listCoilLots(db, branchScope),
         stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
-        treasuryMovements: listTreasuryMovements(db, branchScope, financeHistoryListOpts()),
+        treasuryMovements: listTreasuryMovements(db, branchScope, treasuryHistoryListOpts()),
         products: listProducts(db, branchScope),
         masterData: listMasterData(db),
         startDate,
@@ -5039,7 +5039,7 @@ export function registerHttpApi(app, db) {
         return res.json({ ok: true, cut: 'ordered', startDate, endDate, branchScope, rows });
       }
       if (cut === 'paid') {
-        const tm = listTreasuryMovements(db, branchScope, financeHistoryListOpts());
+        const tm = listTreasuryMovements(db, branchScope, treasuryHistoryListOpts());
         const rows = purchasesPaidRows(tm, startDate, endDate);
         return res.json({ ok: true, cut: 'paid', startDate, endDate, branchScope, rows });
       }

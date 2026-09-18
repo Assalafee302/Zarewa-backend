@@ -246,7 +246,8 @@ const OPERATIONAL_TOPICS = [
     steps: [
       'Sign in as Finance or Administrator.',
       'Open **Post imported expenses to cash** (`/expense-cash-catchup`) — or type that in workspace search.',
-      'Pick the branch (e.g. Yola), category Refund, and the till those refunds were paid from, then **Post to statement and reduce balance**.',
+      'Click **Update cashier balances now**. That deducts any missing refund from Cash or POS and sets the live till number to match the cash book.',
+      'Open Cashier desk, pick **Cash** or **POS**, and set the statement from **01/09/2026**.',
     ],
     links: [{ label: 'Post imported expenses to cash', to: '/expense-cash-catchup' }],
     extraKeywords: ['import expenses', 'statement', 'balance', 'refund upload', 'cashier book'],

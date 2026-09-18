@@ -13,7 +13,11 @@ import { listTreasuryAccounts } from '../readModel.js';
 import { resolveDefaultBranchTreasuryAccount } from '../expenseBulkImport.js';
 import {
   attachTreasuryToImportedExpenses,
+  deleteDuplicateImportedExpenses,
+  listDuplicateImportedExpenseGroups,
   listExpensesMissingBankPosting,
+  summarizeBranchExpenseCashPosting,
+  syncImportedExpensesToCashier,
 } from '../finance/expenseTreasuryCatchUpOps.js';
 import { handleCashierStatementGet } from './cashierStatementPage.js';
 import { handleExpenseDuplicatesGet, handleExpenseDuplicatesPost } from './expenseDuplicatesPage.js';
@@ -88,6 +92,20 @@ export function renderExpenseCashCatchupPage(model = {}) {
   const who = esc(user?.displayName || user?.username || '');
   const totalMissing = missing.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0);
   const shown = missing.slice(0, PREVIEW_ROWS);
+  const cashPosting = model.cashPosting && model.cashPosting.ok ? model.cashPosting : null;
+  const dup = model.duplicatePreview && model.duplicatePreview.ok ? model.duplicatePreview : null;
+  const liveBalanceRows = accounts
+    .map(
+      (a) =>
+        `<tr><td>${esc(a.name || `#${a.id}`)}</td><td>${esc(a.type || '')}</td><td class="num">₦${esc(formatNgn(a.balance))}</td></tr>`
+    )
+    .join('');
+  const postedTillRows = (cashPosting?.postedAccounts || [])
+    .map(
+      (a) =>
+        `<tr><td>${esc(a.accountName)}</td><td class="num">${esc(a.expenseCount)}</td><td class="num">₦${esc(formatNgn(a.amountNgn))}</td></tr>`
+    )
+    .join('');
   const extra = Math.max(0, missing.length - shown.length);
 
   const branchOptions = branches
@@ -128,7 +146,7 @@ export function renderExpenseCashCatchupPage(model = {}) {
       <p><a href="/">Back to Zarewa</a></p>`;
   } else {
     body = `
-      <p class="lead">Signed in as ${who}. Uploaded expenses sit on the expense list until they are posted to a till. Posting reduces that till’s <strong>balance</strong> and adds lines on its <strong>statement</strong>.</p>
+      <p class="lead">Signed in as ${who}. This page deducts imported refunds from <strong>Cash</strong> and <strong>POS</strong> so Cashier desk balances match the expense list. Do not bulk-upload again.</p>
       ${model.error ? `<p class="err">${esc(model.error)}</p>` : ''}
       ${model.notice ? `<p class="ok">${esc(model.notice)}</p>` : ''}
       <form method="get" action="${EXPENSE_CASH_CATCHUP_PATH}" class="card">
@@ -141,15 +159,62 @@ export function renderExpenseCashCatchupPage(model = {}) {
             <option value=""${category === '' ? ' selected' : ''}>All categories</option>
           </select>
         </label>
-        <button type="submit" class="secondary">Show unposted</button>
+        <button type="submit" class="secondary">Refresh</button>
       </form>
       <div class="card">
-        <h2>${missing.length} unposted expense${missing.length === 1 ? '' : 's'} — ₦${esc(formatNgn(totalMissing))}</h2>
+        <h2>Live cashier balances now</h2>
+        ${
+          liveBalanceRows
+            ? `<table><thead><tr><th>Account</th><th>Type</th><th>Balance</th></tr></thead><tbody>${liveBalanceRows}</tbody></table>`
+            : `<p>No till or bank on this branch.</p>`
+        }
+        ${
+          cashPosting
+            ? `<p class="hint">${cashPosting.expenseCount} ${esc(category || 'expense')} row(s) · ₦${esc(formatNgn(cashPosting.expenseAmountNgn))} on the expense list. ${cashPosting.unpostedCount} still missing a till line (₦${esc(formatNgn(cashPosting.unpostedAmountNgn))}).</p>`
+            : ''
+        }
+        ${
+          postedTillRows
+            ? `<h2>Already deducted</h2>
+        <table><thead><tr><th>Till</th><th>Rows</th><th>Amount</th></tr></thead><tbody>${postedTillRows}</tbody></table>`
+            : `<p class="hint">No refunds have a cash-book line yet.</p>`
+        }
+        <form method="post" action="${EXPENSE_CASH_CATCHUP_PATH}">
+          <input type="hidden" name="csrf" value="${esc(model.csrf || '')}" />
+          <input type="hidden" name="branchId" value="${esc(selectedBranch)}" />
+          <input type="hidden" name="category" value="${esc(category)}" />
+          <input type="hidden" name="treasuryAccountId" value="${esc(selectedTill)}" />
+          <input type="hidden" name="action" value="sync-cashier" />
+          <div class="row">
+            <button type="submit">Update cashier balances now</button>
+          </div>
+          <p class="hint">Posts any missing refund onto Cash or POS (from the payment column) and sets each till’s live balance to match its cash book. Then open Cashier desk, pick Cash or POS, and set the statement from <strong>01/09/2026</strong>.</p>
+        </form>
+      </div>
+      ${
+        dup && dup.extraCount
+          ? `<div class="card">
+        <h2>${dup.extraCount} extra copy(ies) were deducted more than once — ₦${esc(formatNgn(dup.restoreCashNgn))} too much</h2>
+        <p>Keep one row per refund. Removing extras puts that money back on Cash/POS so the balance is not double-counted.</p>
+        <form method="post" action="${EXPENSE_CASH_CATCHUP_PATH}">
+          <input type="hidden" name="csrf" value="${esc(model.csrf || '')}" />
+          <input type="hidden" name="branchId" value="${esc(selectedBranch)}" />
+          <input type="hidden" name="category" value="${esc(category)}" />
+          <input type="hidden" name="action" value="delete-duplicates" />
+          <div class="row">
+            <button type="submit" class="secondary">Remove extra copies and put money back</button>
+          </div>
+        </form>
+      </div>`
+          : ''
+      }
+      <div class="card">
+        <h2>${missing.length} still missing a till line — ₦${esc(formatNgn(totalMissing))}</h2>
         ${
           missing.length
             ? `<table><thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Reference</th></tr></thead><tbody>${tableRows}</tbody></table>
-               ${extra ? `<p class="hint">Showing ${shown.length} of ${missing.length}. Posting will include up to ${POST_LIMIT} rows.</p>` : ''}`
-            : `<p>Nothing on this branch is missing a cash line${category ? ` for category “${esc(category)}”` : ''}. Either they already hit the till, or you are on the wrong branch.</p>`
+               ${extra ? `<p class="hint">Showing ${shown.length} of ${missing.length}. Update cashier balances will include up to ${POST_LIMIT} rows.</p>` : ''}`
+            : `<p>Every ${esc(category || 'expense')} on this branch already has a cash-book line. Press <strong>Update cashier balances now</strong> if the live number above still looks wrong.</p>`
         }
       </div>
       ${
@@ -158,17 +223,17 @@ export function renderExpenseCashCatchupPage(model = {}) {
         <input type="hidden" name="csrf" value="${esc(model.csrf || '')}" />
         <input type="hidden" name="branchId" value="${esc(selectedBranch)}" />
         <input type="hidden" name="category" value="${esc(category)}" />
-        <label>Cashier / bank account to deduct
+        <input type="hidden" name="action" value="attach-one-till" />
+        <label>Force all missing rows onto one account
           <select name="treasuryAccountId" required>${accountOptions || '<option value="">No till on this branch</option>'}</select>
         </label>
         <div class="row">
-          <button type="submit"${accounts.length ? '' : ' disabled'}>Post to statement and reduce balance</button>
+          <button type="submit" class="secondary"${accounts.length ? '' : ' disabled'}>Post missing to this account only</button>
         </div>
-        <p class="hint">Open Cashier desk on this same account after posting. Older dates sit below newer lines — filter by date if the first page looks unchanged.</p>
       </form>`
           : ''
       }
-      <p><a href="/expense-cash-catchup?view=statement">Full cashier statement (including before 12 Sep)</a> · <a href="/expense-cash-catchup?view=duplicates">Delete duplicate expenses</a> · <a href="/">Back to Zarewa</a></p>`;
+      <p><a href="/expense-cash-catchup?view=statement">Print full Cash/POS statement (1–18 Sep)</a> · <a href="/">Back to Zarewa</a></p>`;
   }
 
   return `<!DOCTYPE html>
@@ -176,7 +241,7 @@ export function renderExpenseCashCatchupPage(model = {}) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Post imported expenses to cash — Zarewa</title>
+  <title>Update cashier balances — Zarewa</title>
   <style>
     body { font-family: Georgia, "Times New Roman", serif; margin: 0; background: #f4f1ea; color: #1c1917; }
     main { max-width: 40rem; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
@@ -200,7 +265,7 @@ export function renderExpenseCashCatchupPage(model = {}) {
 </head>
 <body>
   <main>
-    <h1>Post imported expenses to cash</h1>
+    <h1>Update cashier balances</h1>
     ${body}
   </main>
 </body>
@@ -224,6 +289,10 @@ function pageModel(db, req, extra = {}) {
         limit: POST_LIMIT,
       })
     : [];
+  const cashPosting = selectedBranchId
+    ? summarizeBranchExpenseCashPosting(db, selectedBranchId, { category })
+    : null;
+  const duplicatePreview = selectedBranchId ? listDuplicateImportedExpenseGroups(db, selectedBranchId) : null;
   return {
     user: req.user || null,
     csrf: req.csrfToken || '',
@@ -235,6 +304,8 @@ function pageModel(db, req, extra = {}) {
     selectedTreasuryAccountId:
       extra.selectedTreasuryAccountId || req.body?.treasuryAccountId || fallbackTill.id || accounts[0]?.id || '',
     rows,
+    cashPosting,
+    duplicatePreview,
     notice: extra.notice || String(req.query?.notice || ''),
     error: extra.error || String(req.query?.error || ''),
   };
@@ -280,10 +351,41 @@ function handleExpenseCashCatchupPost(db, req, res) {
 
   const bid = String(body.branchId || '').trim();
   const category = String(body.category || '').trim();
-  const treasuryAccountId = Number(body.treasuryAccountId);
+  const action = String(body.action || '').trim();
   if (!bid) {
     return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: 'Pick a branch.' }), 400);
   }
+
+  const redirectOk = (notice) => {
+    const qs = new URLSearchParams({ notice, branchId: bid, category });
+    return res.redirect(303, `${EXPENSE_CASH_CATCHUP_PATH}?${qs.toString()}`);
+  };
+
+  if (action === 'sync-cashier') {
+    const r = syncImportedExpensesToCashier(db, req.user, {
+      workspaceBranchId: bid,
+      workspaceViewAll: false,
+      treasuryAccountId: Number(body.treasuryAccountId) || undefined,
+      category,
+    });
+    if (!r.ok) {
+      return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: r.error || r.message || 'Could not update balances.' }), 400);
+    }
+    return redirectOk(r.message || 'Cashier balances updated.');
+  }
+
+  if (action === 'delete-duplicates') {
+    const r = deleteDuplicateImportedExpenses(db, req.user, {
+      workspaceBranchId: bid,
+      workspaceViewAll: false,
+    });
+    if (!r.ok) {
+      return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: r.error || 'Could not remove extras.' }), 400);
+    }
+    return redirectOk(r.message || `Removed ${r.deletedCount} extra copy(ies).`);
+  }
+
+  const treasuryAccountId = Number(body.treasuryAccountId);
   if (!treasuryAccountId) {
     return sendPage(
       res,
@@ -325,13 +427,7 @@ function handleExpenseCashCatchupPost(db, req, res) {
   if (!r.ok) {
     return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: r.error || 'Could not post.' }), 400);
   }
-  const notice = r.message || `Posted ${r.postedCount} expense(s) to the cashier book.`;
-  const qs = new URLSearchParams({
-    notice,
-    branchId: bid,
-    category,
-  });
-  return res.redirect(303, `${EXPENSE_CASH_CATCHUP_PATH}?${qs.toString()}`);
+  return redirectOk(r.message || `Posted ${r.postedCount} expense(s) to the cashier book.`);
 }
 
 function mountCatchupRoutes(app, db, path) {

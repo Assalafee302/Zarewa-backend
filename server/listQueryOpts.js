@@ -78,6 +78,38 @@ export function productionHistoryListOpts() {
 export const DEFAULT_FINANCE_HISTORY_LIMIT = DEFAULT_DESK_PAGE_SIZE;
 
 /**
+ * Cashier/finance till lines. The 150-row desk page hides 1–11 Sep imports and floors
+ * the POS date picker at the first visible line. 62 days + 8k cap covers catch-up months.
+ * Override with `ZAREWA_TREASURY_HISTORY_LIMIT` (`0` = that window, uncapped).
+ */
+export const DEFAULT_TREASURY_HISTORY_LIMIT = 8000;
+export const DEFAULT_TREASURY_HISTORY_DAYS = 62;
+
+export function treasuryHistoryFromIso(now = new Date()) {
+  const d = new Date(now);
+  d.setUTCDate(d.getUTCDate() - DEFAULT_TREASURY_HISTORY_DAYS);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * List opts for cashier/finance treasury movements (date window + high cap).
+ * @returns {{ unlimited?: true, limit?: number, fromISO: string }}
+ */
+export function treasuryHistoryListOpts() {
+  const fromISO = treasuryHistoryFromIso();
+  const raw = process.env.ZAREWA_TREASURY_HISTORY_LIMIT;
+  if (raw == null || String(raw).trim() === '') {
+    return { limit: DEFAULT_TREASURY_HISTORY_LIMIT, fromISO };
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return { unlimited: true, fromISO };
+  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))), fromISO };
+}
+
+/**
  * List opts for Finance desk expenses / payment requests / treasury movements.
  * Set `ZAREWA_FINANCE_HISTORY_LIMIT=0` for unlimited.
  * @returns {{ unlimited: true } | { limit: number }}

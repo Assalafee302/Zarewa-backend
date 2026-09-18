@@ -14,6 +14,9 @@ import {
   coilDeskListOpts,
   buildBackgroundHydrateMeta,
   deskPageListOpts,
+  treasuryHistoryListOpts,
+  treasuryHistoryFromIso,
+  DEFAULT_TREASURY_HISTORY_LIMIT,
 } from './listQueryOpts.js';
 
 describe('listQueryOpts', () => {
@@ -27,6 +30,7 @@ describe('listQueryOpts', () => {
     delete process.env.ZAREWA_COIL_DESK_LIMIT;
     delete process.env.ZAREWA_DESK_PAGE_SIZE;
     delete process.env.ZAREWA_DEFAULT_LIST_LIMIT;
+    delete process.env.ZAREWA_TREASURY_HISTORY_LIMIT;
   });
 
   it('resolveListLimit returns DEFAULT_LIST_LIMIT when opts omitted', () => {
@@ -82,6 +86,15 @@ describe('listQueryOpts', () => {
     expect(productionHistoryListOpts()).toEqual({ limit: 2500 });
     process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT = '0';
     expect(productionHistoryListOpts()).toEqual({ unlimited: true });
+  });
+
+  it('treasuryHistoryListOpts keeps a 62-day window and a high cap for cashier statements', () => {
+    const opts = treasuryHistoryListOpts();
+    expect(opts.limit).toBe(DEFAULT_TREASURY_HISTORY_LIMIT);
+    expect(opts.fromISO).toBe(treasuryHistoryFromIso());
+    expect(opts.fromISO).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    process.env.ZAREWA_TREASURY_HISTORY_LIMIT = '0';
+    expect(treasuryHistoryListOpts()).toEqual({ unlimited: true, fromISO: treasuryHistoryFromIso() });
   });
 
   it('financeHistoryListOpts honors ZAREWA_FINANCE_HISTORY_LIMIT', () => {

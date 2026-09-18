@@ -3181,15 +3181,19 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
     branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')
       ? { sql: '', args: [] }
       : { sql: ` AND ta.branch_id = ?`, args: [branchScope] };
+  const fromISO = String(opts.fromISO || '').trim().slice(0, 10);
+  const fromSql = /^\d{4}-\d{2}-\d{2}$/.test(fromISO)
+    ? { sql: ` AND SUBSTR(tm.posted_at_iso, 1, 10) >= ?`, args: [fromISO] }
+    : { sql: '', args: [] };
   const sql = `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.acc_no AS account_no,
             ta.bank_name AS bank_name
        FROM treasury_movements tm
        LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
-       WHERE 1=1${scopeSql.sql}
+       WHERE 1=1${scopeSql.sql}${fromSql.sql}
        ORDER BY tm.posted_at_iso DESC, tm.id DESC${lo.sql}`;
   return db
     .prepare(sql)
-    .all(...scopeSql.args, ...lo.args)
+    .all(...scopeSql.args, ...fromSql.args, ...lo.args)
     .map((row) => ({
       id: row.id,
       postedAtISO: row.posted_at_iso,

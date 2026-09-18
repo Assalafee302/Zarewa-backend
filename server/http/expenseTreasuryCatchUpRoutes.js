@@ -12,6 +12,7 @@ import {
   clearExpensesForReimport,
   listExpensesClearableForReimport,
   listExpensesMissingBankPosting,
+  syncImportedExpensesToCashier,
   voidAllUnpostedImportedExpenses,
   voidUnpostedImportedExpenses,
 } from '../finance/expenseTreasuryCatchUpOps.js';
@@ -172,6 +173,35 @@ export function registerExpenseTreasuryCatchUpRoutes(app, db) {
           status: 400,
           code: 'EXPENSE_IMPORT_CLEAR_FAILED',
           error: 'Could not clear expenses for re-import.',
+        });
+      }
+    }
+  );
+
+  app.post(
+    '/api/expenses/import/sync-cashier',
+    requirePermission(IMPORT_PERMS),
+    (req, res) => {
+      try {
+        const r = syncImportedExpensesToCashier(db, req.user, {
+          treasuryAccountId: req.body?.treasuryAccountId,
+          category: req.body?.category,
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        });
+        if (!r.ok) return res.status(400).json(r);
+        const branchScope = resolveBootstrapBranchScope(req);
+        return res.json(
+          withWriteDelta(r, {
+            treasuryAccounts: listTreasuryAccounts(db, branchScope),
+          })
+        );
+      } catch (e) {
+        console.error('[expenses-import-sync-cashier]', e);
+        return apiError(res, {
+          status: 400,
+          code: 'EXPENSE_IMPORT_SYNC_CASHIER_FAILED',
+          error: 'Could not update cashier balances from imported expenses.',
         });
       }
     }

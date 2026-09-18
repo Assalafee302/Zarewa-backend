@@ -29,13 +29,12 @@ describe('expense cash catch-up HTML page', () => {
         },
       ],
     });
-    expect(html).toMatch(/Post to statement and reduce balance/);
+    expect(html).toMatch(/Update cashier balances now/);
     expect(html).toMatch(/Yola Till/);
     expect(html).toMatch(/RFD-SEP-03/);
     expect(html).toMatch(/value="token-cash-1"/);
     expect(html).toMatch(/45,000/);
     expect(html).toMatch(/expense-cash-catchup\?view=statement/);
-    expect(html).toMatch(/expense-cash-catchup\?view=duplicates/);
   });
 
   it('catchupPageView reads statement and duplicates from query or body', () => {

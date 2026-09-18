@@ -106,6 +106,7 @@ import {
   receiptsHistoryListOpts,
   rowListOpts,
   salesCustomersListOpts,
+  treasuryHistoryListOpts,
 } from './listQueryOpts.js';
 
 /** Escape hatches for consumed/finished coils omitted from active desk packs. */
@@ -306,7 +307,7 @@ export function buildBootstrap(db, opts = {}) {
   const treasuryMovementsHistoryOpts =
     opts.listLimits?.treasuryMovements != null
       ? listOpts('treasuryMovements')
-      : financeHistoryListOpts();
+      : treasuryHistoryListOpts();
   const customersHistoryOpts =
     opts.listLimits?.customers != null ? listOpts('customers') : salesCustomersListOpts();
   const receiptsHistoryOpts =

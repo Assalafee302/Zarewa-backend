@@ -95,6 +95,7 @@ import {
   productionHistoryListOpts,
   receiptsHistoryListOpts,
   salesCustomersListOpts,
+  treasuryHistoryListOpts,
 } from './listQueryOpts.js';
 import { RECEIPT_PENDING_PO_STATUS_KEYS } from '../shared/lib/inTransitVisibility.js';
 
@@ -509,6 +510,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
   const accountingRegisters = buildAccountingRegisterSnapshotFields(db, user, branchScope);
   const registerOpts = financeRegisterListOpts();
   const historyOpts = financeHistoryListOpts();
+  const treasuryOpts = treasuryHistoryListOpts();
   const receiptOpts = receiptsHistoryListOpts();
   const cuttingOpts = productionHistoryListOpts();
   const receipts =
@@ -518,7 +520,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
   const cuttingLists =
     salesOk || finOk || treasuryMovementsOk ? listCuttingLists(db, branchScope, cuttingOpts) : [];
   const treasuryMovements = treasuryMovementsOk
-    ? listTreasuryMovements(db, branchScope, historyOpts)
+    ? listTreasuryMovements(db, branchScope, treasuryOpts)
     : [];
   const expenses = expensesSnapshotOk ? listExpenses(db, branchScope, historyOpts) : [];
   const paymentRequests = payReqOk ? listPaymentRequests(db, branchScope, historyOpts) : [];
@@ -606,7 +608,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
       },
       listLimitsApplied: {
         expenses: lim(historyOpts),
-        treasuryMovements: lim(historyOpts),
+        treasuryMovements: lim(treasuryOpts),
         paymentRequests: lim(historyOpts),
         receipts: lim(receiptOpts),
         refunds: lim(historyOpts),
@@ -616,7 +618,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
       truncated: {
         expenses: expensesSnapshotOk && lim(historyOpts) > 0 && expenses.length >= lim(historyOpts),
         treasuryMovements:
-          treasuryMovementsOk && lim(historyOpts) > 0 && treasuryMovements.length >= lim(historyOpts),
+          treasuryMovementsOk && lim(treasuryOpts) > 0 && treasuryMovements.length >= lim(treasuryOpts),
         paymentRequests: payReqOk && lim(historyOpts) > 0 && paymentRequests.length >= lim(historyOpts),
         receipts:
           (salesOk || finOk || treasuryMovementsOk) &&

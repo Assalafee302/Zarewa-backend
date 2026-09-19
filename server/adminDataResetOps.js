@@ -8,6 +8,7 @@ import { getBranch, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
 import { getBranchCodeUpper } from './humanId.js';
 import { setSuppressLegacyDemoPackAfterOperationsReset } from './legacyDemoPackPolicy.js';
 import { resetHrBranchOperationalData } from './hrAdminDataResetOps.js';
+import { tableExists, tableHasColumn as cachedTableHasColumn } from './schemaCache.js';
 
 /** @type {{ id: string, label: string, warning: string, tables: string[] }[]} */
 export const ADMIN_DATA_RESET_PRESETS = [
@@ -114,8 +115,10 @@ export const ADMIN_DATA_RESET_PRESETS = [
   {
     id: 'expenses_ap',
     label: 'Expenses, AP, payment requests & bank rec lines',
-    warning: 'Deletes expenses, payables, payment requests, and bank reconciliation lines for this branch only.',
-    tables: ['payment_requests', 'accounts_payable', 'expenses', 'bank_reconciliation_lines'],
+    warning:
+      'Deletes this branch’s expenses, payables, payment requests, and bank rec lines. Also removes linked till/bank expense lines, expense GL journals, and Office expense threads so the items do not remain on Finance or Accounts. Unscoped (blank branch) expense rows are included. Other factories are kept.',
+    tables: [],
+    customReset: true,
   },
   {
     id: 'hr_staff_payroll',
@@ -241,6 +244,8 @@ const BRANCH_SPECIAL_HANDLERS = {
 
 const SKIP_ON_BRANCH_SCOPE = new Set(['entity_sequences', 'reference_counters', 'procurement_catalog', 'audit_log']);
 
+const IN_CHUNK = 200;
+
 function isIgnorableMissingTableError(e) {
   const msg = String(e?.message || e || '');
   const code = String(e?.code || '');
@@ -250,6 +255,48 @@ function isIgnorableMissingTableError(e) {
     msg.includes('42S02') ||
     msg.includes('no such table')
   );
+}
+
+function isIgnorableUnknownColumnError(e) {
+  const msg = String(e?.message || e || '');
+  const code = String(e?.code || '');
+  return code === 'ER_BAD_FIELD_ERROR' || msg.includes('Unknown column') || msg.includes('1054');
+}
+
+function chunkIds(ids) {
+  const clean = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
+  const out = [];
+  for (let i = 0; i < clean.length; i += IN_CHUNK) out.push(clean.slice(i, i + IN_CHUNK));
+  return out;
+}
+
+function safeRun(db, sql, params = []) {
+  try {
+    return db.prepare(sql).run(...params);
+  } catch (e) {
+    if (isIgnorableMissingTableError(e) || isIgnorableUnknownColumnError(e)) return { changes: 0 };
+    throw e;
+  }
+}
+
+function selectCol(db, sql, params = [], col) {
+  try {
+    return db
+      .prepare(sql)
+      .all(...params)
+      .map((r) => String(r?.[col] || '').trim())
+      .filter(Boolean);
+  } catch (e) {
+    if (isIgnorableMissingTableError(e) || isIgnorableUnknownColumnError(e)) return [];
+    throw e;
+  }
+}
+
+function deleteByIds(db, sqlPrefix, ids) {
+  for (const chunk of chunkIds(ids)) {
+    const ph = chunk.map(() => '?').join(',');
+    safeRun(db, `${sqlPrefix} IN (${ph})`, chunk);
+  }
 }
 
 function assertSafeTableName(table) {
@@ -264,10 +311,279 @@ function assertSafeTableName(table) {
  */
 function tableHasColumn(db, table, column) {
   assertSafeTableName(table);
-  try {
-    return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
-  } catch {
-    return false;
+  return cachedTableHasColumn(db, table, column);
+}
+
+const WORK_ITEM_CHILD_TABLES = [
+  'work_item_print_snapshots',
+  'work_item_filing',
+  'work_item_sla_events',
+  'work_item_decisions',
+  'work_item_links',
+  'work_item_visibility',
+];
+
+const OFFICE_THREAD_CHILD_TABLES = [
+  { table: 'office_messages', column: 'thread_id' },
+  { table: 'office_thread_reads', column: 'thread_id' },
+  { table: 'office_thread_filing', column: 'thread_id' },
+  { table: 'workspace_room_threads', column: 'thread_id' },
+];
+
+/**
+ * Wipe expenses + linked AP desk rows for one branch.
+ * Child rows (till/bank, GL, payment requests, Office threads) are removed first so
+ * InnoDB FKs cannot roll the whole reset back, and so Finance/Accounts do not keep showing the same items.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} branchId
+ */
+function resetExpensesApForBranch(db, branchId) {
+  const bid = String(branchId || '').trim();
+  if (!bid) throw new Error('Branch id is required.');
+
+  if (tableExists(db, 'expenses') && !tableHasColumn(db, 'expenses', 'branch_id')) {
+    throw new Error('Expenses table has no branch_id. Run migrations before resetting expenses.');
+  }
+  const hasExpenseBranch = tableExists(db, 'expenses') && tableHasColumn(db, 'expenses', 'branch_id');
+  const expenseIds = hasExpenseBranch
+    ? selectCol(
+        db,
+        `SELECT expense_id FROM expenses WHERE branch_id = ? OR TRIM(COALESCE(branch_id, '')) = ''`,
+        [bid],
+        'expense_id'
+      )
+    : [];
+
+  const paymentRequestIds = [];
+  if (tableExists(db, 'payment_requests')) {
+    if (expenseIds.length) {
+      for (const chunk of chunkIds(expenseIds)) {
+        const ph = chunk.map(() => '?').join(',');
+        paymentRequestIds.push(
+          ...selectCol(
+            db,
+            `SELECT request_id FROM payment_requests WHERE expense_id IN (${ph})`,
+            chunk,
+            'request_id'
+          )
+        );
+      }
+    }
+    if (tableExists(db, 'office_threads')) {
+      paymentRequestIds.push(
+        ...selectCol(
+          db,
+          `SELECT related_payment_request_id AS request_id
+           FROM office_threads
+           WHERE branch_id = ? AND kind = 'expense' AND TRIM(COALESCE(related_payment_request_id, '')) != ''`,
+          [bid],
+          'request_id'
+        )
+      );
+    }
+  }
+
+  const sourceIds = [...expenseIds, ...paymentRequestIds];
+
+  if (tableExists(db, 'treasury_movements')) {
+    const movementIds = [];
+    for (const chunk of chunkIds(expenseIds)) {
+      const ph = chunk.map(() => '?').join(',');
+      movementIds.push(
+        ...selectCol(
+          db,
+          `SELECT id FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id IN (${ph})`,
+          chunk,
+          'id'
+        )
+      );
+    }
+    for (const chunk of chunkIds(paymentRequestIds)) {
+      const ph = chunk.map(() => '?').join(',');
+      movementIds.push(
+        ...selectCol(
+          db,
+          `SELECT id FROM treasury_movements
+           WHERE source_kind IN ('EXPENSE', 'PAYMENT_REQUEST') AND source_id IN (${ph})`,
+          chunk,
+          'id'
+        )
+      );
+    }
+    try {
+      const restoreRows = [];
+      for (const chunk of chunkIds(expenseIds)) {
+        const ph = chunk.map(() => '?').join(',');
+        restoreRows.push(
+          ...db
+            .prepare(
+              `SELECT treasury_account_id AS accountId, SUM(amount_ngn) AS amt
+               FROM treasury_movements
+               WHERE source_kind = 'EXPENSE' AND source_id IN (${ph})
+               GROUP BY treasury_account_id`
+            )
+            .all(...chunk)
+        );
+      }
+      for (const row of restoreRows) {
+        const restore = -Math.round(Number(row.amt) || 0);
+        if (!restore) continue;
+        safeRun(db, `UPDATE treasury_accounts SET balance = COALESCE(balance, 0) + ? WHERE id = ?`, [
+          restore,
+          row.accountId,
+        ]);
+      }
+    } catch (e) {
+      if (!isIgnorableMissingTableError(e) && !isIgnorableUnknownColumnError(e)) throw e;
+    }
+    if (tableExists(db, 'gl_journal_entries')) {
+      const journalIds = [];
+      for (const chunk of chunkIds(movementIds)) {
+        const ph = chunk.map(() => '?').join(',');
+        journalIds.push(
+          ...selectCol(
+            db,
+            `SELECT id FROM gl_journal_entries
+             WHERE source_kind IN ('EXPENSE_PAYMENT_GL', 'EXPENSE_CATEGORY_RECLASS_GL')
+               AND source_id IN (${ph})`,
+            chunk,
+            'id'
+          )
+        );
+      }
+      if (tableHasColumn(db, 'gl_journal_entries', 'branch_id')) {
+        journalIds.push(
+          ...selectCol(
+            db,
+            `SELECT id FROM gl_journal_entries
+             WHERE branch_id = ?
+               AND source_kind IN ('EXPENSE_PAYMENT_GL', 'EXPENSE_CATEGORY_RECLASS_GL')`,
+            [bid],
+            'id'
+          )
+        );
+      }
+      deleteByIds(db, `DELETE FROM gl_journal_lines WHERE journal_id`, journalIds);
+      deleteByIds(db, `DELETE FROM gl_journal_entries WHERE id`, journalIds);
+    }
+    deleteByIds(db, `DELETE FROM treasury_movements WHERE id`, movementIds);
+  }
+
+  const workItemIds = [];
+  if (tableExists(db, 'work_items')) {
+    for (const chunk of chunkIds(sourceIds)) {
+      const ph = chunk.map(() => '?').join(',');
+      workItemIds.push(
+        ...selectCol(
+          db,
+          `SELECT id FROM work_items
+           WHERE source_kind IN ('expense', 'payment_request', 'EXPENSE', 'PAYMENT_REQUEST') AND source_id IN (${ph})`,
+          chunk,
+          'id'
+        )
+      );
+    }
+    if (tableExists(db, 'work_item_links')) {
+      for (const chunk of chunkIds(sourceIds)) {
+        const ph = chunk.map(() => '?').join(',');
+        workItemIds.push(
+          ...selectCol(
+            db,
+            `SELECT work_item_id AS id FROM work_item_links
+             WHERE entity_kind IN ('expense', 'payment_request') AND entity_id IN (${ph})`,
+            chunk,
+            'id'
+          )
+        );
+      }
+    }
+    for (const child of WORK_ITEM_CHILD_TABLES) {
+      deleteByIds(db, `DELETE FROM \`${child}\` WHERE work_item_id`, workItemIds);
+    }
+    deleteByIds(db, `DELETE FROM work_items WHERE id`, workItemIds);
+  }
+
+  const threadIds = [];
+  if (tableExists(db, 'office_threads')) {
+    threadIds.push(
+      ...selectCol(
+        db,
+        `SELECT id FROM office_threads WHERE branch_id = ? AND kind = 'expense'`,
+        [bid],
+        'id'
+      )
+    );
+    for (const chunk of chunkIds(paymentRequestIds)) {
+      const ph = chunk.map(() => '?').join(',');
+      threadIds.push(
+        ...selectCol(
+          db,
+          `SELECT id FROM office_threads WHERE related_payment_request_id IN (${ph})`,
+          chunk,
+          'id'
+        )
+      );
+    }
+    for (const { table, column } of OFFICE_THREAD_CHILD_TABLES) {
+      deleteByIds(db, `DELETE FROM \`${table}\` WHERE \`${column}\``, threadIds);
+    }
+    deleteByIds(db, `DELETE FROM office_threads WHERE id`, threadIds);
+  }
+
+  deleteByIds(
+    db,
+    `DELETE FROM purchase_payment_cashier_acks WHERE source_kind IN ('EXPENSE', 'PAYMENT_REQUEST', 'expense', 'payment_request') AND source_id`,
+    sourceIds
+  );
+  deleteByIds(
+    db,
+    `DELETE FROM maintenance_cost_lines WHERE source_kind IN ('expense', 'payment_request', 'EXPENSE', 'PAYMENT_REQUEST') AND source_id`,
+    sourceIds
+  );
+  deleteByIds(db, `UPDATE fixed_assets SET source_expense_id = NULL WHERE source_expense_id`, expenseIds);
+  deleteByIds(
+    db,
+    `UPDATE hr_staff_obligation_accounts SET finance_payment_request_id = NULL WHERE finance_payment_request_id`,
+    paymentRequestIds
+  );
+  deleteByIds(
+    db,
+    `UPDATE chairman_office_loans SET payment_request_id = NULL WHERE payment_request_id`,
+    paymentRequestIds
+  );
+  deleteByIds(
+    db,
+    `UPDATE maintenance_work_orders SET related_payment_request_id = NULL WHERE related_payment_request_id`,
+    paymentRequestIds
+  );
+  deleteByIds(
+    db,
+    `DELETE FROM approval_actions WHERE entity_kind IN ('expense', 'payment_request') AND entity_id`,
+    sourceIds
+  );
+
+  deleteByIds(db, `DELETE FROM payment_requests WHERE request_id`, paymentRequestIds);
+  if (hasExpenseBranch) {
+    safeRun(
+      db,
+      `DELETE FROM payment_requests WHERE expense_id IN (
+         SELECT expense_id FROM (
+           SELECT expense_id FROM expenses WHERE branch_id = ? OR TRIM(COALESCE(branch_id, '')) = ''
+         ) expense_ids_for_reset
+       )`,
+      [bid]
+    );
+    safeRun(db, `DELETE FROM expenses WHERE branch_id = ? OR TRIM(COALESCE(branch_id, '')) = ''`, [bid]);
+  }
+
+  if (tableExists(db, 'accounts_payable')) {
+    if (tableHasColumn(db, 'accounts_payable', 'branch_id')) {
+      safeRun(db, `DELETE FROM accounts_payable WHERE branch_id = ?`, [bid]);
+    }
+    safeRun(db, BRANCH_CHILD_DELETE_SQL.accounts_payable, [bid]);
+  }
+  if (tableExists(db, 'bank_reconciliation_lines') && tableHasColumn(db, 'bank_reconciliation_lines', 'branch_id')) {
+    safeRun(db, `DELETE FROM bank_reconciliation_lines WHERE branch_id = ?`, [bid]);
   }
 }
 
@@ -350,6 +666,7 @@ export function applyAdminDataReset(db, presetIds, confirmPhrase, meta = {}) {
   const orderedTables = [];
   const seen = new Set();
   const skippedTables = [];
+  const customInsideTx = [];
   let tablesCleared = 0;
 
   for (const id of sortedPresetIds) {
@@ -359,6 +676,8 @@ export function applyAdminDataReset(db, presetIds, confirmPhrase, meta = {}) {
         const hr = resetHrBranchOperationalData(db, branchId);
         if (!hr.ok) throw new Error(hr.error || 'HR reset failed.');
         tablesCleared += 1;
+      } else {
+        customInsideTx.push(id);
       }
       continue;
     }
@@ -372,6 +691,12 @@ export function applyAdminDataReset(db, presetIds, confirmPhrase, meta = {}) {
   try {
     db.transaction(() => {
       db.exec('SET SESSION foreign_key_checks = 0');
+      for (const id of customInsideTx) {
+        if (id === 'expenses_ap') {
+          resetExpensesApForBranch(db, branchId);
+          tablesCleared += 1;
+        }
+      }
       for (const t of orderedTables) {
         try {
           const r = deleteTableForBranch(db, t, branchId);

@@ -4,6 +4,7 @@ import {
   quotationBelowFloorPendingMdApproval,
   quotationBmPriceExceptionApproved,
   quotationHasPaymentForMdBelowFloorQueue,
+  quotationNeedsBelowFloorManagerApproval,
   quotationRefundBlockedPendingMdPriceConfirm,
 } from './quotationPriceException.js';
 
@@ -63,5 +64,27 @@ describe('quotationPriceException', () => {
     };
     expect(quotationBelowFloorPendingMdApproval(q)).toBe(false);
     expect(quotationRefundBlockedPendingMdPriceConfirm(q)).toBe(false);
+  });
+
+  it('puts paid unapproved below-floor quotes on the manager approval page', () => {
+    expect(
+      quotationNeedsBelowFloorManagerApproval({
+        paidNgn: 50_000,
+        priceExceptionMdReviewRequired: 1,
+      })
+    ).toBe(true);
+    expect(
+      quotationNeedsBelowFloorManagerApproval({
+        paid_ngn: 1,
+        price_exception_md_review_required: 1,
+        bm_price_exception_approved_at_iso: '2026-01-01',
+      })
+    ).toBe(false);
+    expect(
+      quotationNeedsBelowFloorManagerApproval({
+        paidNgn: 0,
+        priceExceptionMdReviewRequired: 1,
+      })
+    ).toBe(false);
   });
 });

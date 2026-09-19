@@ -4,6 +4,9 @@
  */
 import { effectiveOutstandingNgn, isEffectivelyFullyPaid } from './paymentOutstandingTolerance.js';
 import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from './customerLedgerCore.js';
+import { quotationNeedsBelowFloorManagerApproval } from './quotationPriceException.js';
+
+export { quotationNeedsBelowFloorManagerApproval };
 
 /** Paid quotation awaiting branch manager clearance (any payment counts). */
 export function quotationNeedsManagerClearance(q) {

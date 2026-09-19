@@ -80,3 +80,30 @@ export function quotationMdPriceReviewConfirmed(q) {
 export function quotationRefundBlockedPendingMdPriceConfirm(q) {
   return quotationBelowFloorPendingMdApproval(q);
 }
+
+/**
+ * Paid below-floor quote waiting on the Branch Manager (or MD) approval page.
+ * Maps snake_case SQL rows and camelCase quotation snapshots.
+ * @param {object | null | undefined} q
+ */
+export function quotationNeedsBelowFloorManagerApproval(q) {
+  if (!q) return false;
+  if (!quotationHasPaymentForMdBelowFloorQueue(q)) return false;
+  return quotationBelowFloorPendingMdApproval({
+    priceExceptionMdReviewRequired: q.priceExceptionMdReviewRequired ?? q.price_exception_md_review_required,
+    mdPriceExceptionApprovedAtISO: q.mdPriceExceptionApprovedAtISO ?? q.md_price_exception_approved_at_iso,
+    priceExceptionMdConfirmedAtISO: q.priceExceptionMdConfirmedAtISO ?? q.price_exception_md_confirmed_at_iso,
+    bmPriceExceptionApprovedAtISO: q.bmPriceExceptionApprovedAtISO ?? q.bm_price_exception_approved_at_iso,
+  });
+}
+
+/**
+ * SQL predicate: flagged below-floor, not yet BM/MD-approved.
+ * Pair with `IFNULL(paid_ngn, 0) > 0` for the manager / MD queues.
+ */
+export const SQL_PENDING_BELOW_FLOOR_EXCEPTION = `
+  price_exception_md_review_required = 1
+  AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
+  AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')
+  AND (bm_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(bm_price_exception_approved_at_iso,'')) = '')
+`;

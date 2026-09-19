@@ -12,10 +12,11 @@ import {
 describe('execApprovalTier', () => {
   const limits = { refundExecutiveThresholdNgn: 1_000_000, expenseExecutiveThresholdNgn: 200_000 };
 
-  it('marks canonical MD-only kinds', () => {
+  it('marks payroll and staff credit as MD-only; below-floor as BM or MD', () => {
     expect(classifyExecWorkTrayApprovalTier({ kind: 'price_exception' }).tier).toBe(
-      EXEC_APPROVAL_TIER_MD_ONLY
+      EXEC_APPROVAL_TIER_SHARED
     );
+    expect(classifyExecWorkTrayApprovalTier({ kind: 'price_exception' }).label).toBe('BM or MD');
     expect(classifyExecWorkTrayApprovalTier({ kind: 'payroll' }).tier).toBe(EXEC_APPROVAL_TIER_MD_ONLY);
     expect(classifyExecWorkTrayApprovalTier({ kind: 'staff_purchase_credit' }).tier).toBe(
       EXEC_APPROVAL_TIER_MD_ONLY
@@ -60,7 +61,7 @@ describe('execApprovalTier', () => {
     const rows = annotateExecWorkTrayApprovalTiers(
       [
         { id: 'a', kind: 'clearance', priority: 'high' },
-        { id: 'b', kind: 'price_exception', priority: 'medium' },
+        { id: 'b', kind: 'payroll', priority: 'medium' },
       ],
       limits
     );

@@ -2950,6 +2950,43 @@ export function registerHttpApi(app, db) {
       const qid = String(quotationId ?? '').trim();
       const qg = assertQuotationIdInWorkspace(db, req, qid);
       if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error, code: 'FORBIDDEN' });
+      if (String(decision || '').trim() === 'approve_price_exception') {
+        const r = approveBranchManagerPriceExceptionForQuotation(db, qid, req.user);
+        if (!r.ok) {
+          const denied = /only a branch manager|managing director or an administrator/i.test(String(r.error || ''));
+          return res.status(denied ? 403 : 400).json(r);
+        }
+        const closedStamp = new Date().toISOString();
+        const closed = upsertWorkItemBySource(db, {
+          actor: req.user,
+          sourceKind: 'price_exception',
+          sourceId: qid,
+          branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+          officeKey: 'branch_manager',
+          responsibleOfficeKey: 'branch_manager',
+          documentClass: 'approval',
+          documentType: 'price_exception',
+          status: 'closed',
+          title: `Below-floor price ${qid}`,
+          summary: reason || 'Branch manager approved below-floor pricing',
+          requiresApproval: false,
+          requiresResponse: false,
+          closedAtIso: closedStamp,
+          data: { routePath: '/manager?tab=approvals&inbox=attention', managerDecision: 'approve_price_exception' },
+        });
+        if (closed.ok) {
+          appendWorkItemDecision(db, {
+            workItemId: closed.item.id,
+            actor: req.user,
+            actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+            decisionKey: 'approve_price_exception',
+            outcomeStatus: 'closed',
+            nextStatus: 'closed',
+            note: String(reason || '').trim() || 'Branch manager approved below-floor pricing',
+          });
+        }
+        return res.json(r);
+      }
       const r = reviewQuotation(
         db,
         qid,
@@ -5802,11 +5839,11 @@ export function registerHttpApi(app, db) {
 
   app.patch(
     '/api/quotations/:quotationId/md-price-exception-approve',
-    requirePermission('md.price_exception.approve'),
+    requirePermission(['md.price_exception.approve', 'bm.price_exception.approve', 'refunds.approve']),
     (req, res) => {
       try {
         const qid = String(req.params.quotationId || '');
-        const r = approveMdPriceExceptionForQuotation(db, qid, req.user);
+        const r = approveBranchManagerPriceExceptionForQuotation(db, qid, req.user);
         if (!r.ok) return res.status(400).json(r);
         const quotation = getQuotation(db, qid);
         const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(qid);

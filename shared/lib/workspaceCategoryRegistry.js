@@ -14,7 +14,7 @@ export const WORKSPACE_CATEGORIES = {
     description: 'Quotations, clearance, and customer-facing approvals',
     emptyMessage: 'No sales items in this view.',
     colorClass: 'bg-sky-50 text-sky-900 ring-sky-100',
-    documentTypes: ['quotation_clearance', 'conversion_review'],
+    documentTypes: ['quotation_clearance', 'conversion_review', 'price_exception'],
     documentClasses: [],
     sourceKinds: [],
   },

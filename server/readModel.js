@@ -17,6 +17,7 @@ import {
   PO_TRANSPORT_TREASURY_PAYABLE_STATUSES,
 } from '../shared/lib/poTransportFee.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
+import { SQL_PENDING_BELOW_FLOOR_EXCEPTION } from '../shared/lib/quotationPriceException.js';
 import { approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
@@ -33,7 +34,7 @@ import { parseSupplierProfileJson, stripAgreementBodiesForList } from './supplie
 import { listBranches, DEFAULT_BRANCH_ID } from './branches.js';
 import { branchPredicate } from './branchSql.js';
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
-import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
+import { isStainMeterQuotationLinesJson, isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { displayGaugeLabelForBranch } from '../shared/lib/gaugeDisplayAlias.js';
 import {
   coilProducedMetersFromProductionJobs,
@@ -375,6 +376,7 @@ function mapQuotationRow(db, row, opts = {}) {
   let materialColor = '';
   let materialDesign = '';
   let materialTypeId = '';
+  let stainSourceMaterialTypeId = '';
   let linesJsonForStone = null;
   try {
     const raw = row.lines_json;
@@ -386,6 +388,7 @@ function mapQuotationRow(db, row, opts = {}) {
         if (typeof j.materialColor === 'string') materialColor = j.materialColor;
         if (typeof j.materialDesign === 'string') materialDesign = j.materialDesign;
         if (typeof j.materialTypeId === 'string') materialTypeId = j.materialTypeId;
+        if (typeof j.stainSourceMaterialTypeId === 'string') stainSourceMaterialTypeId = j.stainSourceMaterialTypeId;
         if (includeLines) {
           quotationLines = {
             products: Array.isArray(j.products) ? j.products : [],
@@ -399,6 +402,7 @@ function mapQuotationRow(db, row, opts = {}) {
     /* ignore */
   }
   const stoneMeterQuote = Boolean(db && linesJsonForStone && isStoneMeterQuotationLinesJson(db, linesJsonForStone));
+  const stainMeterQuote = Boolean(db && linesJsonForStone && isStainMeterQuotationLinesJson(db, linesJsonForStone));
   const branchId = row.branch_id ?? '';
   return {
     id: row.id,
@@ -426,7 +430,9 @@ function mapQuotationRow(db, row, opts = {}) {
     materialColor,
     materialDesign,
     materialTypeId,
+    stainSourceMaterialTypeId,
     stoneMeterQuote,
+    stainMeterQuote,
     branchId,
     managerProductionApprovedAtISO: row.manager_production_approved_at_iso ?? null,
     managerProductionApprovedByUserId: row.manager_production_approved_by_user_id ?? null,
@@ -862,6 +868,23 @@ export function listManagementItems(db, branchScope = 'ALL') {
     pendingPurchaseOrders = [];
   }
 
+  let pendingPriceExceptions = [];
+  try {
+    pendingPriceExceptions = db
+      .prepare(
+        `SELECT id, customer_name, total_ngn, paid_ngn, date_iso, branch_id,
+                price_exception_md_review_required
+         FROM quotations
+         WHERE ${SQL_PENDING_BELOW_FLOOR_EXCEPTION}
+           AND IFNULL(paid_ngn, 0) > 0
+           ${bQuo.sql}
+         ORDER BY date_iso DESC LIMIT 50`
+      )
+      .all(...bQuo.args);
+  } catch {
+    pendingPriceExceptions = [];
+  }
+
   return {
     pendingClearance,
     flagged,
@@ -871,6 +894,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
     pendingConversionReviews,
     pendingMaterialIncidents,
     pendingPurchaseOrders,
+    pendingPriceExceptions,
   };
 }
 

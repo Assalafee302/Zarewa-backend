@@ -16,7 +16,7 @@ export function workItemNeedsActionForUser(item, userId) {
   if (assigned && uid && assigned !== uid) return false;
   const dt = String(item?.documentType || '').trim().toLowerCase();
   const st = String(item?.status || '').trim().toLowerCase();
-  if (dt === 'quotation_clearance' || dt === 'production_gate') {
+  if (dt === 'quotation_clearance' || dt === 'production_gate' || dt === 'price_exception') {
     if (st === 'closed' || st === 'approved' || st === 'completed' || st === 'cancelled' || st === 'rejected') {
       return false;
     }
@@ -50,7 +50,8 @@ export function fileTrayCategoryLabel(item) {
     dt === 'quotation_clearance' ||
     dt === 'production_gate' ||
     dt === 'flagged_transaction' ||
-    dt === 'conversion_review'
+    dt === 'conversion_review' ||
+    dt === 'price_exception'
   ) {
     return 'Sales & management sign-off';
   }
@@ -132,6 +133,7 @@ export function workItemShowsInFileTray(item, inboxCtx) {
     dt === 'production_gate' ||
     dt === 'flagged_transaction' ||
     dt === 'conversion_review' ||
+    dt === 'price_exception' ||
     dt === 'payment_request' ||
     dt === 'refund_request';
   if (roleRouted && !personal) return false;
@@ -156,6 +158,7 @@ export function workItemShowsInUnfiledTray(item, inboxCtx) {
     dt === 'production_gate' ||
     dt === 'flagged_transaction' ||
     dt === 'conversion_review' ||
+    dt === 'price_exception' ||
     dt === 'payment_request' ||
     dt === 'refund_request';
   if (roleRouted && !personal) return false;

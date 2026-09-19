@@ -2,11 +2,8 @@
  * Manager queue counts from workspace snapshot (mirrors buildManagementQueuesFromSnapshot filters).
  * Frontend copies via `npm run sync:shared` → src/shared/lib/managementQueueCounts.js
  */
-import {
-  cuttingListInProductionGate,
-  quotationIsFlaggedForAudit,
-  quotationNeedsManagerClearance,
-} from './managementQueueFilters.js';
+import { quotationNeedsManagerClearance, quotationIsFlaggedForAudit, cuttingListInProductionGate } from './managementQueueFilters.js';
+import { quotationNeedsBelowFloorManagerApproval } from './quotationPriceException.js';
 
 /**
  * @param {object | null | undefined} snapshot
@@ -23,6 +20,7 @@ export function getManagementQueueCounts(snapshot) {
   const signOff = quotations.filter((q) => quotationNeedsManagerClearance(q)).length;
   const flagged = quotations.filter((q) => quotationIsFlaggedForAudit(q)).length;
   const prodGate = cuttingLists.filter((cl) => cuttingListInProductionGate(cl, quoteById.get(cl.quotationRef))).length;
+  const pendingPriceExceptions = quotations.filter((q) => quotationNeedsBelowFloorManagerApproval(q)).length;
 
   const pendingRefunds = refunds.filter((r) => String(r.status) === 'Pending').length;
 
@@ -39,5 +37,5 @@ export function getManagementQueueCounts(snapshot) {
         j.conversionAlertState === 'Low')
   ).length;
 
-  return { signOff, flagged, prodGate, pendingRefunds, pendingExpenses, qc };
+  return { signOff, flagged, prodGate, pendingPriceExceptions, pendingRefunds, pendingExpenses, qc };
 }

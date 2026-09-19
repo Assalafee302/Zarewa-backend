@@ -8,6 +8,7 @@ export const MANAGER_INBOX_DOCUMENT_TYPES = new Set([
   'flagged_transaction',
   'conversion_review',
   'coil_grn_short_receipt',
+  'price_exception',
 ]);
 
 export function isManagerInboxWorkItemDocType(documentType) {

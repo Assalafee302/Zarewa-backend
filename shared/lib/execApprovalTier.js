@@ -22,7 +22,6 @@ export function approvalTierChipClass(tier) {
 }
 
 const MD_ONLY_KINDS = new Set([
-  'price_exception',
   'payroll',
   'inter_branch_loan',
   'stock_register',
@@ -113,6 +112,10 @@ export function classifyExecWorkTrayApprovalTier(item, limits = {}) {
       return { tier: EXEC_APPROVAL_TIER_MD_ONLY, label: 'MD only', reason: 'Zero payment' };
     }
     return { tier: EXEC_APPROVAL_TIER_MD_ONLY, label: 'MD oversight' };
+  }
+
+  if (kind === 'price_exception') {
+    return { tier: EXEC_APPROVAL_TIER_SHARED, label: 'BM or MD' };
   }
 
   if (kind === 'clearance' || kind === 'flagged') {

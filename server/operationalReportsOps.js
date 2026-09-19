@@ -81,7 +81,8 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
     (mgmt.pendingExpenses?.length || 0) +
     (mgmt.pendingConversionReviews?.length || 0) +
     (mgmt.pendingMaterialIncidents?.length || 0) +
-    (mgmt.productionOverrides?.length || 0);
+    (mgmt.productionOverrides?.length || 0) +
+    (mgmt.pendingPriceExceptions?.length || 0);
 
   const pendingPaymentCount = approvedUnpaid.length;
 

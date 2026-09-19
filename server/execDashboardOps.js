@@ -27,7 +27,10 @@ import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { buildMdCockpitPulses, buildChampionCustomerSnippet } from './mdCockpitOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
-import { quotationHasPaymentForMdBelowFloorQueue } from '../shared/lib/quotationPriceException.js';
+import {
+  quotationHasPaymentForMdBelowFloorQueue,
+  SQL_PENDING_BELOW_FLOOR_EXCEPTION,
+} from '../shared/lib/quotationPriceException.js';
 import { reconcileStaleMdBelowFloorFlags } from './pricingOps.js';
 import { listOfficeThreads, officeTablesReady } from './officeOps.js';
 import { listStockRegisterInbox } from './stockRegisterOps.js';
@@ -92,10 +95,7 @@ export { quotationHasPaymentForMdBelowFloorQueue };
 
 /** SQL predicate: flagged below-floor, not yet MD-approved, and paid. */
 export const SQL_MD_BELOW_FLOOR_QUEUE = `
-  price_exception_md_review_required = 1
-  AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
-  AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')
-  AND (bm_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(bm_price_exception_approved_at_iso,'')) = '')
+  ${SQL_PENDING_BELOW_FLOOR_EXCEPTION}
   AND IFNULL(paid_ngn, 0) > 0
 `;
 
@@ -508,7 +508,8 @@ function actorCanActOnApprovals(user) {
     userHasPermission(user, 'hr.payroll.md_approve') ||
     userHasPermission(user, 'inter_branch_loan.md_approve') ||
     userHasPermission(user, 'material_incidents.approve') ||
-    userHasPermission(user, 'md.price_exception.approve')
+    userHasPermission(user, 'md.price_exception.approve') ||
+    userHasPermission(user, 'bm.price_exception.approve')
   );
 }
 
@@ -543,7 +544,16 @@ function canActOnWorkItemKind(user, kind) {
       userHasPermission(user, 'quotations.manage')
     );
   }
-  if (k === 'price_exception') return userHasPermission(user, 'md.price_exception.approve');
+  if (k === 'price_exception') {
+    const rk = String(user?.roleKey || '').toLowerCase();
+    return (
+      userHasPermission(user, 'md.price_exception.approve') ||
+      userHasPermission(user, 'bm.price_exception.approve') ||
+      rk === 'sales_manager' ||
+      rk === 'branch_manager' ||
+      userHasPermission(user, 'refunds.approve')
+    );
+  }
   if (k === 'conversions') return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'production.manage');
   if (k === 'office_memo' || k === 'work_item') return userHasPermission(user, 'office.use');
   return actorCanActOnApprovals(user);
@@ -727,12 +737,12 @@ function listExecutiveExtras(db, branchScope) {
         amountNgn: Math.round(Number(r.total_ngn) || 0),
         requestedBy: 'Sales / branch',
         ageLabel: daysSinceLabel(r.date_iso),
-        status: 'MD approval required',
+        status: 'BM or MD approval required',
         route: `/exec`,
         quotationRef: r.id,
         reviewContext: {
           quotationRef: r.id,
-          reasons: ['Below-floor pricing after payment — MD approval required'],
+          reasons: ['Below-floor pricing after payment — branch manager or MD approval required'],
           subtitle: r.customer_name || '',
           row: r,
         },

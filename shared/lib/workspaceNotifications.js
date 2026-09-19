@@ -56,11 +56,14 @@ function pushBranchManagerAlerts(items, { snapshot, roleKey, hasPermission }) {
   const flagged = queues.flagged;
   const prodGate = queues.prodGate;
 
-  if (canMgmt && (signOff > 0 || flagged > 0 || prodGate > 0)) {
+  if (canMgmt && (signOff > 0 || flagged > 0 || prodGate > 0 || queues.pendingPriceExceptions > 0)) {
     const parts = [];
     if (signOff > 0) parts.push(`${signOff} awaiting sign-off`);
     if (flagged > 0) parts.push(`${flagged} flagged for audit`);
     if (prodGate > 0) parts.push(`${prodGate} production gate`);
+    if (queues.pendingPriceExceptions > 0) {
+      parts.push(`${queues.pendingPriceExceptions} below-floor price(s)`);
+    }
     items.push({
       id: 'mgr-order-review',
       category: 'manager',
@@ -70,6 +73,19 @@ function pushBranchManagerAlerts(items, { snapshot, roleKey, hasPermission }) {
       priority: flagged > 0 ? 95 : 82,
       path: approvalAttentionPathForRole(roleKey, 'orders'),
       state: {},
+    });
+  }
+
+  if (canMgmt && queues.pendingPriceExceptions > 0) {
+    items.push({
+      id: 'mgr-price-exceptions',
+      category: 'manager',
+      title: 'Below-floor prices',
+      detail: `${queues.pendingPriceExceptions} paid quote(s) below workbook floor need branch manager approval.`,
+      severity: 'warning',
+      priority: 90,
+      path: approvalAttentionPathForRole(roleKey, 'attention'),
+      state: { attentionFilter: 'price_exception' },
     });
   }
 
@@ -150,6 +166,7 @@ const MANAGER_QUEUE_DOC_TYPES = new Set([
   'payment_request',
   'material_incident',
   'edit_approval',
+  'price_exception',
 ]);
 
 /**

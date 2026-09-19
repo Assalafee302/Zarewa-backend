@@ -60,6 +60,29 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
     });
   }
 
+  for (const q of raw.pendingPriceExceptions || []) {
+    const amt = Number(q.total_ngn) || 0;
+    const paid = Number(q.paid_ngn) || 0;
+    const age = daysSince(q.date_iso);
+    pushItem(items, {
+      id: `price:${q.id}`,
+      kind: 'price_exception',
+      priority: 88 + Math.min(age, 10),
+      quotationRef: q.id,
+      title: q.id,
+      subtitle: q.customer_name || 'Customer',
+      amountNgn: amt,
+      atIso: q.date_iso,
+      branchId: q.branch_id || '',
+      reasons: [
+        'Below-floor pricing after payment — branch manager approval required',
+        paid > 0 ? `Paid ₦${Math.round(paid).toLocaleString('en-NG')}` : null,
+      ].filter(Boolean),
+      reviewAction: 'approve_price_exception',
+      row: q,
+    });
+  }
+
   for (const q of raw.flagged || []) {
     const amt = Number(q.total_ngn) || 0;
     pushItem(items, {

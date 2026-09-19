@@ -1112,6 +1112,27 @@ function listLegacyManagementWorkItems(db, scope, user) {
         })
       );
     }
+    for (const row of queues.pendingPriceExceptions || []) {
+      out.push(
+        legacyWorkItemBase({
+          id: legacyItemId('price-exception', row.id),
+          referenceNo: row.id,
+          branchId: row.branch_id || scope?.branchId || DEFAULT_BRANCH_ID,
+          officeKey: 'branch_manager',
+          documentClass: 'approval',
+          documentType: 'price_exception',
+          status: 'pending_review',
+          priority: 'high',
+          title: `Below-floor price ${row.id}`,
+          summary: `${row.customer_name || 'Customer'} · paid ${row.paid_ngn || 0} of ${row.total_ngn || 0}`,
+          createdAtIso: row.date_iso || '',
+          sourceKind: 'price_exception',
+          sourceId: row.id,
+          routePath: '/manager?tab=approvals&inbox=attention',
+          data: { quotationRef: row.id, reviewAction: 'approve_price_exception' },
+        })
+      );
+    }
     for (const row of queues.productionOverrides || []) {
       out.push(
         legacyWorkItemBase({

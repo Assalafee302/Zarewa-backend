@@ -136,4 +136,47 @@ describe('admin data reset branch scope', () => {
     const till = db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(accountId);
     expect(Number(till?.balance)).toBe(40000);
   });
+
+  it('expenses_ap clears statement payout lines and leftover payment requests after expenses are already gone', () => {
+    const yl = db
+      .prepare(
+        `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, branch_id)
+         VALUES ('Yola till', 'Cash', 10000, 'cash', 'CASH-YL2', 'BR-YL')`
+      )
+      .run();
+    const mdg = db
+      .prepare(
+        `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, branch_id)
+         VALUES ('Maiduguri till', 'Cash', 80000, 'cash', 'CASH-MDG', 'BR-MDG')`
+      )
+      .run();
+    const ylId = Number(yl.lastInsertRowid);
+    const mdgId = Number(mdg.lastInsertRowid);
+    db.prepare(
+      `INSERT INTO payment_requests (request_id, expense_id, amount_requested_ngn, request_date, approval_status, description, paid_amount_ngn)
+       VALUES ('PR-YL-ORPHAN', 'EXP-GONE', 9000, '2026-09-03', 'Approved', 'Leftover payout', 9000)`
+    ).run();
+    db.prepare(
+      `INSERT INTO treasury_movements (
+         id, posted_at_iso, type, treasury_account_id, amount_ngn, source_kind, source_id, counterparty_kind, counterparty_id
+       ) VALUES
+         ('TM-PR-YL', '2026-09-03T10:00:00.000Z', 'PAYMENT_REQUEST_OUT', ?, -9000, 'PAYMENT_REQUEST', 'PR-YL-ORPHAN', 'EXPENSE', 'EXP-GONE'),
+         ('TM-EXP-MDG', '2026-09-03T10:00:00.000Z', 'EXPENSE', ?, -3000, 'EXPENSE', 'EXP-MDG-STAY', 'EXPENSE', 'EXP-MDG-STAY')`
+    ).run(ylId, mdgId);
+    db.prepare(
+      `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
+       VALUES ('EXP-MDG-STAY', 'Fuel', 3000, '2026-09-03', 'Others', 'Cash', 'mdg-stay', 'BR-MDG')`
+    ).run();
+
+    const r = applyAdminDataReset(db, ['expenses_ap'], ADMIN_DATA_RESET_CONFIRM_PHRASE, {
+      branchId: 'BR-YL',
+    });
+    expect(r.ok).toBe(true);
+    expect(db.prepare(`SELECT id FROM treasury_movements WHERE id = 'TM-PR-YL'`).get()).toBeFalsy();
+    expect(db.prepare(`SELECT request_id FROM payment_requests WHERE request_id = 'PR-YL-ORPHAN'`).get()).toBeFalsy();
+    expect(db.prepare(`SELECT id FROM treasury_movements WHERE id = 'TM-EXP-MDG'`).get()).toBeTruthy();
+    expect(db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = 'EXP-MDG-STAY'`).get()).toBeTruthy();
+    expect(Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(ylId)?.balance)).toBe(19000);
+    expect(Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(mdgId)?.balance)).toBe(80000);
+  });
 });

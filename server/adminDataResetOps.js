@@ -116,7 +116,7 @@ export const ADMIN_DATA_RESET_PRESETS = [
     id: 'expenses_ap',
     label: 'Expenses, AP, payment requests & bank rec lines',
     warning:
-      'Deletes expenses, payables, payment requests, and bank rec lines for this factory only. Also removes that factory’s till/bank expense lines, expense GL journals, and Office expense threads. Other factories are not touched. Switch to one factory (not “all branches”) first.',
+      'Deletes this factory’s expenses, payment requests, and the till/bank expense and payout lines that still show on Account statement and the Payout page. Other factories are not touched. Switch to one factory (not “all branches”) first.',
     tables: [],
     customReset: true,
   },
@@ -299,6 +299,39 @@ function deleteByIds(db, sqlPrefix, ids) {
   }
 }
 
+function pushUnique(arr, ids) {
+  const seen = new Set(arr);
+  for (const raw of ids || []) {
+    const id = String(raw || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    arr.push(id);
+  }
+}
+
+/** Keep other factories’ payment requests when a till on this factory paid them. */
+function paymentRequestOnThisFactory(db, requestId, branchId) {
+  const rid = String(requestId || '').trim();
+  if (!rid) return false;
+  let row;
+  try {
+    row = db
+      .prepare(
+        `SELECT pr.expense_id, e.branch_id AS expense_branch_id
+         FROM payment_requests pr
+         LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+         WHERE pr.request_id = ?`
+      )
+      .get(rid);
+  } catch (e) {
+    if (isIgnorableMissingTableError(e) || isIgnorableUnknownColumnError(e)) return false;
+    throw e;
+  }
+  if (!row) return true;
+  const eb = String(row.expense_branch_id || '').trim();
+  return !eb || eb === branchId;
+}
+
 function assertSafeTableName(table) {
   if (!/^[a-z][a-z0-9_]*$/i.test(table)) {
     throw new Error(`Invalid table name: ${table}`);
@@ -358,54 +391,96 @@ function resetExpensesApForBranch(db, branchId) {
   if (tableExists(db, 'payment_requests') && expenseIds.length) {
     for (const chunk of chunkIds(expenseIds)) {
       const ph = chunk.map(() => '?').join(',');
-      paymentRequestIds.push(
-        ...selectCol(
-          db,
-          `SELECT request_id FROM payment_requests WHERE expense_id IN (${ph})`,
-          chunk,
-          'request_id'
-        )
+      pushUnique(
+        paymentRequestIds,
+        selectCol(db, `SELECT request_id FROM payment_requests WHERE expense_id IN (${ph})`, chunk, 'request_id')
       );
     }
   }
-
-  const sourceIds = [...expenseIds, ...paymentRequestIds];
-
-  if (tableExists(db, 'treasury_movements')) {
-    const movementIds = [];
-    for (const chunk of chunkIds(expenseIds)) {
-      const ph = chunk.map(() => '?').join(',');
-      movementIds.push(
-        ...selectCol(
-          db,
-          `SELECT id FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id IN (${ph})`,
-          chunk,
-          'id'
-        )
-      );
+  if (tableExists(db, 'office_threads')) {
+    const officePrs = selectCol(
+      db,
+      `SELECT related_payment_request_id AS request_id
+       FROM office_threads
+       WHERE branch_id = ? AND kind = 'expense' AND TRIM(COALESCE(related_payment_request_id, '')) != ''`,
+      [bid],
+      'request_id'
+    );
+    for (const id of officePrs) {
+      if (paymentRequestOnThisFactory(db, id, bid)) pushUnique(paymentRequestIds, [id]);
     }
-    for (const chunk of chunkIds(paymentRequestIds)) {
+  }
+  if (tableExists(db, 'work_items') && tableHasColumn(db, 'work_items', 'branch_id')) {
+    const wiPrs = selectCol(
+      db,
+      `SELECT source_id AS request_id FROM work_items
+       WHERE branch_id = ? AND source_kind IN ('payment_request', 'PAYMENT_REQUEST')`,
+      [bid],
+      'request_id'
+    );
+    for (const id of wiPrs) {
+      if (paymentRequestOnThisFactory(db, id, bid)) pushUnique(paymentRequestIds, [id]);
+    }
+  }
+
+  const movementIds = [];
+  if (tableExists(db, 'treasury_movements')) {
+    /* Statement / payout leftover: this factory’s tills, even if expense rows were already wiped. */
+    const factoryMoves = selectCol(
+      db,
+      `SELECT id FROM treasury_movements
+       WHERE treasury_account_id IN (SELECT id FROM treasury_accounts WHERE branch_id = ?)
+         AND (
+           UPPER(TRIM(COALESCE(type, ''))) IN ('EXPENSE', 'PAYMENT_REQUEST_OUT')
+           OR UPPER(TRIM(COALESCE(source_kind, ''))) IN ('EXPENSE', 'PAYMENT_REQUEST')
+           OR UPPER(TRIM(COALESCE(counterparty_kind, ''))) = 'EXPENSE'
+         )`,
+      [bid],
+      'id'
+    );
+    pushUnique(movementIds, factoryMoves);
+
+    const factoryPrs = selectCol(
+      db,
+      `SELECT source_id AS request_id FROM treasury_movements
+       WHERE treasury_account_id IN (SELECT id FROM treasury_accounts WHERE branch_id = ?)
+         AND UPPER(TRIM(COALESCE(source_kind, ''))) = 'PAYMENT_REQUEST'`,
+      [bid],
+      'request_id'
+    );
+    for (const id of factoryPrs) {
+      if (paymentRequestOnThisFactory(db, id, bid)) pushUnique(paymentRequestIds, [id]);
+    }
+
+    const linkedIds = [...expenseIds, ...paymentRequestIds];
+    for (const chunk of chunkIds(linkedIds)) {
       const ph = chunk.map(() => '?').join(',');
-      movementIds.push(
-        ...selectCol(
+      pushUnique(
+        movementIds,
+        selectCol(
           db,
           `SELECT id FROM treasury_movements
-           WHERE source_kind IN ('EXPENSE', 'PAYMENT_REQUEST') AND source_id IN (${ph})`,
-          chunk,
+           WHERE (
+             source_kind IN ('EXPENSE', 'PAYMENT_REQUEST')
+             OR type IN ('EXPENSE', 'PAYMENT_REQUEST_OUT')
+             OR counterparty_kind = 'EXPENSE'
+           ) AND (source_id IN (${ph}) OR counterparty_id IN (${ph}))`,
+          [...chunk, ...chunk],
           'id'
         )
       );
     }
+
     try {
       const restoreRows = [];
-      for (const chunk of chunkIds(expenseIds)) {
+      for (const chunk of chunkIds(movementIds)) {
         const ph = chunk.map(() => '?').join(',');
         restoreRows.push(
           ...db
             .prepare(
               `SELECT treasury_account_id AS accountId, SUM(amount_ngn) AS amt
                FROM treasury_movements
-               WHERE source_kind = 'EXPENSE' AND source_id IN (${ph})
+               WHERE id IN (${ph})
                GROUP BY treasury_account_id`
             )
             .all(...chunk)
@@ -454,6 +529,8 @@ function resetExpensesApForBranch(db, branchId) {
     }
     deleteByIds(db, `DELETE FROM treasury_movements WHERE id`, movementIds);
   }
+
+  const sourceIds = [...expenseIds, ...paymentRequestIds];
 
   const workItemIds = [];
   if (tableExists(db, 'work_items')) {

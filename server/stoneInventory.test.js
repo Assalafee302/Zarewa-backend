@@ -3,6 +3,7 @@ import { createDatabase } from './db.js';
 import {
   ensureStoneFlatsheetProduct,
   ensureStoneProduct,
+  isStainMeterQuotationLinesJson,
   isStoneMeterQuotationLinesJson,
   stoneFlatsheetProductIdFromSpec,
   stoneProductIdFromSpec,
@@ -30,6 +31,10 @@ describe('stoneInventory ids (pure)', () => {
     // Non-1.4 lengths map to the 2 m SKU slug (1.5 is normalized upstream before calling this).
     expect(stoneFlatsheetProductIdFromSpec('Black', 2)).toBe('STONE-FS-black-2m');
     expect(stoneFlatsheetProductIdFromSpec('Ivory Beige', 2)).toBe('STONE-FS-ivory-beige-2m');
+  });
+
+  it('isStainMeterQuotationLinesJson detects MAT-006 without a database', () => {
+    expect(isStainMeterQuotationLinesJson(null, { materialTypeId: 'MAT-006' })).toBe(true);
   });
 });
 
@@ -74,6 +79,8 @@ describe.skipIf(!mysqlOk)('stoneInventory', () => {
   it('isStoneMeterQuotationLinesJson detects MAT-005', () => {
     expect(isStoneMeterQuotationLinesJson(db, { materialTypeId: 'MAT-005' })).toBe(true);
     expect(isStoneMeterQuotationLinesJson(db, { materialTypeId: 'MAT-002' })).toBe(false);
+    expect(isStoneMeterQuotationLinesJson(db, { materialTypeId: 'MAT-006' })).toBe(false);
+    expect(isStainMeterQuotationLinesJson(db, { materialTypeId: 'MAT-006' })).toBe(true);
   });
 
   it('isStoneMeterQuotationLinesJson accepts JSON string from quotations.lines_json', () => {

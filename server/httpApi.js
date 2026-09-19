@@ -7419,7 +7419,7 @@ export function registerHttpApi(app, db) {
         const productionJob = getProductionJob(db, r.jobID);
         res.status(201).json(
           withWriteDelta(
-            { ok: true, jobID: r.jobID, cuttingList, productionJob },
+            { ...r, cuttingList, productionJob },
             {
               cuttingLists: cuttingList ? [cuttingList] : [],
               productionJobs: productionJob ? [productionJob] : [],

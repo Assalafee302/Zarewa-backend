@@ -4,6 +4,7 @@ import {
   assertQuotationMaterialHeaderRequired,
   quotationMaterialHeaderErrorMessage,
   QUOTATION_MATERIAL_HEADER_CODE,
+  STAIN_SOURCE_MATERIAL_CODE,
 } from './quotationMaterialHeader.js';
 
 describe('quotationMaterialHeader', () => {
@@ -47,5 +48,11 @@ describe('quotationMaterialHeader', () => {
       })
     ).toBe('Quotation material header is incomplete — select profile.');
     expect(quotationMaterialHeaderErrorMessage({ error: 'Nope' })).toBe('Nope');
+    expect(
+      quotationMaterialHeaderErrorMessage({
+        code: STAIN_SOURCE_MATERIAL_CODE,
+        error: 'Stain quotations need a profile so the parent material floor can be used.',
+      })
+    ).toBe('Stain quotations need a profile so the parent material floor can be used.');
   });
 });

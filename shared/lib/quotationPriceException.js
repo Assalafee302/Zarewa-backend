@@ -1,5 +1,7 @@
 /**
- * Below-floor quotation price exceptions: MD or administrator approves before cutting list / production.
+ * Below-floor quotation price exceptions: MD or administrator approves before cutting list / refunds.
+ * Production register and start warn on below-floor prices but do not block — the quote already
+ * passed earlier price-filter stages.
  * Frontend copies via `npm run sync:shared` → src/shared/lib/quotationPriceException.js
  */
 
@@ -67,6 +69,7 @@ export function quotationMdPriceReviewConfirmed(q) {
 
 /**
  * Cutting list / refund blocked until MD approves a flagged below-floor quote.
+ * Production register and start do not use this gate (warn-only).
  * @param {Parameters<typeof quotationBelowFloorPendingMdApproval>[0]} q
  */
 export function quotationRefundBlockedPendingMdPriceConfirm(q) {

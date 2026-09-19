@@ -119,6 +119,8 @@ import {
 } from './pricingAsOf.js';
 import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
+import { resolveStainSourceMaterialTypeId } from './materialWorkbookQuotationPrice.js';
+import { isStainMaterialTypeId } from '../shared/lib/stainMaterialPolicy.js';
 import { PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL } from '../shared/lib/productionJobStatus.js';
 import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
 import {
@@ -1328,6 +1330,9 @@ function blendedFloorPpmFromQuoteLineStamps(db, quote, pricingAsAtIso) {
   const headerCtx = {
     asAtIso: pricingAsAtIso,
     materialTypeId: linesParsed?.materialTypeId ?? linesParsed?.materialType,
+    stainSourceMaterialTypeId: isStainMaterialTypeId(linesParsed?.materialTypeId ?? linesParsed?.materialType)
+      ? resolveStainSourceMaterialTypeId(db, linesParsed)
+      : '',
     materialGauge: linesParsed?.materialGauge,
     materialDesign: linesParsed?.materialDesign ?? linesParsed?.materialColor,
   };
@@ -5611,7 +5616,7 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
       ok: false,
       mdReviewPending: true,
       mdReviewError:
-        'This quotation is below the material pricing workbook floor. The Managing Director or an administrator must approve the below-floor price exception before a cutting list, production, or customer refund can proceed.',
+        'This quotation is below the material pricing workbook floor. The Managing Director or an administrator must approve the below-floor price exception before a cutting list or customer refund can proceed.',
     };
   }
   return {

@@ -11,6 +11,10 @@ import {
   publishedListPriceFromWorkbook,
   resolveMaterialWorkbookPriceFromRows,
 } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import {
+  isStainMaterialTypeId,
+  STAIN_SOURCE_MATERIAL_TYPE_IDS,
+} from '../shared/lib/stainMaterialPolicy.js';
 
 export {
   gaugeMmKeyFromLabel,
@@ -101,6 +105,32 @@ export function materialKeyFromMaterialTypeId(db, materialTypeId) {
   } catch {
     return materialKeyFromMaterialTypeRow({ id });
   }
+}
+
+/**
+ * Parent Aluminium / Aluzinc / Stone type id for a Stain quotation (explicit stamp or profile).
+ * @param {import('better-sqlite3').Database} db
+ * @param {object | null | undefined} linesJson
+ * @returns {string}
+ */
+export function resolveStainSourceMaterialTypeId(db, linesJson) {
+  if (!isStainMaterialTypeId(linesJson?.materialTypeId ?? linesJson?.material_type_id)) return '';
+  const explicit = String(linesJson?.stainSourceMaterialTypeId ?? '').trim();
+  if (STAIN_SOURCE_MATERIAL_TYPE_IDS.has(explicit)) return explicit;
+  const design = String(linesJson?.materialDesign ?? linesJson?.material_design ?? '').trim();
+  if (!design || !db) return '';
+  try {
+    const row = db
+      .prepare(
+        `SELECT material_type_id FROM setup_profiles WHERE lower(trim(name)) = lower(?) AND active = 1 LIMIT 1`
+      )
+      .get(design);
+    const id = String(row?.material_type_id || '').trim();
+    if (STAIN_SOURCE_MATERIAL_TYPE_IDS.has(id)) return id;
+  } catch {
+    /* older DBs */
+  }
+  return '';
 }
 
 function expandedDesignKeys(db, designLabelRaw) {

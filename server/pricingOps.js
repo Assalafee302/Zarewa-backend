@@ -21,8 +21,9 @@ export {
   listPriceListItemsAsOf,
   normalizePricingAsAtIso,
 } from './pricingAsOf.js';
-import { canReadMaterialPricingSheetRows } from './materialWorkbookQuotationPrice.js';
+import { canReadMaterialPricingSheetRows, resolveStainSourceMaterialTypeId } from './materialWorkbookQuotationPrice.js';
 import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import { isStainMaterialTypeId } from '../shared/lib/stainMaterialPolicy.js';
 
 export { lineParticipatesInSheetFloorGate } from './pricingPolicyResolve.js';
 import { quotationTrimWorkbookFloorViolations } from '../shared/lib/materialWorkbookTrimPrice.js';
@@ -225,6 +226,9 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const headerColour = String(parsed?.materialColor ?? '').trim();
   const headerDesign = String(parsed?.materialDesign ?? '').trim();
   const headerMaterialTypeId = String(parsed?.materialTypeId ?? '').trim();
+  const stainSourceMaterialTypeId = isStainMaterialTypeId(headerMaterialTypeId)
+    ? resolveStainSourceMaterialTypeId(db, parsed)
+    : '';
   const products = Array.isArray(parsed?.products) ? parsed.products : [];
   const services = Array.isArray(parsed?.services) ? parsed.services : [];
   const branchId = quoteRow.branch_id != null ? String(quoteRow.branch_id).trim() || null : null;
@@ -244,6 +248,7 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
   }
   const headerCtx = {
     materialTypeId: headerMaterialTypeId,
+    stainSourceMaterialTypeId,
     materialGauge: headerGauge,
     // Product names wrongly stored as profile must not drive workbook design matching.
     materialDesign: isMeterSheetProductLine(headerDesign) ? '' : headerDesign,
@@ -648,7 +653,8 @@ export function actorMayApproveMdPriceException(actor) {
 }
 
 /**
- * MD or administrator approves below-floor pricing — required before cutting list and production.
+ * MD or administrator approves below-floor pricing — required before cutting list and refunds.
+ * Production does not wait on this approval (warn-only).
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationId
  * @param {object} actor

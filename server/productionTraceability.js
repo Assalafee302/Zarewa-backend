@@ -20,11 +20,10 @@ import {
   validateProductionEditAgainstPaidRefunds,
 } from './refundPaidProductionEditGate.js';
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
-import { quotationPriceViolations } from './pricingOps.js';
-import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { validateQuotationProductionPaymentGate, recalculateCoilLotBook } from './writeOps.js';
 import { getQuotation } from './readModel.js';
 import {
+  isStainMeterQuotationLinesJson,
   isStoneMeterQuotationLinesJson,
   resolveStoneRawProductIdForQuotation,
 } from './stoneInventory.js';
@@ -324,6 +323,20 @@ function jobIsStoneMeter(db, job) {
     return false;
   }
   return isStoneMeterQuotationLinesJson(db, j);
+}
+
+function jobIsStainMeter(db, job) {
+  const ref = String(job?.quotation_ref ?? '').trim();
+  if (!ref) return false;
+  const row = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(ref);
+  if (!row) return false;
+  let j = {};
+  try {
+    j = JSON.parse(String(row.lines_json || '{}'));
+  } catch {
+    return false;
+  }
+  return isStainMeterQuotationLinesJson(db, j);
 }
 
 /** Quotation shape for shared coil-allocation policy (stone hybrid Flat sheet / gutter / Coil). */
@@ -1037,6 +1050,32 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
     }
   }
 
+  if (jobIsStainMeter(db, job)) {
+    if (append) {
+      return { ok: false, error: 'Stain jobs cannot add coil allocations.' };
+    }
+    if (Array.isArray(allocations) && allocations.length > 0) {
+      return { ok: false, error: 'Stain jobs use stain incident metres, not coil allocations.' };
+    }
+    try {
+      db.transaction(() => {
+        db.prepare(`DELETE FROM production_job_coils WHERE job_id = ?`).run(jobID);
+        refreshJobCoilSpecFlagsTx(db, jobID);
+        appendAuditLog(db, {
+          actor: opts.actor,
+          action: 'production.allocate_stain',
+          entityKind: 'production_job',
+          entityId: jobID,
+          note: 'Stain job — issue coil_stain metres on complete',
+          details: { jobID },
+        });
+      })();
+      return { ok: true, allocations: [] };
+    } catch (error) {
+      return { ok: false, error: String(error.message || error) };
+    }
+  }
+
   if (status !== 'Planned') {
     return { ok: false, error: 'Coil allocation must be completed before the job starts.' };
   }
@@ -1171,6 +1210,13 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
   }
 }
 
+/**
+ * Start a planned production job.
+ * Below-floor price does not block start — the quote already passed earlier price-filter
+ * stages; violations are returned as warnings.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} jobID
+ */
 export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
@@ -1188,42 +1234,23 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
     const refundProdBlock = assertQuotationProductionNotBlockedByRefund(db, qref);
     if (!refundProdBlock.ok) return refundProdBlock;
   }
+  let priceFloorWarn = null;
   if (qref) {
-    const quote = db
-      .prepare(
-        `SELECT id, lines_json, branch_id, date_iso, paid_ngn,
-                md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
-         FROM quotations WHERE id = ?`
-      )
-      .get(qref);
-    if (quote) {
-      const { violations, hasFloorRows } = quotationPriceViolations(db, quote);
-      if (
-        hasFloorRows &&
-        violations.length > 0 &&
-        !quotationBelowFloorExceptionApproved({
-          mdPriceExceptionApprovedAtISO: quote.md_price_exception_approved_at_iso,
-          priceExceptionMdConfirmedAtISO: quote.price_exception_md_confirmed_at_iso,
-        })
-      ) {
-        return {
-          ok: false,
-          code: 'PRICE_LIST_MD_APPROVAL_REQUIRED',
-          error:
-            'Quoted price is below the workbook floor on one or more lines. The Managing Director or an administrator must approve a below-floor price exception before production can start.',
-          violations,
-        };
-      }
-      const payGate = validateQuotationProductionPaymentGate(db, qref);
-      if (!payGate.ok) {
-        return { ok: false, error: payGate.error, code: payGate.code };
-      }
+    const payGate = validateQuotationProductionPaymentGate(db, qref);
+    if (!payGate.ok) {
+      return { ok: false, error: payGate.error, code: payGate.code };
+    }
+    if (payGate.warnings?.length) {
+      priceFloorWarn = {
+        warnings: payGate.warnings,
+        warning: payGate.warning,
+      };
     }
   }
   const allocations = listJobCoilsForJob(db, jobID);
   const startMode = completionModeFromPayload(payload);
   /* Pure alu needs coils (unless offcut start). Stone pure and stone hybrid may start without coils. */
-  if (!allocations.length && !jobIsStoneMeter(db, job) && startMode !== 'offcut') {
+  if (!allocations.length && !jobIsStoneMeter(db, job) && startMode !== 'offcut' && !jobIsStainMeter(db, job)) {
     return { ok: false, error: 'Allocate at least one coil before starting production.' };
   }
   const startedAtISO = normalizeIso(payload.startedAtISO || job.start_date_iso || nowIso());
@@ -1244,11 +1271,24 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
         action: 'production.start',
         entityKind: 'production_job',
         entityId: jobID,
-        note: `Production started on ${jobID}`,
-        details: { startedAtISO, coilCount: allocations.length, startMode, by: actorName(opts.actor) },
+        note: priceFloorWarn?.warning
+          ? `Production started on ${jobID} (below-floor price warning)`
+          : `Production started on ${jobID}`,
+        details: {
+          startedAtISO,
+          coilCount: allocations.length,
+          startMode,
+          by: actorName(opts.actor),
+          ...(priceFloorWarn
+            ? {
+                priceFloorWarning: true,
+                priceFloorViolations: priceFloorWarn.warnings,
+              }
+            : {}),
+        },
       });
     })();
-    return { ok: true };
+    return { ok: true, ...(priceFloorWarn || {}) };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
   }
@@ -1962,9 +2002,15 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
   if (!Number.isFinite(metres) || metres < 0) {
     return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
   }
+  if (jobIsStainMeter(db, job) && metres > 0 && offcutSupplyList.length === 0) {
+    return {
+      ok: false,
+      error: 'Stain quotations must be completed by issuing matching stain incident metres.',
+    };
+  }
   // Offcut/accessories completion previously skipped every guard the coil completion path
   // enforces: a job could jump straight from Planned to Completed (never started, so the
-  // below-floor MD price gate and payment re-gate in startProductionJob never ran), and a
+  // payment re-gate in startProductionJob never ran), and a
   // job under a paid refund could still book new output. Both are checked the same way the
   // coil path checks them, before any writes.
   const jobStatusOffcut = String(job.status ?? 'Planned');
@@ -2163,7 +2209,7 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   if (jobIsStoneMeter(db, job) && !jobExpectsCoilAllocation(db, job)) {
     return completeProductionJobStone(db, job, jobID, payload, opts);
   }
-  if (completionModeFromPayload(payload) === 'offcut') {
+  if (jobIsStainMeter(db, job) || completionModeFromPayload(payload) === 'offcut') {
     return completeProductionJobOffcut(db, job, jobID, payload, opts);
   }
   const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());

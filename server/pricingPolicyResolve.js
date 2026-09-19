@@ -8,6 +8,7 @@ import {
   workbookFloorPerMeterForQuotation,
 } from './materialWorkbookQuotationPrice.js';
 import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import { applyStainFloorIfNeeded, isStainMaterialTypeId, stainWorkbookMaterialTypeId } from '../shared/lib/stainMaterialPolicy.js';
 
 /**
  * MD / workbook floor gates apply to roofing & flat sheet products, and to service
@@ -200,25 +201,27 @@ export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
     isMeterSheetProductLine(productName) ||
     (!String(line?.lineKind ?? '').trim() && isMeterSheetProductLine(line?.name));
   if (isMeterSheet && headerCtx) {
+    const lookupTypeId = stainWorkbookMaterialTypeId(headerCtx) || headerCtx.materialTypeId;
     const mk =
-      materialKeyFromMaterialTypeId(db, headerCtx.materialTypeId) ||
+      materialKeyFromMaterialTypeId(db, lookupTypeId) ||
       normKey(line?.materialType ?? line?.materialTypeKey ?? '');
     const wbCtx = {
       materialKey: mk,
-      materialTypeId: headerCtx.materialTypeId,
+      materialTypeId: lookupTypeId,
       gaugeLabel: headerCtx.materialGauge ?? line?.gauge ?? line?.gaugeLabel,
       designLabel: headerCtx.materialDesign ?? line?.design ?? line?.profile,
       branchId,
     };
     const live = workbookFloorPerMeterForQuotation(db, wbCtx);
+    const asStain = (n) => applyStainFloorIfNeeded(n, headerCtx);
     if (asAtIso) {
       const asOf = workbookFloorPerMeterForQuotation(db, { ...wbCtx, asAtIso });
       // Freeze against later raises (as-of), but allow a corrected lower live Floor to clear
       // false MD flags the same day (e.g. sheet ₦4700 after an earlier ₦4800 save).
-      if (asOf != null && asOf > 0 && live != null && live > 0) return Math.min(asOf, live);
-      if (asOf != null && asOf > 0) return asOf;
+      if (asOf != null && asOf > 0 && live != null && live > 0) return asStain(Math.min(asOf, live));
+      if (asOf != null && asOf > 0) return asStain(asOf);
     }
-    if (live != null && live > 0) return live;
+    if (live != null && live > 0) return asStain(live);
     // Published list is selling price (floor + commission), not the MD floor.
     // Do not treat price_list_items as the floor for roofing / flat sheet.
     return null;
@@ -300,6 +303,12 @@ export function applyPricingSnapshotsToServices(db, services, branchId, headerCt
       const prev = Math.round(Number(line.floorPricePerMeter) || 0);
       // Never raise a prior stamp to list/higher live — freeze can only stay or drop to workbook min.
       line.floorPricePerMeter = prev > 0 ? Math.min(prev, nums.floor) : nums.floor;
+      if (isStainMaterialTypeId(headerCtx?.materialTypeId)) {
+        const up = Number(line.unitPrice ?? line.unitPricePerMeter);
+        if (!Number.isFinite(up) || up <= 0) {
+          line.unitPrice = nums.floor;
+        }
+      }
     }
     if (nums.recommended != null) {
       const had = Number(line.recommendedPricePerMeter);

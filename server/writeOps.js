@@ -42,9 +42,11 @@ import {
   assertQuotationLineIntegrity,
   assertQuotationMaterialRules,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
-import { assertQuotationMaterialHeaderRequired } from '../shared/lib/quotationMaterialHeader.js';
+import { assertQuotationMaterialHeaderRequired, STAIN_SOURCE_MATERIAL_CODE } from '../shared/lib/quotationMaterialHeader.js';
 import { canonicalGaugeLabelForBranchInput } from '../shared/lib/gaugeDisplayAlias.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
+import { resolveStainSourceMaterialTypeId } from './materialWorkbookQuotationPrice.js';
+import { isStainMaterialTypeId } from '../shared/lib/stainMaterialPolicy.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import {
@@ -102,6 +104,33 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
   };
   enrich(linesJson.products);
   enrich(linesJson.services);
+}
+
+/**
+ * Stamp stainSourceMaterialTypeId from payload or selected profile so workbook floor uses the parent family.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} linesJson
+ * @param {object} [payload]
+ */
+function applyStainQuotationHeader(db, linesJson, payload = {}) {
+  if (!linesJson || typeof linesJson !== 'object') return;
+  if (payload.stainSourceMaterialTypeId !== undefined) {
+    linesJson.stainSourceMaterialTypeId = String(payload.stainSourceMaterialTypeId ?? '').trim();
+  }
+  if (!isStainMaterialTypeId(linesJson.materialTypeId)) {
+    delete linesJson.stainSourceMaterialTypeId;
+    return;
+  }
+  const src = resolveStainSourceMaterialTypeId(db, linesJson);
+  if (!src) {
+    const err = new Error(
+      'Stain quotations need a profile so the parent material floor can be used (Aluminium, Aluzinc, or Stone coated).'
+    );
+    err.code = STAIN_SOURCE_MATERIAL_CODE;
+    err.statusCode = 422;
+    throw err;
+  }
+  linesJson.stainSourceMaterialTypeId = src;
 }
 import { isCuttingListProductionCompleted, isCuttingListCancelledNotProduced, linkedProductionJobForCuttingList } from './cuttingListProductionGate.js';
 import {
@@ -6990,7 +7019,12 @@ function quotationRecordedCashPaidNgn(db, quotationRef, branchId) {
   return cashFromReceipts + advanceApplied;
 }
 
-function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId, { forDraft = false, skipDuplicateCheck = false } = {}) {
+function validateQuotationForCuttingList(
+  db,
+  quotationRef,
+  excludeCuttingListId,
+  { forDraft = false, skipDuplicateCheck = false, skipPriceFloorGate = false } = {}
+) {
   const qref = String(quotationRef ?? '').trim();
   if (!qref) return { ok: false, error: 'Link a quotation.' };
   const qrow = db
@@ -7029,24 +7063,25 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   } catch {
     /* non-blocking sync */
   }
-  if (!forDraft) {
-    const priceMapped = {
-      mdPriceExceptionApprovedAtISO: qrow.md_price_exception_approved_at_iso,
-      priceExceptionMdConfirmedAtISO: qrow.price_exception_md_confirmed_at_iso,
-      priceExceptionMdReviewRequired: qrow.price_exception_md_review_required,
+  const priceMapped = {
+    mdPriceExceptionApprovedAtISO: qrow.md_price_exception_approved_at_iso,
+    priceExceptionMdConfirmedAtISO: qrow.price_exception_md_confirmed_at_iso,
+    priceExceptionMdReviewRequired: qrow.price_exception_md_review_required,
+  };
+  const pendingBelowFloor =
+    hasFloorRows && violations.length > 0 && !quotationBelowFloorExceptionApproved(priceMapped);
+  // Cutting list still hard-blocks until MD/admin approve. Production re-checks (register /
+  // start) only warn: the quote already passed sales / cutting-list price stages.
+  if (!forDraft && !skipPriceFloorGate && pendingBelowFloor) {
+    return {
+      ok: false,
+      code: 'BELOW_FLOOR_MD_APPROVAL_REQUIRED',
+      error: BELOW_FLOOR_MD_GATE_MESSAGE,
+      violations,
     };
-    if (hasFloorRows && violations.length > 0 && !quotationBelowFloorExceptionApproved(priceMapped)) {
-      return {
-        ok: false,
-        code: 'BELOW_FLOOR_MD_APPROVAL_REQUIRED',
-        error: BELOW_FLOOR_MD_GATE_MESSAGE,
-        violations,
-      };
-    }
   }
-  // Draft CL may proceed with below-floor lines; warnings attach below and review flag is synced above.
-  const draftFloorWarnings =
-    forDraft && hasFloorRows && violations.length > 0 ? violations : null;
+  // Draft CL and production re-gates may proceed with below-floor lines; warnings attach below.
+  const floorWarnings = (forDraft || skipPriceFloorGate) && pendingBelowFloor ? violations : null;
   const managerOk = productionGateOverrideEffective(qrow);
   const bid = String(qrow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
   let minPaidFrac = 0.7;
@@ -7092,7 +7127,7 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
         return {
           ok: true,
           existingDraftId: existing.id,
-          ...(draftFloorWarnings ? { warnings: draftFloorWarnings } : {}),
+          ...(floorWarnings ? { warnings: floorWarnings } : {}),
         };
       }
       // Final save while a draft is still on file — upgrade that draft instead of rejecting.
@@ -7106,13 +7141,25 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   }
   return {
     ok: true,
-    ...(draftFloorWarnings ? { warnings: draftFloorWarnings } : {}),
+    ...(floorWarnings
+      ? {
+          warnings: floorWarnings,
+          ...(skipPriceFloorGate ? { warning: BELOW_FLOOR_PRODUCTION_WARN_MESSAGE } : {}),
+        }
+      : {}),
   };
 }
 
-/** Re-validate production payment gate when starting a job (cutting list may have been created earlier). */
+/**
+ * Re-validate payment when registering or starting a job (cutting list may have been created earlier).
+ * Price-floor violations are warnings only — do not stop production because of price.
+ */
 export function validateQuotationProductionPaymentGate(db, quotationRef) {
-  return validateQuotationForCuttingList(db, quotationRef, null, { forDraft: false, skipDuplicateCheck: true });
+  return validateQuotationForCuttingList(db, quotationRef, null, {
+    forDraft: false,
+    skipDuplicateCheck: true,
+    skipPriceFloorGate: true,
+  });
 }
 
 export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_ID) {
@@ -7550,11 +7597,18 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
     };
   }
   const quotationRef = String(payload.quotationRef ?? cuttingList?.quotation_ref ?? '').trim();
+  let priceFloorWarn = null;
   if (quotationRef) {
     const prodBlock = assertQuotationProductionNotBlockedByRefund(db, quotationRef);
     if (!prodBlock.ok) return prodBlock;
     const payGate = validateQuotationProductionPaymentGate(db, quotationRef);
     if (!payGate.ok) return payGate;
+    if (payGate.warnings?.length) {
+      priceFloorWarn = {
+        warnings: payGate.warnings,
+        warning: payGate.warning || BELOW_FLOOR_PRODUCTION_WARN_MESSAGE,
+      };
+    }
   }
   const customerID = String(payload.customerID ?? cuttingList?.customer_id ?? '').trim();
   const customerName = String(payload.customerName ?? cuttingList?.customer_name ?? '').trim();
@@ -7676,7 +7730,7 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
     return { ok: false, error: String(e.message || e) };
   }
 
-  return { ok: true, jobID };
+  return { ok: true, jobID, ...(priceFloorWarn || {}) };
 }
 
 export function setProductionJobStatus(db, jobID, status) {
@@ -9519,6 +9573,8 @@ function parseQuotationLinesJsonObject(raw) {
 
 const BELOW_FLOOR_MD_GATE_MESSAGE =
   'Quoted price is below the material pricing workbook floor on one or more lines. The Managing Director or an administrator must approve a below-floor price exception before a cutting list can be created.';
+const BELOW_FLOOR_PRODUCTION_WARN_MESSAGE =
+  'Quoted price is below the workbook floor on one or more lines. Production can proceed; an MD price exception remains outstanding for review and refunds.';
 
 /**
  * @param {import('better-sqlite3').Database} db
@@ -9737,6 +9793,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
+  applyStainQuotationHeader(db, linesJson, payload);
   assertQuotationMaterialHeaderRequired(linesJson);
   assertQuotationLineIntegrity(linesJson);
   assertServiceAssignments(db, linesJson, bid);
@@ -9745,6 +9802,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
   const pricingHeaderCtx = {
     materialTypeId: linesJson.materialTypeId,
+    stainSourceMaterialTypeId: linesJson.stainSourceMaterialTypeId,
     materialGauge: linesJson.materialGauge,
     materialDesign: linesJson.materialDesign,
     asAtIso: dateISO,
@@ -10013,13 +10071,23 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
+  if (
+    payload.stainSourceMaterialTypeId !== undefined ||
+    payload.materialTypeId !== undefined ||
+    payload.materialDesign !== undefined
+  ) {
+    applyStainQuotationHeader(db, linesJson, payload);
+  } else if (isStainMaterialTypeId(linesJson.materialTypeId) && !String(linesJson.stainSourceMaterialTypeId || '').trim()) {
+    applyStainQuotationHeader(db, linesJson, payload);
+  }
 
   const materialHeaderTouched =
     payload.lines != null ||
     payload.materialGauge !== undefined ||
     payload.materialColor !== undefined ||
     payload.materialDesign !== undefined ||
-    payload.materialTypeId !== undefined;
+    payload.materialTypeId !== undefined ||
+    payload.stainSourceMaterialTypeId !== undefined;
   if (materialHeaderTouched) {
     const prodBlock = assertQuotationLineEditAgainstProduction(db, quotationId);
     if (!prodBlock.ok) {
@@ -10042,6 +10110,7 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
     const quoteDateIso = String(payload.dateISO ?? existing.date_iso ?? '').trim().slice(0, 10);
     const pricingHeaderCtx = {
       materialTypeId: linesJson.materialTypeId,
+      stainSourceMaterialTypeId: linesJson.stainSourceMaterialTypeId,
       materialGauge: linesJson.materialGauge,
       materialDesign: linesJson.materialDesign,
       ...(quoteDateIso.match(/^\d{4}-\d{2}-\d{2}$/) ? { asAtIso: quoteDateIso } : {}),

@@ -1,4 +1,5 @@
 export const QUOTATION_MATERIAL_HEADER_CODE = 'QUOTATION_MATERIAL_HEADER_REQUIRED';
+export const STAIN_SOURCE_MATERIAL_CODE = 'STAIN_SOURCE_MATERIAL_REQUIRED';
 
 /**
  * Every quotation must carry material type, gauge, colour, and profile (design) on lines_json header.
@@ -40,6 +41,12 @@ export function assertQuotationMaterialHeaderRequired(linesJson) {
  * @param {{ code?: string, error?: string } | null | undefined} data
  */
 export function quotationMaterialHeaderErrorMessage(data) {
-  if (!data || data.code !== QUOTATION_MATERIAL_HEADER_CODE) return data?.error || '';
+  if (!data) return '';
+  if (data.code === STAIN_SOURCE_MATERIAL_CODE) {
+    return String(
+      data.error || 'Stain quotations need a profile so the parent material floor can be used.'
+    ).trim();
+  }
+  if (data.code !== QUOTATION_MATERIAL_HEADER_CODE) return data?.error || '';
   return String(data.error || 'Complete material type, gauge, colour, and profile.').trim();
 }

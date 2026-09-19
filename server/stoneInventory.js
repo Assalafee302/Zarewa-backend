@@ -3,6 +3,7 @@
  */
 
 import { INVENTORY_MODEL, STONE_COATED_MATERIAL_TYPE_ID } from './inventoryConstants.js';
+import { quotationIsStainMeterHeader } from '../shared/lib/stainMaterialPolicy.js';
 import { normalizeStoneFlatsheetLengthM } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { ensureNonCoilProductRowsForAllBranches, getProductRowForWorkspace } from './productBranchInventory.js';
 import { requireExplicitBranchId } from './branches.js';
@@ -255,6 +256,30 @@ export function isStoneMeterQuotationLinesJson(db, linesJson) {
   if (mid) {
     const m = inventoryModelForMaterialTypeId(db, mid);
     if (m === INVENTORY_MODEL.STONE_METER) return true;
+  }
+  return false;
+}
+
+/**
+ * Type of material = Stain (damaged-coil seconds sold from coil_stain incident metres).
+ * @param {import('better-sqlite3').Database} db
+ * @param {object | string | null | undefined} linesJson
+ */
+export function isStainMeterQuotationLinesJson(db, linesJson) {
+  let j = linesJson;
+  if (typeof j === 'string') {
+    try {
+      j = JSON.parse(j || '{}');
+    } catch {
+      j = {};
+    }
+  }
+  j = j && typeof j === 'object' ? j : {};
+  if (quotationIsStainMeterHeader(j)) return true;
+  const mid = String(j.materialTypeId || '').trim();
+  if (mid) {
+    const m = inventoryModelForMaterialTypeId(db, mid);
+    if (m === INVENTORY_MODEL.STAIN_METER) return true;
   }
   return false;
 }

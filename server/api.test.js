@@ -3896,7 +3896,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(r2.body.allocations[0].openingWeightKg).toBe(1200);
   });
 
-  it('PATCH manager-review-signoff records remark and clears open review flag', async () => {
+  it('PATCH manager-review-signoff lets branch manager clear without a KPI code', async () => {
     const sup = await agent.post('/api/suppliers').send({ name: 'Signoff Supplier', city: 'Kano' });
     expect(sup.status).toBe(201);
     const po = await agent.post('/api/purchase-orders').send({
@@ -3970,7 +3970,9 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(done.status).toBe(200);
     expect(done.body.managerReviewRequired).toBe(true);
 
-    const so = await agent.patch(`/api/production-jobs/${encodeURIComponent(jobId)}/manager-review-signoff`).send({
+    const mgr = request.agent(app);
+    await loginAs(mgr, 'sales.manager', 'Sales@123');
+    const so = await mgr.patch(`/api/production-jobs/${encodeURIComponent(jobId)}/manager-review-signoff`).send({
       remark: 'Reviewed variance — acceptable scrap margin.',
     });
     expect(so.status).toBe(200);

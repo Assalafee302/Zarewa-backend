@@ -49,6 +49,15 @@ export function cuttingListEditNeedsSecondApprovalClient(roleKey, cuttingList) {
   return cuttingListIsPushedToProductionClient(cuttingList);
 }
 
+/**
+ * Conversion review sign-off is a first-party BM/MD action (`production.release`).
+ * Branch managers clear it with a remark only — no KPI / edit-approval code.
+ * @param {string} [_roleKey]
+ */
+export function conversionSignoffNeedsSecondApprovalClient(_roleKey) {
+  return false;
+}
+
 const APPROVER_ROLES = new Set([
   'admin',
   'md',

@@ -279,6 +279,7 @@ import {
   rejectEditApproval,
   createEditApprovalRequest,
   cuttingListEditRequiresEditApproval,
+  conversionSignoffRequiresEditApproval,
   getEditApproval,
   getEditApprovalDetail,
   handlePatchWithEditApproval,
@@ -7898,6 +7899,10 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /**
+   * Conversion High/Low sign-off: BM/MD first-party action. No second-party KPI code
+   * (see conversionSignoffRequiresEditApproval). Same permission as production-hold clear.
+   */
   const managerReviewSignoffPerms = ['production.release'];
   /**
    * Who may post completion corrections (coil / accessories / stone flatsheet FG restatements).
@@ -8046,48 +8051,57 @@ export function registerHttpApi(app, db) {
       const jid = req.params.jobId;
       const jg = assertProductionJobIdInWorkspace(db, req, jid);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) => {
-        const r = signOffProductionManagerReview(db, jid, stripped || {}, { actor: req.user });
-        if (r.ok) {
-          const inOuter = Boolean(ctx?.withinEditApprovalTransaction);
-          const wiOpts = inOuter ? { outerTransaction: true } : {};
-          const target = upsertWorkItemBySource(
-            db,
-            {
-              actor: req.user,
-              sourceKind: 'conversion_review',
-              sourceId: jid,
-              branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
-              officeKey: 'branch_manager',
-              responsibleOfficeKey: 'branch_manager',
-              documentClass: 'approval',
-              documentType: 'conversion_review',
-              status: 'approved',
-              title: `Conversion review ${jid}`,
-              summary: String(stripped?.remark || '').trim() || 'Conversion review signed off.',
-              requiresApproval: true,
-              data: { routePath: '/manager' },
-            },
-            wiOpts
-          );
-          if (target.ok) {
-            appendWorkItemDecision(
+      return handlePatchWithEditApproval(
+        res,
+        db,
+        req.user,
+        req.body || {},
+        'production_job',
+        jid,
+        (stripped, ctx) => {
+          const r = signOffProductionManagerReview(db, jid, stripped || {}, { actor: req.user });
+          if (r.ok) {
+            const inOuter = Boolean(ctx?.withinEditApprovalTransaction);
+            const wiOpts = inOuter ? { outerTransaction: true } : {};
+            const target = upsertWorkItemBySource(
               db,
               {
-                workItemId: target.item.id,
                 actor: req.user,
-                actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
-                decisionKey: 'manager_review_signoff',
-                outcomeStatus: 'approved',
-                nextStatus: 'approved',
-                note: String(stripped?.remark || '').trim() || 'Conversion review signed off.',
+                sourceKind: 'conversion_review',
+                sourceId: jid,
+                branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+                officeKey: 'branch_manager',
+                responsibleOfficeKey: 'branch_manager',
+                documentClass: 'approval',
+                documentType: 'conversion_review',
+                status: 'approved',
+                title: `Conversion review ${jid}`,
+                summary: String(stripped?.remark || '').trim() || 'Conversion review signed off.',
+                requiresApproval: true,
+                data: { routePath: '/manager' },
               },
               wiOpts
             );
+            if (target.ok) {
+              appendWorkItemDecision(
+                db,
+                {
+                  workItemId: target.item.id,
+                  actor: req.user,
+                  actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+                  decisionKey: 'manager_review_signoff',
+                  outcomeStatus: 'approved',
+                  nextStatus: 'approved',
+                  note: String(stripped?.remark || '').trim() || 'Conversion review signed off.',
+                },
+                wiOpts
+              );
+            }
           }
-        }
-        return r;
-      });
+          return r;
+        },
+        { requiresEditApproval: conversionSignoffRequiresEditApproval }
+      );
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -8104,8 +8118,15 @@ export function registerHttpApi(app, db) {
       if (!jobId) {
         return res.status(404).json({ ok: false, error: 'No production run for this cutting list.' });
       }
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'cutting_list', clid, (stripped) =>
-        signOffProductionManagerReview(db, jobId, stripped || {}, { actor: req.user })
+      return handlePatchWithEditApproval(
+        res,
+        db,
+        req.user,
+        req.body || {},
+        'cutting_list',
+        clid,
+        (stripped) => signOffProductionManagerReview(db, jobId, stripped || {}, { actor: req.user }),
+        { requiresEditApproval: conversionSignoffRequiresEditApproval }
       );
     } catch (e) {
       console.error(e);

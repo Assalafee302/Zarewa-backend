@@ -515,6 +515,17 @@ export function cuttingListEditRequiresEditApproval(db, user, cuttingListId) {
 }
 
 /**
+ * Conversion High/Low manager sign-off is a first-party BM/MD action (same as production-hold clear).
+ * Gated by `production.release` — branch managers must not need a second-party KPI code.
+ * @param {import('better-sqlite3').Database} _db
+ * @param {object} _user
+ * @param {string} [_entityId]
+ */
+export function conversionSignoffRequiresEditApproval(_db, _user, _entityId) {
+  return false;
+}
+
+/**
  * Receipt finance settlement (first reconcile or revision) is open to Finance/Cashier — no second-party token.
  * @param {import('better-sqlite3').Database} db
  */

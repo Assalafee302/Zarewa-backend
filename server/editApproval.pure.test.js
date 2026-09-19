@@ -13,6 +13,7 @@ import {
   salesReceiptReconciliationIsFinalized,
   cuttingListEditRequiresEditApproval,
   cuttingListIsPushedToProduction,
+  conversionSignoffRequiresEditApproval,
   quotationEditRequiresEditApproval,
   quotationHasActiveSalesReceipts,
 } from './editApproval.js';
@@ -328,6 +329,28 @@ describe('editApproval (no MySQL)', () => {
   it('expense outflow correction skips edit-approval token', () => {
     const finance = { roleKey: 'finance_officer', permissions: ['finance.post'] };
     expect(expenseOutflowCorrectionRequiresEditApproval({}, finance, 'TM-EXP-1')).toBe(false);
+  });
+
+  it('conversion signoff skips edit-approval token for branch manager', () => {
+    const bm = { roleKey: 'sales_manager' };
+    expect(conversionSignoffRequiresEditApproval({}, bm, 'JOB-1')).toBe(false);
+    expect(conversionSignoffRequiresEditApproval({}, { roleKey: 'branch_manager' }, 'JOB-1')).toBe(false);
+
+    const res = mockRes();
+    const db = createMockDb();
+    const executeWrite = vi.fn(() => ({ ok: true }));
+    handlePatchWithEditApproval(
+      res,
+      db,
+      bm,
+      { remark: 'Reviewed variance — acceptable scrap margin.' },
+      'production_job',
+      'JOB-1',
+      executeWrite,
+      { requiresEditApproval: conversionSignoffRequiresEditApproval }
+    );
+    expect(executeWrite).toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
   });
 
   it('createEditApprovalRequest returns EDIT_APPROVAL_ALREADY_PENDING when a pending row exists', () => {

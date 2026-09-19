@@ -853,11 +853,12 @@ const OPERATIONAL_TOPICS = [
     module: 'manager',
     action: 'sign off conversion production review',
     title: 'Conversion review signoff',
-    answer: 'Some jobs need manager signoff after conversion metrics.',
+    answer:
+      'Some jobs need manager signoff after conversion metrics. Branch managers clear this themselves with a remark — no KPI approval code.',
     steps: [
       'Manager → conversion queue.',
       'Enter remark (min length).',
-      'Submit signoff.',
+      'Submit signoff. Branch managers do not need a second-party code.',
     ],
     links: [{ label: 'Manager', to: '/manager' }],
     extraKeywords: ['conversion', 'signoff', 'production review'],

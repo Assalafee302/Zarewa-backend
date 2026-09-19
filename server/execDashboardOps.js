@@ -95,6 +95,7 @@ export const SQL_MD_BELOW_FLOOR_QUEUE = `
   price_exception_md_review_required = 1
   AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
   AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')
+  AND (bm_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(bm_price_exception_approved_at_iso,'')) = '')
   AND IFNULL(paid_ngn, 0) > 0
 `;
 

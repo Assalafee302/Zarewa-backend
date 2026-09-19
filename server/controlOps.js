@@ -1582,7 +1582,7 @@ function ppmValueFromWorkbookLookup(lookup) {
  * When any completed job has metres but no resolvable ₦/m, `incompleteFloorPricing` is true and
  * `maxDefensibleRefundNgn` is null (missing ppm must not inflate the free-cash cap).
  * Produced metres are valued at min(workbook floor, quoted selling ₦/m) so a quote sold at (or
- * below) workbook is not re-blocked on unproduced-metre refunds. MD below-floor approval still
+ * below) workbook is not re-blocked on unproduced-metre refunds. BM/MD below-floor approval still
  * sets `honouredMdPriceException` for audit; the cap applies even when that stamp is missing.
  * @returns {{
  *   producedOutputMeters: number,
@@ -1612,6 +1612,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
     mdPriceExceptionApprovedAtISO: quote?.md_price_exception_approved_at_iso ?? quote?.mdPriceExceptionApprovedAtISO,
     priceExceptionMdConfirmedAtISO:
       quote?.price_exception_md_confirmed_at_iso ?? quote?.priceExceptionMdConfirmedAtISO,
+    bmPriceExceptionApprovedAtISO: quote?.bm_price_exception_approved_at_iso ?? quote?.bmPriceExceptionApprovedAtISO,
   };
   const mdPriceExceptionHonoured = quotationBelowFloorExceptionApproved(quotePriceExceptionShape);
   const quotedSellingPpmRaw =
@@ -4346,7 +4347,7 @@ export function previewRefundRequest(db, payload) {
     })
   ) {
     warnings.push(
-      'Below-floor pricing was approved by the Managing Director or an administrator. The Managing Director must confirm that exception after production before any customer refund.'
+      'This quotation is below the material pricing workbook floor. A branch manager, the Managing Director, or an administrator must approve the below-floor price exception before a cutting list or customer refund can proceed.'
     );
   }
 
@@ -5616,7 +5617,7 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
       ok: false,
       mdReviewPending: true,
       mdReviewError:
-        'This quotation is below the material pricing workbook floor. The Managing Director or an administrator must approve the below-floor price exception before a cutting list or customer refund can proceed.',
+        'This quotation is below the material pricing workbook floor. A branch manager, the Managing Director, or an administrator must approve the below-floor price exception before a cutting list or customer refund can proceed.',
     };
   }
   return {

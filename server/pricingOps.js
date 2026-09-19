@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { appendAuditLog } from './controlOps.js';
-import { actorName } from './auth.js';
 import {
   floorNgnForServiceLine,
   lineParticipatesInSheetFloorGate,
@@ -34,8 +33,11 @@ import {
 } from './materialWorkbookQuotationPrice.js';
 import { listMaterialPricingRowsAsOf } from './pricingAsOf.js';
 import { getPricingPolicyBundle } from './pricingPolicyOps.js';
-import { userHasPermission } from './auth.js';
+import { actorName, normalizeRoleKey, userHasPermission } from './auth.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
+import { DEFAULT_BRANCH_ID } from './branches.js';
+import { createHrNotification } from './hrNotifications.js';
+import { upsertWorkItemBySource, workRegistryTablesReady } from './workItems.js';
 
 function normKey(s) {
   return policyNormKey(s);
@@ -441,7 +443,8 @@ export function reconcileStaleMdBelowFloorFlags(db, opts = {}) {
              FROM quotations
              WHERE price_exception_md_review_required = 1
                AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
-               AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')`;
+               AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')
+               AND (bm_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(bm_price_exception_approved_at_iso,'')) = '')`;
   const args = [];
   if (branchId && branchId !== 'ALL') {
     sql += ` AND branch_id = ?`;
@@ -638,6 +641,15 @@ export function quotationHadClosedProduction(db, quotationRef) {
   );
 }
 
+function actorRoleKey(actor) {
+  return normalizeRoleKey(actor?.roleKey ?? actor?.role_key ?? actor?.role ?? '');
+}
+
+function isBranchManagerRole(actor) {
+  const rk = actorRoleKey(actor);
+  return rk === 'sales_manager' || rk === 'branch_manager';
+}
+
 /**
  * @param {object | null | undefined} actor
  * @returns {boolean}
@@ -646,39 +658,64 @@ export function actorMayApproveMdPriceException(actor) {
   if (!actor) return false;
   if (userHasPermission(actor, '*')) return true;
   if (userHasPermission(actor, 'md.price_exception.approve')) return true;
-  const rk = String(actor?.roleKey ?? actor?.role_key ?? actor?.role ?? '')
-    .trim()
-    .toLowerCase();
-  return rk === 'md';
+  return actorRoleKey(actor) === 'md';
 }
 
 /**
- * MD or administrator approves below-floor pricing — required before cutting list and refunds.
- * Production does not wait on this approval (warn-only).
+ * Branch manager (role key `sales_manager` / `branch_manager`) may approve below-floor quotes.
+ * MD is notified after the fact and does not need to re-approve.
+ * @param {object | null | undefined} actor
+ * @returns {boolean}
+ */
+export function actorMayApproveBranchManagerPriceException(actor) {
+  if (!actor) return false;
+  if (userHasPermission(actor, '*')) return true;
+  if (userHasPermission(actor, 'bm.price_exception.approve')) return true;
+  if (isBranchManagerRole(actor)) return true;
+  return false;
+}
+
+function belowFloorViolationSummary(violations) {
+  return (violations || [])
+    .map(
+      (v) =>
+        `${v.lineCategory || 'line'}#${Number(v.lineIndex) + 1} quoted ${v.quotedPerMeter}/m < floor ${v.floorPerMeter}/m`
+    )
+    .join('; ');
+}
+
+/**
+ * Shared pre-check for BM / MD below-floor approval.
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationId
- * @param {object} actor
  */
-export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
+function quotationBelowFloorApprovalContext(db, quotationId) {
   const qid = String(quotationId || '').trim();
   if (!qid) return { ok: false, error: 'Quotation id required.' };
-  if (!actorMayApproveMdPriceException(actor)) {
-    return {
-      ok: false,
-      error: 'Only the Managing Director or an administrator may approve a below-floor price exception.',
-    };
+  let row;
+  try {
+    row = db
+      .prepare(
+        `SELECT id, lines_json, branch_id, date_iso, customer_name,
+                md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso,
+                bm_price_exception_approved_at_iso
+         FROM quotations WHERE id = ?`
+      )
+      .get(qid);
+  } catch {
+    row = db
+      .prepare(
+        `SELECT id, lines_json, branch_id, date_iso, customer_name,
+                md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
+         FROM quotations WHERE id = ?`
+      )
+      .get(qid);
   }
-  const row = db
-    .prepare(
-      `SELECT id, lines_json, branch_id, date_iso,
-              md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
-       FROM quotations WHERE id = ?`
-    )
-    .get(qid);
   if (!row) return { ok: false, error: 'Quotation not found.' };
   const mapped = {
     mdPriceExceptionApprovedAtISO: row.md_price_exception_approved_at_iso,
     priceExceptionMdConfirmedAtISO: row.price_exception_md_confirmed_at_iso,
+    bmPriceExceptionApprovedAtISO: row.bm_price_exception_approved_at_iso,
   };
   if (quotationBelowFloorExceptionApproved(mapped)) {
     return { ok: false, error: 'Below-floor price exception is already approved for this quotation.' };
@@ -690,14 +727,122 @@ export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
   if (!hasFloorRows) {
     return { ok: false, error: 'Pricing workbook / list is empty; no exception needed.' };
   }
+  return {
+    ok: true,
+    qid,
+    row,
+    violations,
+    snapshotJson: JSON.stringify(violations),
+    violationSummary: belowFloorViolationSummary(violations),
+  };
+}
+
+function listMdNotifyUsers(db) {
+  try {
+    return db
+      .prepare(`SELECT id FROM app_users WHERE status = 'active' AND role_key IN ('md', 'admin') LIMIT 25`)
+      .all();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Informational notice to MD/admin after a branch manager approves below-floor pricing.
+ * Does not require MD to re-approve — cutting list and refunds may proceed.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function notifyMdOfBranchManagerBelowFloorApproval(db, { quotationId, actor, branchId, customerName, violationSummary }) {
+  const qid = String(quotationId || '').trim();
+  if (!qid) return { ok: true, noop: true };
+  const actorLabel = actorName(actor) || 'Branch manager';
+  const customer = String(customerName || '').trim();
+  const body = [
+    `${actorLabel} approved below-floor pricing on ${qid}`,
+    customer,
+    String(violationSummary || '').trim(),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const title = `Below-floor quote ${qid} approved by branch manager`;
+  let notified = 0;
+  try {
+    for (const u of listMdNotifyUsers(db)) {
+      const r = createHrNotification(db, {
+        userId: u.id,
+        kind: 'bm_below_floor_price_exception',
+        title,
+        body,
+        routePath: '/exec',
+        entityKind: 'quotation',
+        entityId: qid,
+      });
+      if (r?.ok) notified += 1;
+    }
+  } catch {
+    /* notifications are best-effort */
+  }
+  try {
+    if (workRegistryTablesReady(db)) {
+      const bid = String(branchId || '').trim() || DEFAULT_BRANCH_ID;
+      upsertWorkItemBySource(db, {
+        actor,
+        sourceKind: 'bm_below_floor_price_exception',
+        sourceId: qid,
+        branchId: bid,
+        officeKey: 'executive',
+        responsibleOfficeKey: 'executive',
+        documentClass: 'report',
+        documentType: 'bm_below_floor_price_exception',
+        status: 'open',
+        priority: 'high',
+        title: `Below-floor price approved by branch manager · ${qid}`,
+        summary: body,
+        body: 'Notification only. The branch manager already approved this below-floor price. Cutting list and refunds may proceed; the Managing Director does not need to re-approve.',
+        requiresResponse: false,
+        requiresApproval: false,
+        senderUserId: actor?.id || null,
+        senderDisplayName: actorLabel,
+        senderRoleKey: actorRoleKey(actor) || 'sales_manager',
+        senderOfficeKey: 'sales',
+        senderBranchId: bid,
+        visibilityEntries: [
+          { visibilityKind: 'role_key', visibilityValue: 'md' },
+          { visibilityKind: 'role_key', visibilityValue: 'admin' },
+          { visibilityKind: 'role_key', visibilityValue: 'ceo' },
+        ],
+        data: {
+          routePath: '/exec',
+          quotationId: qid,
+          approvedByUserId: actor?.id || null,
+          notificationOnly: true,
+        },
+        links: [{ entityKind: 'quotation', entityId: qid }],
+      });
+    }
+  } catch {
+    /* work items are best-effort */
+  }
+  return { ok: true, notified };
+}
+
+/**
+ * MD or administrator approves below-floor pricing — unblocks cutting list and refunds.
+ * Production does not wait on this approval (warn-only).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationId
+ * @param {object} actor
+ */
+export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
+  if (!actorMayApproveMdPriceException(actor)) {
+    return {
+      ok: false,
+      error: 'Only the Managing Director or an administrator may approve a below-floor price exception.',
+    };
+  }
+  const ctx = quotationBelowFloorApprovalContext(db, quotationId);
+  if (!ctx.ok) return ctx;
   const now = new Date().toISOString();
-  const snapshotJson = JSON.stringify(violations);
-  const violationSummary = violations
-    .map(
-      (v) =>
-        `${v.lineCategory || 'line'}#${Number(v.lineIndex) + 1} quoted ${v.quotedPerMeter}/m < floor ${v.floorPerMeter}/m`
-    )
-    .join('; ');
   try {
     db.prepare(
       `UPDATE quotations SET
@@ -706,7 +851,7 @@ export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
         md_price_exception_snapshot_json = ?,
         price_exception_md_review_required = 1
        WHERE id = ?`
-    ).run(now, actor?.id ?? null, snapshotJson, qid);
+    ).run(now, actor?.id ?? null, ctx.snapshotJson, ctx.qid);
   } catch {
     db.prepare(
       `UPDATE quotations SET
@@ -714,31 +859,74 @@ export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
         md_price_exception_approved_by_user_id = ?,
         price_exception_md_review_required = 1
        WHERE id = ?`
-    ).run(now, actor?.id ?? null, qid);
+    ).run(now, actor?.id ?? null, ctx.qid);
   }
   appendAuditLog(db, {
     actor,
     action: 'quotation.md_price_exception_approve',
     entityKind: 'quotation',
-    entityId: qid,
-    note: `${actorName(actor)} — ${violations.length} below-floor line(s): ${violationSummary}`.slice(0, 500),
-    details: { violations, snapshotJson },
+    entityId: ctx.qid,
+    note: `${actorName(actor)} — ${ctx.violations.length} below-floor line(s): ${ctx.violationSummary}`.slice(0, 500),
+    details: { violations: ctx.violations, snapshotJson: ctx.snapshotJson },
   });
   return { ok: true };
 }
 
 /**
- * @deprecated Branch managers may no longer approve below-floor pricing. Use {@link approveMdPriceExceptionForQuotation}.
+ * Branch manager approves below-floor pricing (same gate as MD). MD is notified that this happened.
+ * MD/admin callers are routed to {@link approveMdPriceExceptionForQuotation}.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationId
+ * @param {object} actor
  */
 export function approveBranchManagerPriceExceptionForQuotation(db, quotationId, actor) {
-  void actor;
-  void db;
-  void quotationId;
-  return {
-    ok: false,
-    error:
-      'Below-floor price exceptions require Managing Director or administrator approval. Branch managers cannot approve discounted floor prices.',
-  };
+  if (actorMayApproveMdPriceException(actor) && !isBranchManagerRole(actor)) {
+    return approveMdPriceExceptionForQuotation(db, quotationId, actor);
+  }
+  if (!actorMayApproveBranchManagerPriceException(actor)) {
+    return {
+      ok: false,
+      error:
+        'Only a branch manager (or the Managing Director / administrator) may approve a below-floor price exception.',
+    };
+  }
+  const ctx = quotationBelowFloorApprovalContext(db, quotationId);
+  if (!ctx.ok) return ctx;
+  const now = new Date().toISOString();
+  try {
+    db.prepare(
+      `UPDATE quotations SET
+        bm_price_exception_approved_at_iso = ?,
+        bm_price_exception_approved_by_user_id = ?,
+        md_price_exception_snapshot_json = ?,
+        price_exception_md_review_required = 1
+       WHERE id = ?`
+    ).run(now, actor?.id ?? null, ctx.snapshotJson, ctx.qid);
+  } catch {
+    db.prepare(
+      `UPDATE quotations SET
+        bm_price_exception_approved_at_iso = ?,
+        bm_price_exception_approved_by_user_id = ?,
+        price_exception_md_review_required = 1
+       WHERE id = ?`
+    ).run(now, actor?.id ?? null, ctx.qid);
+  }
+  appendAuditLog(db, {
+    actor,
+    action: 'quotation.bm_price_exception_approve',
+    entityKind: 'quotation',
+    entityId: ctx.qid,
+    note: `${actorName(actor)} — ${ctx.violations.length} below-floor line(s): ${ctx.violationSummary}`.slice(0, 500),
+    details: { violations: ctx.violations, snapshotJson: ctx.snapshotJson, mdNotified: true },
+  });
+  const notify = notifyMdOfBranchManagerBelowFloorApproval(db, {
+    quotationId: ctx.qid,
+    actor,
+    branchId: ctx.row.branch_id,
+    customerName: ctx.row.customer_name,
+    violationSummary: ctx.violationSummary,
+  });
+  return { ok: true, mdNotified: Number(notify?.notified || 0) > 0 };
 }
 
 /** @deprecated Use {@link approveMdPriceExceptionForQuotation} */

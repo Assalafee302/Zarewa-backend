@@ -57,7 +57,7 @@ function buildQuotationStageActors(db, auditPayload, activityTimeline) {
     bmPriceException: {
       by: resolveUserDisplayName(db, q.bmPriceExceptionApprovedByUserId) || '',
       atIso: q.bmPriceExceptionApprovedAtISO || '',
-      label: 'Below-floor (legacy BM)',
+      label: 'Below-floor (branch manager)',
     },
     mdPriceException: {
       by: mdBy,

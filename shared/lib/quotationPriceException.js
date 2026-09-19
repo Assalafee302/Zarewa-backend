@@ -1,16 +1,19 @@
 /**
- * Below-floor quotation price exceptions: MD or administrator approves before cutting list / refunds.
+ * Below-floor quotation price exceptions: branch manager, MD, or administrator
+ * approves before cutting list / refunds. Branch-manager approval notifies MD
+ * (informational — MD does not need to re-approve).
  * Production register and start warn on below-floor prices but do not block — the quote already
  * passed earlier price-filter stages.
  * Frontend copies via `npm run sync:shared` → src/shared/lib/quotationPriceException.js
  */
 
 /**
- * True when MD (or legacy confirm) has approved the below-floor exception on this quotation.
- * Branch-manager-only approvals no longer satisfy the gate.
+ * True when branch manager, MD, or administrator (or legacy MD confirm) has approved
+ * the below-floor exception on this quotation.
  * @param {{
  *   mdPriceExceptionApprovedAtISO?: string | null;
  *   priceExceptionMdConfirmedAtISO?: string | null;
+ *   bmPriceExceptionApprovedAtISO?: string | null;
  * } | null | undefined} q
  */
 export function quotationBelowFloorExceptionApproved(q) {
@@ -18,6 +21,7 @@ export function quotationBelowFloorExceptionApproved(q) {
   if (String(q.mdPriceExceptionApprovedAtISO || '').trim()) return true;
   /** Legacy post-production MD confirm before single-step workflow. */
   if (String(q.priceExceptionMdConfirmedAtISO || '').trim()) return true;
+  if (String(q.bmPriceExceptionApprovedAtISO || '').trim()) return true;
   return false;
 }
 
@@ -40,11 +44,12 @@ export function quotationHasPaymentForMdBelowFloorQueue(paidNgnOrQuote) {
 }
 
 /**
- * Quote is flagged below floor and still needs MD/admin approval.
+ * Quote is flagged below floor and still needs BM/MD/admin approval.
  * @param {{
  *   priceExceptionMdReviewRequired?: boolean | number | null;
  *   mdPriceExceptionApprovedAtISO?: string | null;
  *   priceExceptionMdConfirmedAtISO?: string | null;
+ *   bmPriceExceptionApprovedAtISO?: string | null;
  * } | null | undefined} q
  */
 export function quotationBelowFloorPendingMdApproval(q) {
@@ -68,7 +73,7 @@ export function quotationMdPriceReviewConfirmed(q) {
 }
 
 /**
- * Cutting list / refund blocked until MD approves a flagged below-floor quote.
+ * Cutting list / refund blocked until BM, MD, or admin approves a flagged below-floor quote.
  * Production register and start do not use this gate (warn-only).
  * @param {Parameters<typeof quotationBelowFloorPendingMdApproval>[0]} q
  */

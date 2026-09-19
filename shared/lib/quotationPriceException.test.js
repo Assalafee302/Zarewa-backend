@@ -25,9 +25,15 @@ describe('quotationPriceException', () => {
     ).toBe(true);
   });
 
-  it('BM-only approval no longer satisfies the gate', () => {
+  it('BM-only approval satisfies the below-floor gate', () => {
     expect(
       quotationBelowFloorExceptionApproved({
+        bmPriceExceptionApprovedAtISO: '2026-01-01',
+        priceExceptionMdReviewRequired: 1,
+      })
+    ).toBe(true);
+    expect(
+      quotationBelowFloorPendingMdApproval({
         bmPriceExceptionApprovedAtISO: '2026-01-01',
         priceExceptionMdReviewRequired: 1,
       })

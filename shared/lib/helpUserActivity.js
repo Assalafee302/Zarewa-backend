@@ -21,7 +21,7 @@ export const TRANSACTION_ACTION_GUIDES = {
   },
   'quotation.delete': { articleId: 'quotation', category: 'quotations', label: 'Quotation delete' },
   'quotation.md_price_exception_approve': { articleId: 'quotation', category: 'quotations', label: 'MD price exception' },
-  'quotation.bm_price_exception_approve': { articleId: 'quotation', category: 'quotations', label: 'Price exception (legacy)' },
+  'quotation.bm_price_exception_approve': { articleId: 'quotation', category: 'quotations', label: 'Branch manager price exception' },
   'payment_request.create': { articleId: 'finance-receipt-clearance', category: 'payments', label: 'Payment request' },
   'period.lock': { articleId: 'period-locked', category: 'errors', label: 'Period lock' },
   'period.unlock': { articleId: 'period-locked', category: 'errors', label: 'Period unlock' },

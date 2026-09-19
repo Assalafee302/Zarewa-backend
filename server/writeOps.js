@@ -7032,7 +7032,7 @@ function validateQuotationForCuttingList(
       `SELECT total_ngn, paid_ngn, manager_production_approved_at_iso, manager_production_approval_level,
               branch_id, lines_json, date_iso, payment_gate_basis_total_ngn,
               md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso,
-              price_exception_md_review_required
+              bm_price_exception_approved_at_iso, price_exception_md_review_required
        FROM quotations WHERE id = ?`
     )
     .get(qref);
@@ -7066,11 +7066,12 @@ function validateQuotationForCuttingList(
   const priceMapped = {
     mdPriceExceptionApprovedAtISO: qrow.md_price_exception_approved_at_iso,
     priceExceptionMdConfirmedAtISO: qrow.price_exception_md_confirmed_at_iso,
+    bmPriceExceptionApprovedAtISO: qrow.bm_price_exception_approved_at_iso,
     priceExceptionMdReviewRequired: qrow.price_exception_md_review_required,
   };
   const pendingBelowFloor =
     hasFloorRows && violations.length > 0 && !quotationBelowFloorExceptionApproved(priceMapped);
-  // Cutting list still hard-blocks until MD/admin approve. Production re-checks (register /
+  // Cutting list still hard-blocks until BM/MD/admin approve. Production re-checks (register /
   // start) only warn: the quote already passed sales / cutting-list price stages.
   if (!forDraft && !skipPriceFloorGate && pendingBelowFloor) {
     return {
@@ -9572,9 +9573,9 @@ function parseQuotationLinesJsonObject(raw) {
 }
 
 const BELOW_FLOOR_MD_GATE_MESSAGE =
-  'Quoted price is below the material pricing workbook floor on one or more lines. The Managing Director or an administrator must approve a below-floor price exception before a cutting list can be created.';
+  'Quoted price is below the material pricing workbook floor on one or more lines. A branch manager, the Managing Director, or an administrator must approve a below-floor price exception before a cutting list can be created.';
 const BELOW_FLOOR_PRODUCTION_WARN_MESSAGE =
-  'Quoted price is below the workbook floor on one or more lines. Production can proceed; an MD price exception remains outstanding for review and refunds.';
+  'Quoted price is below the workbook floor on one or more lines. Production can proceed; a below-floor price exception remains outstanding for review and refunds.';
 
 /**
  * @param {import('better-sqlite3').Database} db
@@ -9652,19 +9653,35 @@ function syncQuotationBelowFloorReviewFlag(
                md_price_exception_approved_by_user_id = NULL,
                md_price_exception_snapshot_json = NULL,
                price_exception_md_confirmed_at_iso = NULL,
-               price_exception_md_confirmed_by_user_id = NULL
+               price_exception_md_confirmed_by_user_id = NULL,
+               bm_price_exception_approved_at_iso = NULL,
+               bm_price_exception_approved_by_user_id = NULL
              WHERE id = ?`
           ).run(qid);
         } catch {
-          db.prepare(
-            `UPDATE quotations SET
-               price_exception_md_review_required = 1,
-               md_price_exception_approved_at_iso = NULL,
-               md_price_exception_approved_by_user_id = NULL,
-               price_exception_md_confirmed_at_iso = NULL,
-               price_exception_md_confirmed_by_user_id = NULL
-             WHERE id = ?`
-          ).run(qid);
+          try {
+            db.prepare(
+              `UPDATE quotations SET
+                 price_exception_md_review_required = 1,
+                 md_price_exception_approved_at_iso = NULL,
+                 md_price_exception_approved_by_user_id = NULL,
+                 price_exception_md_confirmed_at_iso = NULL,
+                 price_exception_md_confirmed_by_user_id = NULL,
+                 bm_price_exception_approved_at_iso = NULL,
+                 bm_price_exception_approved_by_user_id = NULL
+               WHERE id = ?`
+            ).run(qid);
+          } catch {
+            db.prepare(
+              `UPDATE quotations SET
+                 price_exception_md_review_required = 1,
+                 md_price_exception_approved_at_iso = NULL,
+                 md_price_exception_approved_by_user_id = NULL,
+                 price_exception_md_confirmed_at_iso = NULL,
+                 price_exception_md_confirmed_by_user_id = NULL
+               WHERE id = ?`
+            ).run(qid);
+          }
         }
       } else {
         db.prepare(`UPDATE quotations SET price_exception_md_review_required = 1 WHERE id = ?`).run(qid);

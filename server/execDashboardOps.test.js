@@ -266,6 +266,7 @@ describe('execDashboardOps', () => {
     expect(quotationHasPaymentForMdBelowFloorQueue(null)).toBe(false);
     expect(quotationHasPaymentForMdBelowFloorQueue(50_000)).toBe(true);
     expect(SQL_MD_BELOW_FLOOR_QUEUE).toMatch(/IFNULL\(paid_ngn,\s*0\)\s*>\s*0/);
+    expect(SQL_MD_BELOW_FLOOR_QUEUE).toMatch(/bm_price_exception_approved_at_iso/);
   });
 
   it('topCustomersByDebt row shape includes debt risk and drill routes', () => {

@@ -5826,15 +5826,29 @@ export function registerHttpApi(app, db) {
     }
   );
 
-  /** @deprecated Branch managers may no longer approve below-floor pricing. */
   app.patch(
     '/api/quotations/:quotationId/bm-price-exception',
-    requirePermission('refunds.approve'),
+    requirePermission(['refunds.approve', 'bm.price_exception.approve']),
     (req, res) => {
       try {
         const qid = String(req.params.quotationId || '');
         const r = approveBranchManagerPriceExceptionForQuotation(db, qid, req.user);
-        return res.status(403).json({ ...r, deprecated: true });
+        if (!r.ok) {
+          const denied = /only a branch manager|managing director or an administrator/i.test(String(r.error || ''));
+          return res.status(denied ? 403 : 400).json(r);
+        }
+        const quotation = getQuotation(db, qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(qid);
+        const pv = quotationPriceViolations(db, rawPv);
+        return res.json({
+          ok: true,
+          mdNotified: Boolean(r.mdNotified),
+          quotation: {
+            ...quotation,
+            pricingViolations: pv.violations,
+            pricingHasFloorRows: pv.hasFloorRows,
+          },
+        });
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Could not record price exception approval.' });

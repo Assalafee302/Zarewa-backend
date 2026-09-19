@@ -158,7 +158,7 @@ export function proposeWorkbookCostRefresh(db, rowId, actor) {
 }
 
 /**
- * MD-approved below-floor quotes — reuses md_price_exception_* columns (no new logging).
+ * Approved below-floor quotes (MD or branch manager) — reuses md/bm_price_exception_* columns.
  * @param {import('better-sqlite3').Database} db
  * @param {{ branchId?: string|null, limit?: number }} [opts]
  */
@@ -168,24 +168,36 @@ export function buildFloorExceptionLog(db, opts = {}) {
   const limit = Math.min(500, Math.max(1, Number(opts.limit) || 200));
   let sql = `SELECT id, customer_id, customer_name, project_name, branch_id, date_iso, total_ngn,
                     md_price_exception_approved_at_iso, md_price_exception_approved_by_user_id,
+                    bm_price_exception_approved_at_iso, bm_price_exception_approved_by_user_id,
                     md_price_exception_snapshot_json, price_exception_md_review_required
              FROM quotations
-             WHERE md_price_exception_approved_at_iso IS NOT NULL
-               AND TRIM(IFNULL(md_price_exception_approved_at_iso, '')) <> ''`;
+             WHERE (
+                    (md_price_exception_approved_at_iso IS NOT NULL AND TRIM(IFNULL(md_price_exception_approved_at_iso, '')) <> '')
+                 OR (bm_price_exception_approved_at_iso IS NOT NULL AND TRIM(IFNULL(bm_price_exception_approved_at_iso, '')) <> '')
+                   )`;
   const args = [];
   if (branchFilter && branchFilter !== 'ALL') {
     sql += ` AND branch_id = ?`;
     args.push(branchFilter);
   }
-  sql += ` ORDER BY md_price_exception_approved_at_iso DESC LIMIT ?`;
+  sql += ` ORDER BY COALESCE(md_price_exception_approved_at_iso, bm_price_exception_approved_at_iso) DESC LIMIT ?`;
   args.push(limit);
 
   let rows = [];
   try {
     rows = db.prepare(sql).all(...args);
   } catch {
-    // Snapshot column may be missing on very stale schema — fall back without it.
+    // Snapshot or BM columns may be missing on very stale schema — fall back without them.
     sql = sql.replace(', md_price_exception_snapshot_json', '');
+    sql = sql.replace(', bm_price_exception_approved_at_iso, bm_price_exception_approved_by_user_id', '');
+    sql = sql.replace(
+      ` OR (bm_price_exception_approved_at_iso IS NOT NULL AND TRIM(IFNULL(bm_price_exception_approved_at_iso, '')) <> '')`,
+      ''
+    );
+    sql = sql.replace(
+      ' ORDER BY COALESCE(md_price_exception_approved_at_iso, bm_price_exception_approved_at_iso) DESC LIMIT ?',
+      ' ORDER BY md_price_exception_approved_at_iso DESC LIMIT ?'
+    );
     try {
       rows = db.prepare(sql).all(...args);
     } catch {
@@ -216,7 +228,11 @@ export function buildFloorExceptionLog(db, opts = {}) {
       (s, d) => s + (d.belowFloorPerMeterNgn != null && d.belowFloorPerMeterNgn > 0 ? d.belowFloorPerMeterNgn : 0),
       0
     );
-    const approvedByUserId = row.md_price_exception_approved_by_user_id || '';
+    const mdStamp = String(row.md_price_exception_approved_at_iso || '').trim();
+    const approvedByUserId = mdStamp
+      ? row.md_price_exception_approved_by_user_id || ''
+      : row.bm_price_exception_approved_by_user_id || '';
+    const approvedAtIso = mdStamp || row.bm_price_exception_approved_at_iso || '';
     return {
       quotationId: row.id,
       customerId: row.customer_id,
@@ -225,9 +241,10 @@ export function buildFloorExceptionLog(db, opts = {}) {
       branchId: row.branch_id,
       dateIso: row.date_iso,
       totalNgn: Number(row.total_ngn) || 0,
-      approvedAtIso: row.md_price_exception_approved_at_iso,
+      approvedAtIso,
       approvedByUserId,
       approvedByName: actorDisplayName(db, approvedByUserId),
+      approvedByRole: mdStamp ? 'md' : 'branch_manager',
       lineCount: lineDeltas.length,
       totalBelowFloorPerMeterNgn: totalBelowNgn,
       lines: lineDeltas,

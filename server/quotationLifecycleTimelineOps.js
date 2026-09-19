@@ -42,9 +42,9 @@ export function buildQuotationLifecycleTimeline(db, quotationId) {
   }
   if (quote.bm_price_exception_approved_at_iso) {
     events.push({
-      kind: 'price_exception_bm_legacy',
+      kind: 'price_exception_bm',
       atISO: quote.bm_price_exception_approved_at_iso,
-      label: 'Legacy BM price exception (superseded)',
+      label: 'Branch manager below-floor price approved',
       detail: null,
       actor: null,
     });

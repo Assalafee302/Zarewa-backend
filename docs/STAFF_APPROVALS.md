@@ -9,7 +9,7 @@ Short reference for day-to-day approvals in Zarewa. Technical detail lives in `d
 | **Approve staff leave or loan** | **HR** (queue and final steps per your HR role). |
 | **Lock payroll for the month** | **HR** prepares the run; **Managing Director** must **sign off** the draft first; then HR can lock and export. |
 | **Set or change list prices** | Users with **pricing** access (typically **MD** / settings). |
-| **Sell below list price and still start production** | **MD** must record a **price exception** on that quotation. |
+| **Sell below list price and still start production** | **Branch manager**, **MD**, or **Administrator** records a **price exception** on that quotation. If the branch manager approves, the **MD is notified**. |
 | **Mark goods delivered / production truth** | **Operations** (not sales). |
 | **Confirm bank deposit matches a receipt** | **Cashier** / finance with receipt permissions — **bank confirmation** on the receipt row. |
 | **Add many bank statement lines at once** | **Finance** — Finance & accounts → Bank reconciliation → **Import CSV** or **Import JSON**. |

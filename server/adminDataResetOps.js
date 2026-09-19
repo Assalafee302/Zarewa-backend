@@ -4,7 +4,7 @@
  * Deletes are scoped to a single workspace branch — never all branches at once.
  */
 
-import { getBranch, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
+import { DEFAULT_BRANCH_ID, getBranch, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
 import { getBranchCodeUpper } from './humanId.js';
 import { setSuppressLegacyDemoPackAfterOperationsReset } from './legacyDemoPackPolicy.js';
 import { resetHrBranchOperationalData } from './hrAdminDataResetOps.js';
@@ -116,7 +116,7 @@ export const ADMIN_DATA_RESET_PRESETS = [
     id: 'expenses_ap',
     label: 'Expenses, AP, payment requests & bank rec lines',
     warning:
-      'Deletes this branch’s expenses, payables, payment requests, and bank rec lines. Also removes linked till/bank expense lines, expense GL journals, and Office expense threads so the items do not remain on Finance or Accounts. Unscoped (blank branch) expense rows are included. Other factories are kept.',
+      'Deletes expenses, payables, payment requests, and bank rec lines for this factory only. Also removes that factory’s till/bank expense lines, expense GL journals, and Office expense threads. Other factories are not touched. Switch to one factory (not “all branches”) first.',
     tables: [],
     customReset: true,
   },
@@ -345,38 +345,24 @@ function resetExpensesApForBranch(db, branchId) {
     throw new Error('Expenses table has no branch_id. Run migrations before resetting expenses.');
   }
   const hasExpenseBranch = tableExists(db, 'expenses') && tableHasColumn(db, 'expenses', 'branch_id');
+  /* Unscoped rows were historically backfilled to Kaduna. Only HQ reset may clear blanks. */
+  const includeUnscoped = bid === DEFAULT_BRANCH_ID;
+  const expenseWhere = includeUnscoped
+    ? `branch_id = ? OR TRIM(COALESCE(branch_id, '')) = ''`
+    : `branch_id = ?`;
   const expenseIds = hasExpenseBranch
-    ? selectCol(
-        db,
-        `SELECT expense_id FROM expenses WHERE branch_id = ? OR TRIM(COALESCE(branch_id, '')) = ''`,
-        [bid],
-        'expense_id'
-      )
+    ? selectCol(db, `SELECT expense_id FROM expenses WHERE ${expenseWhere}`, [bid], 'expense_id')
     : [];
 
   const paymentRequestIds = [];
-  if (tableExists(db, 'payment_requests')) {
-    if (expenseIds.length) {
-      for (const chunk of chunkIds(expenseIds)) {
-        const ph = chunk.map(() => '?').join(',');
-        paymentRequestIds.push(
-          ...selectCol(
-            db,
-            `SELECT request_id FROM payment_requests WHERE expense_id IN (${ph})`,
-            chunk,
-            'request_id'
-          )
-        );
-      }
-    }
-    if (tableExists(db, 'office_threads')) {
+  if (tableExists(db, 'payment_requests') && expenseIds.length) {
+    for (const chunk of chunkIds(expenseIds)) {
+      const ph = chunk.map(() => '?').join(',');
       paymentRequestIds.push(
         ...selectCol(
           db,
-          `SELECT related_payment_request_id AS request_id
-           FROM office_threads
-           WHERE branch_id = ? AND kind = 'expense' AND TRIM(COALESCE(related_payment_request_id, '')) != ''`,
-          [bid],
+          `SELECT request_id FROM payment_requests WHERE expense_id IN (${ph})`,
+          chunk,
           'request_id'
         )
       );
@@ -476,9 +462,14 @@ function resetExpensesApForBranch(db, branchId) {
       workItemIds.push(
         ...selectCol(
           db,
-          `SELECT id FROM work_items
-           WHERE source_kind IN ('expense', 'payment_request', 'EXPENSE', 'PAYMENT_REQUEST') AND source_id IN (${ph})`,
-          chunk,
+          tableHasColumn(db, 'work_items', 'branch_id')
+            ? `SELECT id FROM work_items
+               WHERE source_kind IN ('expense', 'payment_request', 'EXPENSE', 'PAYMENT_REQUEST')
+                 AND source_id IN (${ph})
+                 AND (branch_id = ? OR TRIM(COALESCE(branch_id, '')) = '')`
+            : `SELECT id FROM work_items
+               WHERE source_kind IN ('expense', 'payment_request', 'EXPENSE', 'PAYMENT_REQUEST') AND source_id IN (${ph})`,
+          tableHasColumn(db, 'work_items', 'branch_id') ? [...chunk, bid] : chunk,
           'id'
         )
       );
@@ -518,8 +509,8 @@ function resetExpensesApForBranch(db, branchId) {
       threadIds.push(
         ...selectCol(
           db,
-          `SELECT id FROM office_threads WHERE related_payment_request_id IN (${ph})`,
-          chunk,
+          `SELECT id FROM office_threads WHERE branch_id = ? AND related_payment_request_id IN (${ph})`,
+          [bid, ...chunk],
           'id'
         )
       );
@@ -568,12 +559,12 @@ function resetExpensesApForBranch(db, branchId) {
       db,
       `DELETE FROM payment_requests WHERE expense_id IN (
          SELECT expense_id FROM (
-           SELECT expense_id FROM expenses WHERE branch_id = ? OR TRIM(COALESCE(branch_id, '')) = ''
+           SELECT expense_id FROM expenses WHERE ${expenseWhere}
          ) expense_ids_for_reset
        )`,
       [bid]
     );
-    safeRun(db, `DELETE FROM expenses WHERE branch_id = ? OR TRIM(COALESCE(branch_id, '')) = ''`, [bid]);
+    safeRun(db, `DELETE FROM expenses WHERE ${expenseWhere}`, [bid]);
   }
 
   if (tableExists(db, 'accounts_payable')) {

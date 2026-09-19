@@ -56,7 +56,7 @@ describe('admin data reset branch scope', () => {
     ]);
   });
 
-  it('expenses_ap deletes this branch’s expenses, unscoped rows, and linked payment requests', () => {
+  it('expenses_ap deletes only the selected factory’s expenses and their payment requests', () => {
     db.prepare(
       `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
        VALUES ('EXP-YL-1', 'Fuel', 5000, '2026-09-01', 'Others', 'Cash', 'yl-1', 'BR-YL'),
@@ -75,9 +75,25 @@ describe('admin data reset branch scope', () => {
     expect(r.ok).toBe(true);
     expect(r.error).toBeFalsy();
     const expenseIds = db.prepare(`SELECT expense_id FROM expenses ORDER BY expense_id`).all().map((x) => x.expense_id);
-    expect(expenseIds).toEqual(['EXP-MDG-1']);
+    expect(expenseIds).toEqual(['EXP-BLANK', 'EXP-MDG-1']);
     const prIds = db.prepare(`SELECT request_id FROM payment_requests ORDER BY request_id`).all().map((x) => x.request_id);
     expect(prIds).toEqual(['PR-MDG-1']);
+  });
+
+  it('Kaduna expenses_ap also clears blank-branch expense rows; other factories stay', () => {
+    db.prepare(
+      `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
+       VALUES ('EXP-KD-1', 'Fuel', 2000, '2026-09-01', 'Others', 'Cash', 'kd-1', 'BR-KD'),
+              ('EXP-BLANK', 'Fuel', 1000, '2026-09-01', 'Others', 'Cash', 'blank', ''),
+              ('EXP-MDG-1', 'Fuel', 8000, '2026-09-01', 'Others', 'Cash', 'mdg-1', 'BR-MDG')`
+    ).run();
+    const r = applyAdminDataReset(db, ['expenses_ap'], ADMIN_DATA_RESET_CONFIRM_PHRASE, {
+      branchId: 'BR-KD',
+    });
+    expect(r.ok).toBe(true);
+    expect(db.prepare(`SELECT expense_id FROM expenses ORDER BY expense_id`).all().map((x) => x.expense_id)).toEqual([
+      'EXP-MDG-1',
+    ]);
   });
 
   it('expenses_ap restores till cash and removes expense treasury/GL lines', () => {

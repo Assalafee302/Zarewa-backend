@@ -51,6 +51,7 @@ Use these when deploying or running automated tests. There is no committed `.env
 | `ZAREWA_TEST_SKIP_RATE_LIMIT` | When `1`, authenticated rate limiters (including ledger POSTs) are disabled — **tests and scripted stress only**, never in production. |
 | `ZAREWA_VERIFY_API_ORIGIN` | **Post-deploy smoke only.** Public API base URL (no trailing slash) for `npm run verify:split-deploy` / [`scripts/verify-split-deploy.mjs`](../scripts/verify-split-deploy.mjs). |
 | `ZAREWA_VERIFY_UI_ORIGIN` | **Optional.** With `ZAREWA_VERIFY_API_ORIGIN`, sends an OPTIONS preflight with this `Origin` to confirm CORS allows the SPA. |
+| `ZAREWA_WORKSPACE_ROOMS_ENABLED` | Teams-style workspace chat (rooms, DMs, presence, SSE). **Off by default.** Set `1` to restore. Does **not** disable branch workspace, desk snapshots, search, work items, or Office filing. Seeded roles already omit `office.use` (Office desk UI paused). |
 
 **Reset E2E database only:** run `npm run wipe:e2e-db` to drop all tables in `ZAREWA_MYSQL_E2E_DATABASE` (default `zarewa_e2e`) so the next Playwright run starts clean. Does **not** touch the main `ZAREWA_MYSQL_DATABASE` schema.
 

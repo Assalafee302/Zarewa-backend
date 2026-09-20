@@ -1,6 +1,7 @@
 /**
  * Workspace V3 — rooms, activity, presence, SSE fan-out.
  * Additive on office_threads / office_messages.
+ * HTTP is gated by ZAREWA_WORKSPACE_ROOMS_ENABLED (off by default).
  */
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { officeScopeFromReq, officeTablesReady } from './officeOps.js';

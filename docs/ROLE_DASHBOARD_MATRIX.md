@@ -32,6 +32,8 @@ Canonical role keys live in `server/auth.js` → `ROLE_DEFINITIONS`. UI labels m
 
 Seeded roles no longer include `office.use`. The Office desk (`/`, `/office`) stays offline until that permission is re-granted per role. Branch scope / bootstrap “workspace” APIs remain — that is not the Office UI.
 
+Teams-style rooms / presence / SSE are **off** unless `ZAREWA_WORKSPACE_ROOMS_ENABLED=1`. Bootstrap `workspaceProduct.roomsEnabled` tells the SPA to hide chat chrome.
+
 ## Approvals (summary)
 
 | Area | MD | Branch manager | Accountant | HR admin | GM HR |

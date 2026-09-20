@@ -36,6 +36,7 @@ describe('liveness / readiness probe paths', () => {
       expect(res.body.ok).toBe(true);
       expect(res.body.service).toBe('zarewa-api');
       expect(res.body.capabilities?.officeDesk).toBe(true);
+      expect(res.body.capabilities?.workspaceRooms).toBe(false);
     });
   }
 });

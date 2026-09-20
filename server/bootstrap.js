@@ -96,6 +96,7 @@ import {
   listPartnerWalletBalancesDue,
   partnerWalletEnabled,
 } from './finance/partnerWalletCredit.js';
+import { workspaceProductBootstrap } from './workspace/chatFlags.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { listGlJournalsForWorkspaceSearch } from './glOps.js';
@@ -421,6 +422,8 @@ export function buildBootstrap(db, opts = {}) {
         ? listStaffRepayableObligationsForCashier(db, branchScope)
         : [],
     partnerWalletPolicy: { enabled: partnerWalletEnabled() },
+    /** Chat/rooms only — branch switch and desk snapshots stay on. */
+    workspaceProduct: workspaceProductBootstrap(),
     partnerWalletsDue:
       finOk ||
       (user &&
@@ -820,6 +823,8 @@ export function buildShellBootstrap(db, opts = {}) {
     associatedStaffPolicy: {
       enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
     },
+    /** Chat/rooms only — branch switch and desk snapshots stay on. */
+    workspaceProduct: workspaceProductBootstrap(),
     materialPoolSummary: null,
     stainInventory: null,
     wipByProduct: {},

@@ -2,6 +2,7 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import { assertSingleBranchWorkspaceForCreate } from './branchScope.js';
 import { appendAuditLog } from './controlOps.js';
 import { requireAuth, userHasPermission } from './auth.js';
+import { workspaceRoomsEnabled } from './workspace/chatFlags.js';
 import { listMasterData } from './masterData.js';
 import { allowRateLimit, clientIp } from './rateLimit.js';
 import { getQuotation, listCustomers, listQuotations } from './readModel.js';
@@ -386,7 +387,7 @@ export function registerMobileApi(app, db) {
           visible: canReadMobileQuotes(req.user),
         },
         { id: 'requests', label: 'Requests', visible: true },
-        { id: 'chat', label: 'Chat', visible: userHasPermission(req.user, 'office.use') },
+        { id: 'chat', label: 'Chat', visible: workspaceRoomsEnabled() && userHasPermission(req.user, 'office.use') },
         { id: 'more', label: 'More', visible: true },
       ].filter((t) => t.visible);
 

@@ -57,6 +57,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.capabilities?.officeDesk).toBe(true);
+    expect(res.body.capabilities?.workspaceRooms).toBe(false);
     expect(res.body.capabilities?.accountingPolicyV1).toBe('ap1b');
     expect(res.body.capabilities?.deliveryPaymentGate).toBe('off');
     expect(res.body.capabilities?.accountingPolicyV1Labels).toBe('off');
@@ -217,6 +218,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(Array.isArray(res.body.workspaceDepartmentIds)).toBe(true);
     expect(res.body.workspaceDepartmentIds).toContain('sales_staff');
     expect(res.body.suggestedRoleByDepartment?.sales).toBe('sales_staff');
+    expect(res.body.workspaceProduct?.roomsEnabled).toBe(false);
     expect(res.body.operationsInventoryAttention).toBeDefined();
     expect(res.body.operationsInventoryAttention.ok).toBe(true);
     expect(res.body.operationsInventoryAttention.stuckProduction).toBeDefined();

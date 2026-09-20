@@ -40,6 +40,7 @@ describe('audit API smoke', () => {
       const api = await request(app).get('/api/health');
       expect(api.status).toBe(200);
       expect(api.body.capabilities?.officeDesk).toBe(true);
+      expect(api.body.capabilities?.workspaceRooms).toBe(false);
     });
 
     for (const path of PROBE_PATHS_PUBLIC) {
@@ -59,6 +60,7 @@ describe('audit API smoke', () => {
         expect(res.body.ok).toBe(true);
         expect(res.body.service).toBe('zarewa-api');
         expect(res.body.capabilities?.officeDesk).toBe(true);
+        expect(res.body.capabilities?.workspaceRooms).toBe(false);
       });
     }
 

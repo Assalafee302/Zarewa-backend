@@ -20,8 +20,8 @@ import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import { SQL_PENDING_BELOW_FLOOR_EXCEPTION } from '../shared/lib/quotationPriceException.js';
 import { approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
-import { publicUserFromRow, resolveRegisteredPasswordDisplay, roleLabel } from './auth.js';
-import { composeLegalDisplayName } from '../shared/lib/hrLegalDisplayName.js';
+import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
+import { displayNamesByUserIds } from './sales/receiptActorDisplayNames.js';
 import {
   RECEIPT_PENDING_PO_STATUS_KEYS,
   mapPoLineFromDb,
@@ -2465,26 +2465,21 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
   const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql}${idSql} ORDER BY date_iso DESC, id DESC${page.sql}`;
   const args = [...b.args, ...idList, ...page.args];
   const rows = db.prepare(sql).all(...args);
-  const actorIds = [
-    ...new Set(
-      rows
-        .map((row) => String(row.finance_reconciliation_saved_by_user_id || '').trim())
-        .filter(Boolean)
-    ),
-  ];
-  /** @type {Map<string, string>} */
-  const displayByUserId = new Map();
-  if (actorIds.length) {
-    const ph = actorIds.map(() => '?').join(',');
-    const users = db
-      .prepare(`SELECT id, display_name FROM app_users WHERE id IN (${ph})`)
-      .all(...actorIds);
-    for (const user of users) {
-      displayByUserId.set(String(user.id), String(user.display_name || '').trim());
-    }
-  }
+  const displayByUserId = displayNamesByUserIds(
+    db,
+    rows.flatMap((row) => [
+      row.finance_reconciliation_saved_by_user_id,
+      row.bank_confirmed_by_user_id,
+      row.finance_delivery_cleared_by_user_id,
+    ])
+  );
   return rows.map((row) => {
     const savedById = String(row.finance_reconciliation_saved_by_user_id || '').trim();
+    const bankById = String(row.bank_confirmed_by_user_id || '').trim();
+    const clearedById = String(row.finance_delivery_cleared_by_user_id || '').trim();
+    const savedBy = savedById ? displayByUserId.get(savedById) || '' : '';
+    const bankConfirmedBy = bankById ? displayByUserId.get(bankById) || '' : '';
+    const financeDeliveryClearedBy = clearedById ? displayByUserId.get(clearedById) || '' : '';
     return {
       id: row.id,
       customerID: row.customer_id,
@@ -2500,13 +2495,15 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
       ledgerEntryId: row.ledger_entry_id ?? null,
       bankConfirmedAtISO: row.bank_confirmed_at_iso ?? null,
       bankConfirmedByUserId: row.bank_confirmed_by_user_id ?? null,
+      bankConfirmedBy,
       bankReceivedAmountNgn:
         row.bank_received_amount_ngn != null ? Number(row.bank_received_amount_ngn) : null,
       financeDeliveryClearedAtISO: row.finance_delivery_cleared_at_iso ?? null,
       financeDeliveryClearedByUserId: row.finance_delivery_cleared_by_user_id ?? null,
+      financeDeliveryClearedBy,
       financeReconciliationSavedAtISO: row.finance_reconciliation_saved_at_iso ?? null,
       financeReconciliationSavedByUserId: row.finance_reconciliation_saved_by_user_id ?? null,
-      financeReconciliationSavedBy: savedById ? displayByUserId.get(savedById) || '' : '',
+      financeReconciliationSavedBy: savedBy || bankConfirmedBy || financeDeliveryClearedBy,
     };
   });
 }

@@ -181,7 +181,7 @@ function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
       const stock = Number(p.stock_level) || 0;
       if (stock + EPS < supplied) {
         accessoryStockWarnings.push(
-          `"${line.name}" (${p.name || inventoryProductId}): issuing ${supplied} units but only ${stock} on hand — accessory balance will go negative.`
+          `"${line.name}" (${p.name || inventoryProductId}): issuing ${supplied} units but only ${stock} in stock — accessory balance will go negative.`
         );
       }
     }
@@ -2886,7 +2886,7 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
     if (next < -0.0001) {
       return {
         ok: false,
-        error: `This adjustment would send ${productId} stock negative (${next.toFixed(2)} m on hand). Reduce the correction or investigate inventory.`,
+        error: `This adjustment would send ${productId} stock negative (${next.toFixed(2)} m stock). Reduce the correction or investigate inventory.`,
       };
     }
     const id = nextId('PCA');
@@ -3466,7 +3466,7 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
       const next = current + deltaM;
       if (next < -0.0001) {
         throw new Error(
-          `This correction would send finished goods ${productId} negative (${next.toFixed(2)} m on hand).`
+          `This correction would send finished goods ${productId} negative (${next.toFixed(2)} m stock).`
         );
       }
       adjustProductStockTx(db, productId, deltaM, stockBranch);
@@ -3919,7 +3919,7 @@ export function applyCompletedProductionStoneMetresCorrections(db, jobID, payloa
           const nextStock = current + delta;
           if (nextStock < -0.0001) {
             throw new Error(
-              `This correction would send finished goods ${productId} negative (${nextStock.toFixed(2)} m on hand).`
+              `This correction would send finished goods ${productId} negative (${nextStock.toFixed(2)} m stock).`
             );
           }
           adjustProductStockTx(db, productId, delta, stockBranch);
@@ -4344,7 +4344,7 @@ export function reconcileCoilBookFromProductionHolders(db, coilNo, opts = {}) {
   if (expectedOnHand + 1e-6 < qtyRes) {
     return {
       ok: false,
-      error: `Reconciled on-hand would be ${expectedOnHand.toFixed(2)} kg, below reserved ${qtyRes.toFixed(2)} kg. Complete, cancel, or release active jobs first.`,
+      error: `Reconciled stock would be ${expectedOnHand.toFixed(2)} kg, below reserved ${qtyRes.toFixed(2)} kg. Complete, cancel, or release active jobs first.`,
     };
   }
 
@@ -4433,7 +4433,7 @@ export function reconcileCoilBookFromProductionHolders(db, coilNo, opts = {}) {
     action: 'coil.reconcile_book',
     entityKind: 'coil_lot',
     entityId: cn,
-    note: `On-hand reconciled: ${beforeOnHand.toFixed(2)} → ${expectedOnHand.toFixed(2)} kg`,
+    note: `Stock reconciled: ${beforeOnHand.toFixed(2)} → ${expectedOnHand.toFixed(2)} kg`,
     details: { coilNo: cn, beforeOnHandKg: beforeOnHand, afterOnHandKg: expectedOnHand, onHandDeltaKg: delta },
   });
   const bookRecalc = recalculateCoilLotBook(db, cn, {

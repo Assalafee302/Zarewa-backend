@@ -1084,7 +1084,7 @@ function buildInventoryPanels(biPack, period = {}) {
     lowStockHighDemand,
     slowMovingStock,
     recommendations,
-    valuationNote: 'Coil inventory valuation is estimated from landed cost and kg on hand.',
+    valuationNote: 'Coil inventory valuation is estimated from landed cost and kg stock.',
   };
 }
 

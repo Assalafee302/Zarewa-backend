@@ -92,7 +92,7 @@ export function adjustProductStockForBranch(db, productId, delta, branchId, opts
       process.env.ZAREWA_BLOCK_NEGATIVE_STOCK !== '1');
   if (!allowNegative && raw < -1e-9) {
     throw new Error(
-      `Insufficient stock for ${pid} (on hand ${Number(row.stock_level) || 0}, change ${Number(delta) || 0}).`
+      `Insufficient stock for ${pid} (stock ${Number(row.stock_level) || 0}, change ${Number(delta) || 0}).`
     );
   }
   const next = allowNegative ? raw : Math.max(0, raw);

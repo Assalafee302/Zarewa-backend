@@ -3430,7 +3430,7 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO,
       const raw = onHand + delta;
       if (raw < -1e-9) {
         throw new Error(
-          `Insufficient stock for this adjustment (on hand ${onHand}, change ${delta}). Negatives are not allowed on manual adjust.`
+          `Insufficient stock for this adjustment (stock ${onHand}, change ${delta}). Negatives are not allowed on manual adjust.`
         );
       }
       const unitCost = resolveProductAdjustUnitCostNgn(db, productID, bid);
@@ -4059,7 +4059,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
   const dateISO = String(b.dateISO || '').trim() || new Date().toISOString().slice(0, 10);
   if (didMass) {
     try {
-      assertPeriodOpen(db, dateISO, 'Coil on-hand kg correction date');
+      assertPeriodOpen(db, dateISO, 'Coil stock kg correction date');
     } catch (e) {
       return { ok: false, error: String(e.message || e) };
     }

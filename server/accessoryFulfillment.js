@@ -261,7 +261,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
       const stock = Number(p.stock_level) || 0;
       if (stock + EPS < supplied) {
         accessoryStockWarnings.push(
-          `"${line.name}" (${p.name || inventoryProductId}): issuing ${supplied} units but only ${stock} on hand — accessory balance will go negative.`
+          `"${line.name}" (${p.name || inventoryProductId}): issuing ${supplied} units but only ${stock} in stock — accessory balance will go negative.`
         );
       }
     }

@@ -65,7 +65,7 @@ export function buildBusinessIntelligenceXlsx(pack) {
   const invFc = pack.inventoryForecast;
   if (invFc?.familyForecasts?.length) {
     const invFcRows = [
-      ['Family', 'Kg on hand', 'Daily kg', 'Suggested order kg', 'Stockout date'],
+      ['Family', 'Kg stock', 'Daily kg', 'Suggested order kg', 'Stockout date'],
       ...invFc.familyForecasts.map((f) => [
         f.label,
         f.kgOnHand,
@@ -115,7 +115,7 @@ export function buildBusinessIntelligenceXlsx(pack) {
   const skuSheet = (famKey, suffix) => {
     const sku = inv.skuIntelligence?.[famKey];
     const buy = [
-      ['Action', 'Gauge', 'Colour', 'Kg on hand', 'Valuation ₦', 'Weeks cover', 'Reason'],
+      ['Action', 'Gauge', 'Colour', 'Kg stock', 'Valuation ₦', 'Weeks cover', 'Reason'],
       ...(sku?.buyNext || []).map((r) => [
         'Buy',
         r.gauge,
@@ -127,7 +127,7 @@ export function buildBusinessIntelligenceXlsx(pack) {
       ]),
     ];
     const liq = [
-      ['Action', 'Gauge', 'Colour', 'Kg on hand', 'Valuation ₦', 'Reason'],
+      ['Action', 'Gauge', 'Colour', 'Kg stock', 'Valuation ₦', 'Reason'],
       ...(sku?.reduceStock || []).map((r) => [
         'Liquidate',
         r.gauge,

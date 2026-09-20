@@ -757,7 +757,7 @@ export function computeSkuIntelligence(data, materialPerformance, opts = {}) {
       let reason = 'Balanced stock vs recent production pull.';
       if (stock.kgOnHand > 0 && (weeksCover == null || weeksCover > 16) && kgDemand < stock.kgOnHand * 0.15) {
         action = 'liquidate';
-        reason = 'High kg on hand with very low consumption — cash tied up in slow movers.';
+        reason = 'High kg stock with very low consumption — cash tied up in slow movers.';
       } else if (weeksCover != null && weeksCover < 2) {
         action = 'buy';
         reason = 'Under 2 weeks cover at current consumption.';
@@ -1739,7 +1739,7 @@ export function businessIntelligenceHeadlines(pack) {
   }
   for (const fam of pack.inventory?.families || []) {
     const cover = fam.weeksCover != null ? `${fam.weeksCover} wk cover` : 'no consumption rate';
-    lines.push(`${fam.label}: ${fam.kgOnHand.toLocaleString()} kg on hand (${cover}).`);
+    lines.push(`${fam.label}: ${fam.kgOnHand.toLocaleString()} kg stock (${cover}).`);
   }
   const topPay = pack.sales?.topCustomers?.[0];
   if (topPay?.netCollectedNgn > 0) {

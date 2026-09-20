@@ -135,7 +135,7 @@ export function buildWorkingCapitalSnapshot(db, branchScope, ctx = {}) {
       amountNgn: inventoryNgn,
       estimated: true,
       scopeBasis: isAll ? 'company' : 'branch',
-      note: 'Coil on hand at landed/unit cost where available.',
+      note: 'Coil stock at landed/unit cost where available.',
     }),
   ];
 

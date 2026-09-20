@@ -287,7 +287,7 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
       stoneFlatsheetStockWarnings.push(
         `"${line.name}" (${line.lengthM} m, ${p.name || inventoryProductId}): ${totalUse.toFixed(
           2
-        )} m² from stock but only ${stock.toFixed(2)} m² on hand — balance may go negative.`
+        )} m² from stock but only ${stock.toFixed(2)} m² in stock — balance may go negative.`
       );
     }
 
@@ -377,7 +377,7 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
       stoneFlatsheetStockWarnings.push(
         `"${line.name}" yield (${lengthM} m × ${sheetsUsed} sheet(s)): ${totalUse.toFixed(
           2
-        )} m² from stock but only ${stock.toFixed(2)} m² on hand — balance may go negative.`
+        )} m² from stock but only ${stock.toFixed(2)} m² in stock — balance may go negative.`
       );
     }
 

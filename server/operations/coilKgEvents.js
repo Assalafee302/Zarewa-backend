@@ -41,7 +41,7 @@ export function coilKgRestoreBlockedResult(payload) {
     unchanged: true,
     restoreBlocked: true,
     code: COIL_KG_RESTORE_BLOCKED,
-    error: `On-hand restore of ${delta.toFixed(2)} kg blocked. Coil remaining is not increased by book reconcile — post a reversing control event.`,
+    error: `Stock restore of ${delta.toFixed(2)} kg blocked. Coil remaining is not increased by book reconcile — post a reversing control event.`,
     beforeOnHandKg: before,
     afterOnHandKg: before,
     suggestedOnHandKg: suggested,

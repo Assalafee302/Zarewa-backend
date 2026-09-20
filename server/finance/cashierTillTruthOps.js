@@ -58,6 +58,7 @@ function unclearedReceiptsSummary(db, branchScope) {
 }
 
 /**
+ * Cash / POS / Bank from live `treasury_accounts.balance` (the column payouts debit).
  * @param {import('better-sqlite3').Database} db
  * @param {string} [branchScope]
  */

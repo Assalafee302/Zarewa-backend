@@ -293,7 +293,7 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
     sublabel: 'Operations & inventory',
     path: '/operations',
     state: { focusOpsTab: 'production' },
-    keywords: ['production', 'operations', 'inventory', 'coil', 'cutting', 'factory'],
+    keywords: ['production', 'operations', 'inventory', 'stock', 'on hand', 'coil', 'cutting', 'factory'],
     module: 'operations',
   },
   {

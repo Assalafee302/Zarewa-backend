@@ -28,6 +28,8 @@ import {
   listExpenses,
   listEligibleCuttingListQuotations,
   listEligibleProductionCoils,
+  listPaymentRequests,
+  countPaymentRequests,
   listProductionJobs,
   listPurchaseOrders,
   listStockMovements,
@@ -84,8 +86,19 @@ export function registerWorkspaceListRoutes(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
-      const items = listExpenses(db, branchScope, listOptsFromQuery(parsed));
-      const total = parsed.unlimited ? items.length : countExpenses(db, branchScope);
+      const startDate = String(req.query?.startDate || req.query?.startISO || '').trim();
+      const endDate = String(req.query?.endDate || req.query?.endISO || '').trim();
+      const category = String(req.query?.category || '').trim();
+      const requestID = String(req.query?.requestID || req.query?.requestId || '').trim();
+      const listOpts = {
+        ...listOptsFromQuery(parsed),
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        category: category || undefined,
+        requestID: requestID || undefined,
+      };
+      const items = listExpenses(db, branchScope, listOpts);
+      const total = parsed.unlimited ? items.length : countExpenses(db, branchScope, listOpts);
       return sendPaginatedList(res, {
         items,
         total,
@@ -96,6 +109,34 @@ export function registerWorkspaceListRoutes(app, db) {
     } catch (e) {
       console.error(e);
       return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load expenses.' });
+    }
+  });
+
+  app.get('/api/payment-requests', requirePermission(EXPENSE_LIST_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
+      const listOpts = {
+        ...listOptsFromQuery(parsed),
+        status: String(req.query?.status || '').trim() || undefined,
+        startDate: String(req.query?.startDate || req.query?.startISO || '').trim() || undefined,
+        endDate: String(req.query?.endDate || req.query?.endISO || '').trim() || undefined,
+        payee: String(req.query?.payee || '').trim() || undefined,
+        category: String(req.query?.category || '').trim() || undefined,
+        q: String(req.query?.q || '').trim() || undefined,
+      };
+      const items = listPaymentRequests(db, branchScope, listOpts);
+      const total = parsed.unlimited ? items.length : countPaymentRequests(db, branchScope, listOpts);
+      return sendPaginatedList(res, {
+        items,
+        total,
+        limit: parsed.unlimited ? 0 : parsed.limit,
+        offset: parsed.offset,
+        key: 'paymentRequests',
+      });
+    } catch (e) {
+      console.error(e);
+      return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load payment requests.' });
     }
   });
 

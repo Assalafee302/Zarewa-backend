@@ -3515,6 +3515,22 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
     });
 }
 
+export function countPaymentRequests(db, branchScope = 'ALL', opts = {}) {
+  const useScope = branchScope !== 'ALL' && String(branchScope || '').trim();
+  const scopeSql = useScope ? ` AND e.branch_id = ?` : '';
+  const scopeArgs = useScope ? [branchScope] : [];
+  const filter = paymentRequestListFilterSql(opts);
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n
+       FROM payment_requests pr
+       LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+       WHERE 1=1${scopeSql}${filter.sql}`
+    )
+    .get(...scopeArgs, ...filter.args);
+  return Number(row?.n) || 0;
+}
+
 /** Single payment request for approval/detail UIs (no attachment bytes). */
 export function getPaymentRequestDetail(db, requestId) {
   const rid = String(requestId || '').trim();

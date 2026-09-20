@@ -260,14 +260,19 @@ const OPERATIONAL_TOPICS = [
     module: 'finance',
     action: 'record an expense',
     title: 'Record an expense',
-    answer: 'Expenses may be direct or linked to payment requests.',
+    answer:
+      'Spend follows Request → Approve → Pay. Create a payment request, a different approver decides, then Finance records treasury payout. Direct expense posting is a Finance correction for money already paid, not the normal path.',
     steps: [
-      'Open **Finance** → relevant expenses tab.',
-      'Enter category, amount, branch, and proof.',
-      'Submit or save per your role.',
+      'Open **Finance → Requests** and create a payment request with lines, category, and proof.',
+      'A different person with finance.approve (or the Branch Manager queue) Approves or Rejects — you cannot approve your own request.',
+      'After approval, open **Finance → Desk** and record **Payout** from the cash or bank account that actually paid.',
+      'The **Expenses** register shows the memo after payout. Direct POST /api/expenses needs finance.post plus a paid-from account, and stays off unless Finance enables it.',
     ],
-    links: [{ label: 'Finance', to: '/accounts' }],
-    extraKeywords: ['expense', 'spend', 'cost'],
+    links: [
+      { label: 'Finance — Requests', to: '/accounts', state: { accountsTab: ACCOUNTS_TAB_REQUESTS } },
+      { label: 'Finance — Desk', to: '/accounts', state: { accountsTab: ACCOUNTS_TAB_PAYOUT } },
+    ],
+    extraKeywords: ['expense', 'spend', 'cost', 'expense request', 'payment request'],
   },
   {
     module: 'finance',
@@ -279,7 +284,7 @@ const OPERATIONAL_TOPICS = [
       'Sign in as Finance or Administrator.',
       'Open **Post imported expenses to cash** (`/expense-cash-catchup`) — or type that in workspace search.',
       'Click **Update cashier balances now**. That deducts any missing refund from Cash or POS and sets the live till number to match the cash book.',
-      'Open Cashier desk, pick **Cash** or **POS**, and set the statement from **01/09/2026**.',
+      'Open Cashier desk, pick **Cash** or **POS**, and set the statement From date to the first day you need.',
     ],
     links: [{ label: 'Post imported expenses to cash', to: '/expense-cash-catchup' }],
     extraKeywords: ['import expenses', 'statement', 'balance', 'refund upload', 'cashier book'],
@@ -287,16 +292,16 @@ const OPERATIONAL_TOPICS = [
   {
     module: 'finance',
     action: 'print a full cashier statement including dates before POS opening',
-    title: 'POS statement will not go before the 12th',
+    title: 'POS statement missing earlier dates',
     answer:
-      'The Cashier desk page only loads recent lines, so POS looks like it starts on 12 Sep. Use the full-date statement print to include 5–11 Sep.',
+      'The Cashier desk page only loads recent lines, so earlier dates can look missing. Use the full-date statement print to include the whole period you need.',
     steps: [
       'Open **Cashier statement (full dates)** (`/expense-cash-catchup?view=statement`) — same page as Post imported expenses, with view=statement.',
-      'Pick Yola, then POS or Cash.',
-      'Set From to **2026-09-01** (or 5 Sep) and To today, then Show statement.',
+      'Pick the branch, then POS or Cash.',
+      'Set From to the first date you need and To today, then Show statement.',
     ],
     links: [{ label: 'Cashier statement (full dates)', to: '/expense-cash-catchup?view=statement' }],
-    extraKeywords: ['pos', 'before 12th', 'statement period', 'cash till'],
+    extraKeywords: ['pos', 'before 12th', 'statement period', 'cash till', 'full dates'],
   },
   {
     module: 'finance',

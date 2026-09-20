@@ -795,12 +795,13 @@ export function listManagementItems(db, branchScope = 'ALL') {
   // 5. Payment requests pending approval (column is approval_status, not status).
   // Branch is on expenses — must filter like listPaymentRequests or Yola sees Kaduna PRs.
   const prHasPayee = hasColumn(db, 'payment_requests', 'payee_account_no');
+  const prHasJustification = hasColumn(db, 'payment_requests', 'category_justification');
   const useExpenseBranch = branchScope !== 'ALL' && String(branchScope || '').trim();
   const expenseBranchSql = useExpenseBranch ? ` AND e.branch_id = ?` : '';
   const expenseBranchArgs = useExpenseBranch ? [String(branchScope).trim()] : [];
   const pendingExpensesRaw = db.prepare(`
     SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.description, pr.approval_status,
-           pr.request_reference, pr.line_items_json, pr.attachment_name, pr.category_justification,
+           pr.request_reference, pr.line_items_json, pr.attachment_name${prHasJustification ? ', pr.category_justification' : ''},
            (CASE WHEN TRIM(COALESCE(pr.attachment_name, '')) != '' OR TRIM(COALESCE(pr.attachment_mime, '')) != '' THEN 1 ELSE 0 END) AS attachment_present,
            ${prHasPayee ? 'pr.payee_name, pr.payee_account_no, pr.payee_bank_name,' : ''}
            e.category AS expense_category, e.category_lane AS expense_category_lane, e.branch_id AS branch_id
@@ -3297,8 +3298,6 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
     }));
 }
 
-}
-
 function isoDay(value) {
   const s = String(value || '').trim().slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
@@ -3515,6 +3514,7 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
     });
 }
 
+/** Count payment requests matching {@link listPaymentRequests} filters (same WHERE, no LIMIT). */
 export function countPaymentRequests(db, branchScope = 'ALL', opts = {}) {
   const useScope = branchScope !== 'ALL' && String(branchScope || '').trim();
   const scopeSql = useScope ? ` AND e.branch_id = ?` : '';

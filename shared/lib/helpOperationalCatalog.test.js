@@ -45,6 +45,9 @@ describe('helpOperationalCatalog', () => {
     expect(payout?.links?.[0]?.state?.accountsTab).toBe('desk');
     expect(transfer?.links?.[0]?.state?.accountsTab).toBe('desk');
     expect(payFrom?.links?.[0]?.state?.accountsTab).toBe('disbursements');
+    const record = articles.find((a) => a.title === 'Record an expense');
+    expect(record?.links?.[0]?.state?.accountsTab).toBe('requests');
+    expect(record?.answer).toMatch(/Request → Approve → Pay/i);
   });
 
   it('matches Advance modal (no quotation) phrasing', () => {

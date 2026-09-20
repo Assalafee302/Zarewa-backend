@@ -444,6 +444,14 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(typeof coils.body.total).toBe('number');
   });
 
+  it('GET /api/payment-requests returns a paginated collection (not :requestId 404)', async () => {
+    const list = await agent.get('/api/payment-requests?limit=20');
+    expect(list.status).toBe(200);
+    expect(list.body.ok).toBe(true);
+    expect(Array.isArray(list.body.paymentRequests)).toBe(true);
+    expect(typeof list.body.total).toBe('number');
+  });
+
   it('GET procurement snapshot and accounts-payable include outstanding supplier lines', async () => {
     const snap = await agent.get('/api/workspace/procurement-snapshot');
     expect(snap.status).toBe(200);
@@ -1805,6 +1813,19 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     ).toBe(false);
   });
 
+  it('POST /api/expenses without paid-from treasury account is 400', async () => {
+    const res = await agent.post('/api/expenses').send({
+      expenseType: 'Missing paid-from',
+      amountNgn: 1_000,
+      date: '2026-03-29',
+      category: 'Others',
+      paymentMethod: 'Cash',
+      reference: 'NO-TILL',
+    });
+    expect(res.status).toBe(400);
+    expect(String(res.body.error || '')).toMatch(/paid-from/i);
+  });
+
   it('POST /api/treasury/bank-charges posts expense outflow from the selected account', async () => {
     const before = await agent.get('/api/bootstrap');
     const from = before.body.treasuryAccounts[0];
@@ -1841,6 +1862,30 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       lineItems: [{ description: 'Generator service', quantity: 1, unitPriceNgn: 15_000 }],
     });
     expect(createReq.status).toBe(201);
+    const rid = createReq.body.requestID;
+
+    const pendingDetail = await agent.get(`/api/payment-requests/${encodeURIComponent(rid)}`);
+    expect(pendingDetail.status).toBe(200);
+    expect(pendingDetail.body.request.notesForApprovers).toBeDefined();
+    expect(pendingDetail.body.request.glPreview?.debitAccountCode).toBeTruthy();
+    expect(pendingDetail.body.request.expenseCategoryLane).toBeTruthy();
+
+    const pendingList = await agent.get(
+      `/api/payment-requests?status=pending&q=${encodeURIComponent(rid)}`
+    );
+    expect(pendingList.status).toBe(200);
+    expect(pendingList.body.paymentRequests.some((r) => r.requestID === rid)).toBe(true);
+
+    const expList = await agent.get(`/api/expenses?requestID=${encodeURIComponent(rid)}`);
+    expect(expList.status).toBe(200);
+    expect(expList.body.expenses.some((e) => e.requestID === rid)).toBe(true);
+
+    const mgmt = await agent.get('/api/management/items');
+    expect(mgmt.status).toBe(200);
+    expect(Array.isArray(mgmt.body.pendingPaymentRequests)).toBe(true);
+    expect(mgmt.body.pendingPaymentRequests.some((p) => p.requestID === rid || p.request_id === rid)).toBe(
+      true
+    );
 
     const approve = await agent
       .post(`/api/payment-requests/${encodeURIComponent(createReq.body.requestID)}/decision`)
@@ -1957,6 +2002,17 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(createReq.status).toBe(201);
     expect(createReq.body?.ok).toBe(true);
     expect(String(createReq.body?.requestID || '')).toMatch(/^PREQ-/);
+
+    const blocked = await staffAgent.post('/api/expenses').send({
+      expenseType: 'Staff must request, not post',
+      amountNgn: 5_000,
+      date: '2026-03-29',
+      category: 'Office expenses',
+      paymentMethod: 'Cash',
+      treasuryAccountId: 1,
+      reference: 'STAFF-DIRECT',
+    });
+    expect(blocked.status).toBe(403);
   });
 
   it('finance manager cannot approve a payment request they submitted', async () => {
@@ -2105,7 +2161,10 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
 
   it('POST /api/payment-requests/:requestId/pay records split treasury payout after approval', async () => {
     const before = await agent.get('/api/bootstrap');
-    const [cashAccount, bankAccount] = before.body.treasuryAccounts.slice(0, 2);
+    const cashAccount = before.body.treasuryAccounts.find((a) => String(a.type).toLowerCase() === 'cash');
+    const bankAccount = before.body.treasuryAccounts.find((a) => String(a.type).toLowerCase() === 'bank');
+    expect(cashAccount?.id).toBeTruthy();
+    expect(bankAccount?.id).toBeTruthy();
 
     const requestCreate = await agent.post('/api/payment-requests').send({
       requestDate: '2026-03-29',
@@ -2144,6 +2203,12 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         (m) => m.sourceKind === 'PAYMENT_REQUEST' && m.sourceId === requestCreate.body.requestID
       )
     ).toHaveLength(2);
+
+    const expList = await agent.get(
+      `/api/expenses?requestID=${encodeURIComponent(requestCreate.body.requestID)}`
+    );
+    expect(expList.status).toBe(200);
+    expect(expList.body.expenses[0]?.paymentMethod).toBe('Mixed');
   });
 
   it('POST /api/payment-requests/:requestId/pay rejects a second full payout when already paid', async () => {

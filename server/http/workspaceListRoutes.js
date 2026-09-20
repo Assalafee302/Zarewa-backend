@@ -1,8 +1,9 @@
 /**
- * Paginated desk lists (customers, expenses, coil lots, jobs, movements, cutting lists,
- * purchase orders, accounts payable).
+ * Paginated desk lists (customers, expenses, payment requests, coil lots, jobs, movements,
+ * cutting lists, purchase orders, accounts payable).
  * Dashboard bootstrap omits these arrays; desks refill via domain snapshots
  * or these GET endpoints. SQL LIMIT/OFFSET — do not load-all-then-slice.
+ * GET /api/payment-requests lives here so the collection is registered before :requestId.
  *
  * @param {import('express').Express} app
  * @param {object} db
@@ -17,6 +18,7 @@ import {
   countCustomers,
   countCuttingLists,
   countExpenses,
+  countPaymentRequests,
   countProductionJobs,
   countPurchaseOrders,
   countStockMovements,
@@ -29,7 +31,6 @@ import {
   listEligibleCuttingListQuotations,
   listEligibleProductionCoils,
   listPaymentRequests,
-  countPaymentRequests,
   listProductionJobs,
   listPurchaseOrders,
   listStockMovements,

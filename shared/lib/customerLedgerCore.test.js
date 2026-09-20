@@ -3,6 +3,7 @@ import {
   companionOverpayNgnByReceiptId,
   planReceiptWithQuotation,
   pendingAdvanceDepositRowsFromEntries,
+  pendingOverpayCreditRowsFromEntries,
   advanceInRemainingNgnByIdFromEntries,
   overpayCreditNgnByCustomerIdFromEntries,
 } from './customerLedgerCore.js';
@@ -106,5 +107,54 @@ describe('overpayCreditNgnByCustomerIdFromEntries', () => {
     const map = overpayCreditNgnByCustomerIdFromEntries(entries);
     expect(map.get('C1')).toBe(40_000);
     expect(map.has('C2')).toBe(false);
+  });
+});
+
+describe('pending overpay credit rows', () => {
+  it('lists hanging quote credit and hides reversed remaining', () => {
+    const entries = [
+      {
+        customerID: 'C1',
+        customerName: 'Ada',
+        quotationRef: 'Q1',
+        type: 'OVERPAY_ADVANCE',
+        amountNgn: 40_000,
+        atISO: '2026-03-01T10:00:00.000Z',
+      },
+      {
+        customerID: 'C1',
+        customerName: 'Ada',
+        quotationRef: 'Q1',
+        type: 'OVERPAY_REVERSAL',
+        amountNgn: 10_000,
+        atISO: '2026-03-02T10:00:00.000Z',
+      },
+      {
+        customerID: 'C1',
+        customerName: 'Ada',
+        quotationRef: 'Q2',
+        type: 'OVERPAY_ADVANCE',
+        amountNgn: 5_000,
+        atISO: '2026-04-01T10:00:00.000Z',
+      },
+      {
+        customerID: 'C2',
+        customerName: 'Bello',
+        quotationRef: 'Q9',
+        type: 'OVERPAY_ADVANCE',
+        amountNgn: 8_000,
+        atISO: '2026-02-01T10:00:00.000Z',
+      },
+      {
+        customerID: 'C2',
+        quotationRef: 'Q9',
+        type: 'OVERPAY_REVERSAL',
+        amountNgn: 8_000,
+      },
+    ];
+    const rows = pendingOverpayCreditRowsFromEntries(entries);
+    expect(rows.map((r) => r.quotationRef).sort()).toEqual(['Q1', 'Q2']);
+    expect(rows.find((r) => r.quotationRef === 'Q1')?.remainingNgn).toBe(30_000);
+    expect(rows.find((r) => r.quotationRef === 'Q2')?.remainingNgn).toBe(5_000);
   });
 });

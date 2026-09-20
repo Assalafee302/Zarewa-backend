@@ -174,6 +174,49 @@ export function scoreBankDepositMatch(deposit, { amountNgn, bankDateISO, bankRef
   };
 }
 
+export const LINK_OPEN_BANK_DEPOSIT_REQUIRED = 'LINK_OPEN_BANK_DEPOSIT_REQUIRED';
+export const UNLINKED_BANK_OVERRIDE_REASON_REQUIRED = 'UNLINKED_BANK_OVERRIDE_REASON_REQUIRED';
+
+/**
+ * Block a second till credit when an open bank deposit matches the **exact** amount.
+ * Close-amount hits stay as a post-success tip only. Linking `bankDepositId` skips the guard.
+ * @param {{
+ *   bankDepositId?: string,
+ *   treasuryAmountNgn?: number,
+ *   similarHits?: Array<{ amountExact?: boolean }>,
+ *   forceUnlinkedBankPost?: boolean,
+ *   unlinkedBankOverrideReason?: string,
+ * }} [input]
+ */
+export function evaluateUnlinkedBankTillDoubleCount(input = {}) {
+  if (String(input.bankDepositId || '').trim()) return { ok: true };
+  if (!(Math.round(Number(input.treasuryAmountNgn) || 0) > 0)) return { ok: true };
+  const exact = (Array.isArray(input.similarHits) ? input.similarHits : []).filter((h) =>
+    Boolean(h?.amountExact)
+  );
+  if (!exact.length) return { ok: true };
+  if (!input.forceUnlinkedBankPost) {
+    return {
+      ok: false,
+      status: 409,
+      code: LINK_OPEN_BANK_DEPOSIT_REQUIRED,
+      error:
+        'An unidentified bank credit of the same amount is already on the till. Link that bank row on this payment, or explain why this is different money.',
+      similarUnlinkedDeposits: exact,
+    };
+  }
+  if (!String(input.unlinkedBankOverrideReason || '').trim()) {
+    return {
+      ok: false,
+      status: 400,
+      code: UNLINKED_BANK_OVERRIDE_REASON_REQUIRED,
+      error: 'Type a reason if this cash is not the unidentified bank credit.',
+      similarUnlinkedDeposits: exact,
+    };
+  }
+  return { ok: true, override: true };
+}
+
 export function bankDepositStatusLabel(status) {
   const s = String(status || '').trim().toUpperCase();
   if (s === BANK_DEPOSIT_STATUS_OPEN) return 'Unlinked';

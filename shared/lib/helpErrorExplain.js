@@ -69,6 +69,23 @@ export const HELP_ERROR_DICTIONARY = {
     explanation: 'A record with this reference may already exist.',
     nextSteps: ['Search for the existing receipt or payment.', 'Raise a duplicate report instead of posting again.'],
   },
+  link_open_bank_deposit_required: {
+    title: 'Link the bank credit first',
+    explanation:
+      'Finance already booked this transfer as an unidentified bank credit. Posting cash again would count the money twice on the till.',
+    nextSteps: [
+      'On the receipt or advance form, pick the matching bank credit (Use / link deposit).',
+      'If this cash is genuinely different, type an override reason when the server asks.',
+    ],
+  },
+  unlinked_bank_override_reason_required: {
+    title: 'Override reason required',
+    explanation: 'You chose to post new cash despite a matching unidentified bank credit. A reason is required.',
+    nextSteps: [
+      'Type why this cash is not the bank credit already on the till.',
+      'Or cancel and link that bank row instead.',
+    ],
+  },
 };
 
 /**

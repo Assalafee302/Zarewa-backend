@@ -542,3 +542,41 @@ export function pendingAdvanceDepositRowsFromEntries(entries, opts = {}) {
   out.sort((a, b) => String(b.atISO || '').localeCompare(String(a.atISO || '')));
   return out;
 }
+
+/**
+ * Quotation overpay credit still sitting on a job (OVERPAY_ADVANCE remaining).
+ * Not the same as {@link pendingAdvanceDepositRowsFromEntries} (no-quote ADVANCE_IN).
+ * Newest overpay date per customer+quote; remaining uses {@link overpayCreditRemainingOnQuotationFromEntries}.
+ * @param {object[]} entries
+ */
+export function pendingOverpayCreditRowsFromEntries(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  /** @type {Map<string, object>} */
+  const latestByQuote = new Map();
+  for (const e of list) {
+    if (e?.type !== 'OVERPAY_ADVANCE') continue;
+    const customerID = String(e.customerID || '').trim();
+    const quotationRef = String(e.quotationRef || '').trim();
+    if (!customerID || !quotationRef) continue;
+    const key = `${customerID}\0${quotationRef}`;
+    const prev = latestByQuote.get(key);
+    if (!prev || String(e.atISO || '') > String(prev.atISO || '')) {
+      latestByQuote.set(key, e);
+    }
+  }
+  const out = [];
+  for (const e of latestByQuote.values()) {
+    const remainingNgn = overpayCreditRemainingOnQuotationFromEntries(list, e.customerID, e.quotationRef);
+    if (!(remainingNgn > 0)) continue;
+    out.push({
+      id: `overpay:${e.customerID}:${e.quotationRef}`,
+      customerID: e.customerID,
+      customerName: String(e.customerName || '').trim(),
+      quotationRef: e.quotationRef,
+      remainingNgn,
+      atISO: e.atISO || '',
+    });
+  }
+  out.sort((a, b) => String(b.atISO || '').localeCompare(String(a.atISO || '')));
+  return out;
+}

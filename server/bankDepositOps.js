@@ -24,6 +24,7 @@ import {
   BANK_DEPOSIT_TREASURY_SOURCE_KIND,
   BANK_DEPOSIT_TREASURY_TYPE,
   bankDepositRemainingNgn,
+  evaluateUnlinkedBankTillDoubleCount,
   scoreBankDepositMatch,
 } from '../shared/lib/bankDeposits.js';
 import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
@@ -393,6 +394,40 @@ export function findSimilarOpenBankDeposits(db, { branchId, amountNgn, bankDateI
   }
   scored.sort((a, b) => b.matchScore - a.matchScore);
   return scored.slice(0, Math.max(1, Math.min(limit, 20)));
+}
+
+/**
+ * Refuse a second treasury credit when an OPEN/PARTIAL/RESERVED bank deposit has the same amount
+ * unless the clerk links that deposit or overrides with a reason.
+ * Close-amount matches are not blocked.
+ */
+export function guardUnlinkedBankTillDoubleCount(db, opts = {}) {
+  const {
+    branchId,
+    amountNgn,
+    bankDateISO,
+    bankReference,
+    bankDepositId,
+    treasuryAmountNgn,
+    forceUnlinkedBankPost,
+    unlinkedBankOverrideReason,
+  } = opts;
+  if (String(bankDepositId || '').trim()) return { ok: true };
+  if (!(Math.round(Number(treasuryAmountNgn) || 0) > 0)) return { ok: true };
+  const similar = findSimilarOpenBankDeposits(db, {
+    branchId,
+    amountNgn,
+    bankDateISO,
+    bankReference,
+    limit: 8,
+  });
+  return evaluateUnlinkedBankTillDoubleCount({
+    bankDepositId,
+    treasuryAmountNgn,
+    similarHits: similar,
+    forceUnlinkedBankPost,
+    unlinkedBankOverrideReason,
+  });
 }
 
 export function getBankDepositById(db, depositId) {

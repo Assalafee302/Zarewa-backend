@@ -6,6 +6,9 @@ import {
   isBankDepositDateClose,
   openBankDepositsFromSnapshot,
   scoreBankDepositMatch,
+  evaluateUnlinkedBankTillDoubleCount,
+  LINK_OPEN_BANK_DEPOSIT_REQUIRED,
+  UNLINKED_BANK_OVERRIDE_REASON_REQUIRED,
 } from './bankDeposits.js';
 
 describe('bank deposit close match suggestions', () => {
@@ -66,6 +69,64 @@ describe('openBankDepositsFromSnapshot', () => {
       ],
     });
     expect(open.map((d) => d.id)).toEqual(['d1']);
+  });
+});
+
+describe('evaluateUnlinkedBankTillDoubleCount', () => {
+  const exactHit = { id: 'BD-1', amountExact: true, amountNgn: 50_000 };
+  const closeHit = { id: 'BD-2', amountExact: false, amountClose: true, amountNgn: 50_400 };
+
+  it('blocks exact-amount open deposit when posting treasury cash without a link', () => {
+    const r = evaluateUnlinkedBankTillDoubleCount({
+      treasuryAmountNgn: 50_000,
+      similarHits: [exactHit, closeHit],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe(409);
+    expect(r.code).toBe(LINK_OPEN_BANK_DEPOSIT_REQUIRED);
+    expect(r.similarUnlinkedDeposits).toEqual([exactHit]);
+  });
+
+  it('does not block close-amount-only matches', () => {
+    const r = evaluateUnlinkedBankTillDoubleCount({
+      treasuryAmountNgn: 50_000,
+      similarHits: [closeHit],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('skips when the clerk already linked a bank deposit or posted no treasury cash', () => {
+    expect(
+      evaluateUnlinkedBankTillDoubleCount({
+        bankDepositId: 'BD-1',
+        treasuryAmountNgn: 50_000,
+        similarHits: [exactHit],
+      }).ok
+    ).toBe(true);
+    expect(
+      evaluateUnlinkedBankTillDoubleCount({
+        treasuryAmountNgn: 0,
+        similarHits: [exactHit],
+      }).ok
+    ).toBe(true);
+  });
+
+  it('allows override only with a reason', () => {
+    expect(
+      evaluateUnlinkedBankTillDoubleCount({
+        treasuryAmountNgn: 50_000,
+        similarHits: [exactHit],
+        forceUnlinkedBankPost: true,
+      }).code
+    ).toBe(UNLINKED_BANK_OVERRIDE_REASON_REQUIRED);
+    expect(
+      evaluateUnlinkedBankTillDoubleCount({
+        treasuryAmountNgn: 50_000,
+        similarHits: [exactHit],
+        forceUnlinkedBankPost: true,
+        unlinkedBankOverrideReason: 'Different transfer, same amount',
+      }).ok
+    ).toBe(true);
   });
 });
 

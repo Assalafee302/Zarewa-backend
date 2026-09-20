@@ -597,6 +597,7 @@ import * as refundCreditApplyOps from './refundCreditApplyOps.js';
 import {
   allocateBankDepositTx,
   findSimilarOpenBankDeposits,
+  guardUnlinkedBankTillDoubleCount,
   getBankDepositById,
   listBankDepositAllocationsForDeposit,
   listBankDepositDuplicateExceptions,
@@ -903,6 +904,19 @@ function normalizeTreasuryLines(body) {
 
 function totalTreasuryLines(lines) {
   return (lines || []).reduce((sum, line) => sum + (Number(line.amountNgn) || 0), 0);
+}
+
+/** 409/400 when posting treasury cash would double-count an exact-amount open bank deposit. */
+function sendUnlinkedBankTillGuard(res, db, opts) {
+  const guard = guardUnlinkedBankTillDoubleCount(db, opts);
+  if (guard.ok) return false;
+  res.status(guard.status).json({
+    ok: false,
+    code: guard.code,
+    error: guard.error,
+    similarUnlinkedDeposits: guard.similarUnlinkedDeposits,
+  });
+  return true;
 }
 
 /** Top-level bankReference or, when absent, joined payment line references (API / scripts compatibility). */
@@ -8424,6 +8438,9 @@ export function registerHttpApi(app, db) {
         ancillaryNetKg: bookSummary?.ancillaryNetKg ?? null,
         reconciliationGapKg: bookSummary?.reconciliationGapKg ?? null,
         openingClosingGapKg: bookSummary?.openingClosingGapKg ?? null,
+        wouldRestoreKg:
+          bookSummary != null &&
+          Number(bookSummary.jobsConsumedKgSum) < Number(bookSummary.bookUsedFromJobsKg) - 0.05,
         holders: statementHolders,
       });
     } catch (e) {
@@ -12362,6 +12379,8 @@ export function registerHttpApi(app, db) {
       const {
         forceDuplicatePost,
         duplicateOverrideReason,
+        forceUnlinkedBankPost,
+        unlinkedBankOverrideReason,
       } = req.body || {};
       const duplicateSignals = recentAdvanceDuplicateSignals(db, {
         customerID,
@@ -12441,6 +12460,21 @@ export function registerHttpApi(app, db) {
         return res.status(400).json({ ok: false, error: 'Treasury lines must equal the advance amount.' });
       }
 
+      if (
+        sendUnlinkedBankTillGuard(res, db, {
+          branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+          amountNgn: postAmountNgn,
+          bankDateISO: dateISO,
+          bankReference,
+          bankDepositId,
+          treasuryAmountNgn: totalTreasuryLines(treasuryLines),
+          forceUnlinkedBankPost: Boolean(forceUnlinkedBankPost),
+          unlinkedBankOverrideReason,
+        })
+      ) {
+        return;
+      }
+
       const { saved, bankDepositAllocation } = db.transaction(() => {
         const wb = req.workspaceBranchId || DEFAULT_BRANCH_ID;
         const saved = insertLedgerRows(
@@ -12502,13 +12536,19 @@ export function registerHttpApi(app, db) {
           entityKind: 'ledger_entry',
           entityId: created?.id ?? '',
           note: purpose || 'Customer advance posted',
-          details: { customerID, amountNgn: Math.round(Number(amountNgn) || 0) },
+          details: {
+            customerID,
+            amountNgn: Math.round(Number(amountNgn) || 0),
+            unlinkedBankOverride: forceUnlinkedBankPost
+              ? { forced: true, reason: String(unlinkedBankOverrideReason || '').trim() }
+              : null,
+          },
         });
         return { saved, bankDepositAllocation };
       })();
       const [entry] = saved;
       const similarUnlinkedDeposits =
-        !bankDepositId && postAmountNgn > 0
+        !bankDepositId && !forceUnlinkedBankPost && postAmountNgn > 0
           ? findSimilarOpenBankDeposits(db, {
               branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
               amountNgn: postAmountNgn,
@@ -12784,6 +12824,8 @@ export function registerHttpApi(app, db) {
         dateISO,
         forceDuplicatePost,
         duplicateOverrideReason,
+        forceUnlinkedBankPost,
+        unlinkedBankOverrideReason,
       } = req.body || {};
       const fullAmountAsReceipt = true;
       const resolvedBankReference = effectiveReceiptBankReference(req.body || {});
@@ -12922,6 +12964,21 @@ export function registerHttpApi(app, db) {
         return res.status(400).json({ ok: false, error: 'Treasury payment lines are required for this receipt.' });
       }
 
+      if (
+        sendUnlinkedBankTillGuard(res, db, {
+          branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+          amountNgn: postAmountNgn,
+          bankDateISO: dateISO,
+          bankReference: resolvedBankReference,
+          bankDepositId,
+          treasuryAmountNgn: totalTreasuryLines(treasuryLines),
+          forceUnlinkedBankPost: Boolean(forceUnlinkedBankPost),
+          unlinkedBankOverrideReason,
+        })
+      ) {
+        return;
+      }
+
       const amendSalesReceiptId = String(
         req.body?.amendSalesReceiptId ?? req.body?.amend_sales_receipt_id ?? ''
       ).trim();
@@ -13025,13 +13082,16 @@ export function registerHttpApi(app, db) {
                     signals: duplicateSignals,
                   }
                 : null,
+            unlinkedBankOverride: forceUnlinkedBankPost
+              ? { forced: true, reason: String(unlinkedBankOverrideReason || '').trim() }
+              : null,
           },
         });
         write.syncQuotationPaidFromLedger(db, quotationId);
         return { saved: posted, receipt: parsed.receipt, overpay: parsed.overpay, bankDepositAllocation };
       })();
       const similarUnlinkedDeposits =
-        !bankDepositId && postAmountNgn > 0
+        !bankDepositId && !forceUnlinkedBankPost && postAmountNgn > 0
           ? findSimilarOpenBankDeposits(db, {
               branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
               amountNgn: postAmountNgn,

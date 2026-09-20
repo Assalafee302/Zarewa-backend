@@ -108,28 +108,38 @@ const OPERATIONAL_TOPICS = [
   {
     module: 'sales',
     action: 'record customer advance deposit',
-    title: 'Customer advance (deposit)',
-    answer: 'Advance payments are tracked separately from quotation allocation.',
+    title: 'Customer advance (no quotation yet)',
+    answer:
+      'Use **Sales → Advance payment**. That parks money for a known customer with no quotation. Do not use the quotation receipt form. If Finance already registered the transfer, link that bank credit so cash is not counted twice.',
     steps: [
-      'Use receipt flow and mark advance/deposit per screen labels.',
-      'Confirm treasury account and customer match.',
-      'Allocate to quotations when sales processes payment.',
+      'Open **Sales** and click **Advance** (not Record payment).',
+      'Select the **customer**, amount, date, and treasury account.',
+      'If the transfer is already on **Bank credits — customer unknown**, pick that row instead of posting cash again.',
+      'Save. Later, **Link** applies the remaining balance to a quotation — that is not a new till credit.',
     ],
-    links: [{ label: 'Sales', to: '/sales' }],
-    extraKeywords: ['advance', 'deposit', 'customer balance'],
+    links: [{ label: 'Sales — receipts', to: '/sales', state: { focusSalesTab: 'receipts' } }],
+    extraKeywords: [
+      'advance',
+      'deposit',
+      'customer balance',
+      'advance payment modal',
+      'no quotation',
+      'link advance',
+    ],
   },
   {
     module: 'sales',
     action: 'handle customer overpayment on a quotation',
     title: 'Customer overpayment / credit on quotation',
-    answer: 'Overpayments may auto-apply as credit per branch rules.',
+    answer:
+      'Paying more than the quotation due creates hanging quote credit. Refund that credit from the quotation — do not **Link** it as an unused advance.',
     steps: [
-      'Review quotation paid vs total on **Sales**.',
-      'Check branch policy for auto-credit.',
-      'Finance may reconcile if treasury mismatch.',
+      'Open **Sales → Receipts** and check **Quote overpay credit** next to advances and bank credits.',
+      'Open the quotation to see remaining hanging credit.',
+      'Refund overpay from that quote (or apply later per Finance SOP). Do not treat it as a customer advance with no quote.',
     ],
-    links: [{ label: 'Sales', to: '/sales' }],
-    extraKeywords: ['overpaid', 'excess payment', 'credit'],
+    links: [{ label: 'Sales — receipts', to: '/sales', state: { focusSalesTab: 'receipts' } }],
+    extraKeywords: ['overpaid', 'excess payment', 'credit', 'hanging credit', 'overpay'],
   },
   {
     module: 'sales',
@@ -224,6 +234,27 @@ const OPERATIONAL_TOPICS = [
   },
 
   // —— Finance (15 × 10 = 150) ——
+  {
+    module: 'finance',
+    action: 'register an unidentified bank credit',
+    title: 'Register bank credit (customer unknown)',
+    answer:
+      'When money hits the bank before Sales names the customer, Finance registers it as an unidentified bank credit (not a customer advance). Sales then links that row on a receipt or Advance so the till is not credited twice.',
+    steps: [
+      'Open **Finance / Cashier** and **Register bank deposit** (unidentified inflow).',
+      'Enter bank date, amount, account, and reference. This credits the till once.',
+      'Tell Sales to **Use** that row on the receipt or Advance modal — do not post the same transfer as new cash.',
+    ],
+    links: [{ label: 'Finance', to: '/accounts' }],
+    extraKeywords: [
+      'unlinked deposit',
+      'unlinked bank',
+      'bank deposit',
+      'register deposit',
+      'unidentified transfer',
+      'customer unknown',
+    ],
+  },
   {
     module: 'finance',
     action: 'record an expense',

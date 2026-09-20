@@ -34,4 +34,16 @@ describe('helpOperationalCatalog', () => {
     expect(m).not.toBeNull();
     expect(m.article.answer).toMatch(/payout|treasury/i);
   });
+
+  it('matches Advance modal (no quotation) phrasing', () => {
+    const m = matchHelpArticle('how do i record customer advance deposit');
+    expect(m).not.toBeNull();
+    expect(m.article.answer).toMatch(/Advance payment|no quotation/i);
+  });
+
+  it('matches register unidentified bank credit phrasing', () => {
+    const m = matchHelpArticle('how do i register an unidentified bank credit');
+    expect(m).not.toBeNull();
+    expect(m.article.answer).toMatch(/unidentified bank credit|customer unknown/i);
+  });
 });

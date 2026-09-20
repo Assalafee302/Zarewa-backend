@@ -36,17 +36,20 @@ describe.skipIf(!mysqlOk)('workspace chat HTTP gate', () => {
     db?.close?.();
   });
 
-  it('returns 404 for rooms/presence/realtime while chat is off', async () => {
-    for (const path of [
-      '/api/workspace/rooms',
-      '/api/workspace/activity',
-      '/api/workspace/presence',
-      '/api/workspace/realtime',
-    ]) {
+  it('returns 404 for rooms/presence while chat is off', async () => {
+    for (const path of ['/api/workspace/rooms', '/api/workspace/activity', '/api/workspace/presence']) {
       const res = await agent.get(path);
       expect(res.status, path).toBe(404);
       expect(res.body.code).toBe('WORKSPACE_ROOMS_DISABLED');
     }
+  });
+
+  it('does not reconnect-storm EventSource when chat is off', async () => {
+    const res = await agent.get('/api/workspace/realtime');
+    expect(res.status).toBe(200);
+    expect(String(res.headers['content-type'] || '')).toMatch(/text\/event-stream/);
+    expect(res.text).toMatch(/WORKSPACE_ROOMS_DISABLED/);
+    expect(res.text).toMatch(/retry:\s*86400000/);
   });
 
   it('still serves branch workspace and desk snapshots', async () => {

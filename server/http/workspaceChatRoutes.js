@@ -4,10 +4,10 @@
  * Gated by ZAREWA_WORKSPACE_ROOMS_ENABLED (off by default). Does not register
  * branch snapshots, revision, search, or Office filing.
  */
-import { requireAuth, requirePermission } from '../auth.js';
+import { requireAuth, requirePermission, userHasPermission } from '../auth.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { officeScopeFromReq } from '../officeOps.js';
-import { requireWorkspaceRoomsEnabled } from '../workspace/chatFlags.js';
+import { requireWorkspaceRoomsEnabled, workspaceRoomsEnabled } from '../workspace/chatFlags.js';
 import {
   archiveRoom,
   createDmRoom,
@@ -293,7 +293,29 @@ export function registerWorkspaceChatRoutes(app, db) {
     }
   });
 
-  app.get('/api/workspace/realtime', ...chatAuth, (req, res) => {
+  app.get('/api/workspace/realtime', requireAuth, (req, res) => {
+    // Already-deployed SPAs open EventSource for every signed-in user. A JSON 404
+    // would reconnect every few seconds; send a one-shot SSE with a long retry instead.
+    if (!workspaceRoomsEnabled()) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'close');
+      res.setHeader('X-Accel-Buffering', 'no');
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
+      res.write(`retry: 86400000\n\n`);
+      res.write(
+        `data: ${JSON.stringify({ type: 'disabled', code: 'WORKSPACE_ROOMS_DISABLED' })}\n\n`
+      );
+      res.end();
+      return;
+    }
+    if (!userHasPermission(req.user, 'office.use')) {
+      return res.status(403).json({
+        ok: false,
+        code: 'FORBIDDEN',
+        error: 'You do not have permission for this action.',
+      });
+    }
     // Cookie/session auth via requireAuth; EventSource clients must set withCredentials: true.
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');

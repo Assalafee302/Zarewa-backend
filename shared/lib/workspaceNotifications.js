@@ -14,6 +14,7 @@ import {
 } from './storeIdle.js';
 import { approvalAttentionPathForRole, approvalDeskHomeForRole } from './approvalDeskPaths.js';
 import { ACCOUNTS_TAB_PAYOUT, ACCOUNTS_TAB_REQUESTS } from './accountsExpenseTabs.js';
+import { isPaymentRequestOpenForReview, paymentRequestLifecycleStatus } from './paymentRequestStatus.js';
 
 /** @typedef {'critical' | 'warning' | 'info'} NotificationSeverity */
 
@@ -210,15 +211,16 @@ export function buildWorkspaceNotifications({
   }
 
   const paymentRequests = Array.isArray(snapshot?.paymentRequests) ? snapshot.paymentRequests : [];
-  const pendingPayApproval = paymentRequests.filter(
-    (row) => String(row.approvalStatus || '').toLowerCase() === 'pending'
+  const pendingPayApproval = paymentRequests.filter((row) =>
+    isPaymentRequestOpenForReview(row.approvalStatus)
   );
   const pendingPayPayout = paymentRequests.filter((row) => {
-    const requested = Number(row.amountRequestedNgn) || 0;
-    const paid = Number(row.paidAmountNgn) || 0;
-    if (String(row.approvalStatus || '').toLowerCase() === 'rejected') return false;
-    if (String(row.approvalStatus || '').toLowerCase() !== 'approved') return false;
-    return paid < requested;
+    const life = paymentRequestLifecycleStatus({
+      approvalStatus: row.approvalStatus,
+      amountRequestedNgn: row.amountRequestedNgn,
+      paidAmountNgn: row.paidAmountNgn,
+    });
+    return life === 'Approved' || life === 'Partially paid';
   });
 
   if (canAccessModule('finance') && can('finance.approve') && pendingPayApproval.length > 0) {

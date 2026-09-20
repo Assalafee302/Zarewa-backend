@@ -814,20 +814,11 @@ function buildArchetypes() {
         const { agent } = await createSession();
         const boot = await bootstrap(agent);
         const cash = boot.treasuryAccounts[0];
-        const ex = await agent.post('/api/expenses').send({
-          expenseType: 'Fuel',
-          amountNgn: 40_000,
-          date: '2026-03-29',
-          category: 'Rent & utilities',
-          paymentMethod: 'Cash',
-          reference: 'EX-A19',
-        });
-        expect(ex.status).toBe(201);
         const pr = await agent.post('/api/payment-requests').send({
-          expenseID: ex.body.expenseID,
-          amountRequestedNgn: 40_000,
           requestDate: '2026-03-29',
+          expenseCategory: 'Rent & utilities',
           description: 'Unapproved pay attempt',
+          lineItems: [{ description: 'Fuel', quantity: 1, unitPriceNgn: 40_000 }],
         });
         expect(pr.status).toBe(201);
         const pay = await agent.post(`/api/payment-requests/${encodeURIComponent(pr.body.requestID)}/pay`).send({
@@ -1060,20 +1051,11 @@ function buildArchetypes() {
         const { agent } = await createSession();
         const boot = await bootstrap(agent);
         const cash = boot.treasuryAccounts[0];
-        const ex = await agent.post('/api/expenses').send({
-          expenseType: 'Repairs',
-          amountNgn: 22_000,
-          date: '2026-03-29',
-          category: 'Maintenance',
-          paymentMethod: 'Cash',
-          reference: 'EX-A28',
-        });
-        expect(ex.status).toBe(201);
         const pr = await agent.post('/api/payment-requests').send({
-          expenseID: ex.body.expenseID,
-          amountRequestedNgn: 22_000,
           requestDate: '2026-03-29',
+          expenseCategory: 'Maintenance',
           description: 'Approved path',
+          lineItems: [{ description: 'Repairs', quantity: 1, unitPriceNgn: 22_000 }],
         });
         expect(pr.status).toBe(201);
         await agent.post(`/api/payment-requests/${encodeURIComponent(pr.body.requestID)}/decision`).send({
@@ -1475,20 +1457,11 @@ function buildArchetypes() {
         const { agent } = await createSession();
         const boot = await bootstrap(agent);
         const cash = boot.treasuryAccounts[0];
-        const ex = await agent.post('/api/expenses').send({
-          expenseType: 'Doubtful',
-          amountNgn: 99_000,
-          date: '2026-03-29',
-          category: 'Maintenance',
-          paymentMethod: 'Cash',
-          reference: 'EX-A36',
-        });
-        expect(ex.status).toBe(201);
         const pr = await agent.post('/api/payment-requests').send({
-          expenseID: ex.body.expenseID,
-          amountRequestedNgn: 99_000,
           requestDate: '2026-03-29',
+          expenseCategory: 'Maintenance',
           description: 'Rejected later',
+          lineItems: [{ description: 'Doubtful', quantity: 1, unitPriceNgn: 99_000 }],
         });
         expect(pr.status).toBe(201);
         await agent.post(`/api/payment-requests/${encodeURIComponent(pr.body.requestID)}/decision`).send({
@@ -1542,20 +1515,11 @@ function buildArchetypes() {
       run: async () => {
         const { agent } = await createSession();
         const accs = await ensureTreasuryAccounts(agent, 2, 'A39');
-        const ex = await agent.post('/api/expenses').send({
-          expenseType: 'Generator',
-          amountNgn: 500_000,
-          date: '2026-03-29',
-          category: 'Maintenance',
-          paymentMethod: 'Mixed',
-          reference: 'EX-A39',
-        });
-        expect(ex.status).toBe(201);
         const pr = await agent.post('/api/payment-requests').send({
-          expenseID: ex.body.expenseID,
-          amountRequestedNgn: 500_000,
           requestDate: '2026-03-29',
+          expenseCategory: 'Maintenance',
           description: 'Staged diesel payout',
+          lineItems: [{ description: 'Generator', quantity: 1, unitPriceNgn: 500_000 }],
         });
         expect(pr.status).toBe(201);
         await approvePaymentRequest(agent, pr.body.requestID);

@@ -56,6 +56,7 @@ import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { SUGGESTED_ROLE_BY_DEPARTMENT, WORKSPACE_DEPARTMENT_IDS } from './departmentRoleTemplates.js';
 import { userHasPermission } from './auth.js';
 import { isGlPostingEnabled } from './finance/glPostingGate.js';
+import { buildCashierTillTruth } from './finance/cashierTillTruthOps.js';
 import { localAccountingCapabilities } from '../shared/lib/localAccountingSurfaces.js';
 import { buildExpenseCategoryMonthlyAlert, buildExpenseCategoryBranchCoachAlert } from './expenseCategoryReportOps.js';
 import {
@@ -820,6 +821,8 @@ export function buildShellBootstrap(db, opts = {}) {
      * minutes, on a Kaduna link. A few hundred gzipped bytes here buys that back.
      */
     treasuryAccounts: canListTreasuryAccounts(user) ? listTreasuryAccounts(db, branchScope) : [],
+    /** Live Cash / POS / Bank from the same balance payouts debit (not truncated movements). */
+    cashierTillTruth: canListTreasuryAccounts(user) ? buildCashierTillTruth(db, branchScope) : null,
     /**
      * Reference data, same reasoning as treasury accounts. Agreement bodies are already
      * stripped from list rows, so the whole set is a few KB gzipped.

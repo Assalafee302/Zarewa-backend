@@ -734,19 +734,12 @@ function buildScenarioMatrix() {
       run: async () => {
         const { agent } = await createSession();
         const accounts = await ensureTreasuryAccounts(agent, 2, `REQ${i + 1}`);
-        const expense = await createExpense(agent, {
-          expenseType: 'Operational support',
-          amountNgn: amount,
-          date: '2026-03-29',
-          category: i % 2 === 0 ? 'Rent & utilities' : 'Maintenance',
-          paymentMethod: 'Mixed',
-          reference: `EXP-REQ-${i + 1}`,
-        });
+        const category = i % 2 === 0 ? 'Rent & utilities' : 'Maintenance';
         const reqRow = await createPaymentRequest(agent, {
-          expenseID: expense.expenseID,
-          amountRequestedNgn: amount,
+          expenseCategory: category,
           requestDate: '2026-03-29',
           description: `Scenario request ${i + 1}`,
+          lineItems: [{ description: 'Operational support', quantity: 1, unitPriceNgn: amount }],
         });
         await approvePaymentRequest(agent, reqRow.requestID);
 
@@ -1685,19 +1678,11 @@ function buildScenarioMatrix() {
       const accounts = await ensureTreasuryAccounts(agent, 4, 'HSH07');
       const amount = 1_000_003;
       const legs = [250_001, 250_000, 250_001, 250_001];
-      const expense = await createExpense(agent, {
-        expenseType: 'Harsh multi-leg',
-        amountNgn: amount,
-        date: '2026-03-29',
-        category: 'Maintenance',
-        paymentMethod: 'Mixed',
-        reference: 'EXP-H7',
-      });
       const reqRow = await createPaymentRequest(agent, {
-        expenseID: expense.expenseID,
-        amountRequestedNgn: amount,
+        expenseCategory: 'Maintenance',
         requestDate: '2026-03-29',
         description: 'Four-way payout',
+        lineItems: [{ description: 'Harsh multi-leg', quantity: 1, unitPriceNgn: amount }],
       });
       await approvePaymentRequest(agent, reqRow.requestID);
       await payPaymentRequest(agent, reqRow.requestID, {

@@ -4,6 +4,7 @@
  */
 import { quotationNeedsManagerClearance, quotationIsFlaggedForAudit, cuttingListInProductionGate } from './managementQueueFilters.js';
 import { quotationNeedsBelowFloorManagerApproval } from './quotationPriceException.js';
+import { isPaymentRequestOpenForReview } from './paymentRequestStatus.js';
 
 /**
  * @param {object | null | undefined} snapshot
@@ -24,8 +25,8 @@ export function getManagementQueueCounts(snapshot) {
 
   const pendingRefunds = refunds.filter((r) => String(r.status) === 'Pending').length;
 
-  const pendingExpenses = paymentRequests.filter(
-    (pr) => String(pr.approvalStatus || '').toLowerCase() === 'pending'
+  const pendingExpenses = paymentRequests.filter((pr) =>
+    isPaymentRequestOpenForReview(pr.approvalStatus)
   ).length;
 
   const qc = productionJobs.filter(

@@ -6,6 +6,7 @@
 import { hasColumn, tableExists } from '../ap2ReceivedBasisOps.js';
 import { abbreviateBankName } from '../../shared/lib/bankAbbreviation.js';
 import { getExpenseCategoryLane } from '../../shared/expenseCategoryLanes.js';
+import { paymentRequestLifecycleStatus } from '../../shared/lib/paymentRequestStatus.js';
 import {
   buildExpenseMemoFilingPack,
   mapExpenseFilingMemo,
@@ -133,11 +134,16 @@ export function loadExpenseMemoFilingRows(db, opts = {}) {
 
   if (status === 'paid') {
     where.push(
-      `(pr.approval_status = 'Paid' OR (pr.request_id IS NULL AND TRIM(COALESCE(e.payment_method, '')) != '' AND LOWER(e.payment_method) != 'pending'))`
+      `(pr.approval_status = 'Paid'
+        OR (pr.request_id IS NOT NULL AND COALESCE(pr.amount_requested_ngn,0) > 0
+            AND COALESCE(pr.paid_amount_ngn,0) >= COALESCE(pr.amount_requested_ngn,0))
+        OR (pr.request_id IS NULL AND TRIM(COALESCE(e.payment_method, '')) != '' AND LOWER(e.payment_method) != 'pending'))`
     );
   } else if (status === 'approved') {
     where.push(
-      `(pr.approval_status IN ('Paid', 'Approved') OR (pr.request_id IS NULL AND TRIM(COALESCE(e.payment_method, '')) != '' AND LOWER(e.payment_method) != 'pending'))`
+      `(pr.approval_status IN ('Paid', 'Approved')
+        OR (pr.request_id IS NOT NULL AND COALESCE(pr.paid_amount_ngn,0) > 0)
+        OR (pr.request_id IS NULL AND TRIM(COALESCE(e.payment_method, '')) != '' AND LOWER(e.payment_method) != 'pending'))`
     );
   }
 
@@ -178,8 +184,18 @@ export function loadExpenseMemoFilingRows(db, opts = {}) {
       byExpense.set(id, row);
       continue;
     }
-    const rowPaid = String(row.approval_status || '') === 'Paid';
-    const curPaid = String(current.approval_status || '') === 'Paid';
+    const rowPaid =
+      paymentRequestLifecycleStatus({
+        approvalStatus: row.approval_status,
+        amountRequestedNgn: row.amount_requested_ngn,
+        paidAmountNgn: row.paid_amount_ngn,
+      }) === 'Paid';
+    const curPaid =
+      paymentRequestLifecycleStatus({
+        approvalStatus: current.approval_status,
+        amountRequestedNgn: current.amount_requested_ngn,
+        paidAmountNgn: current.paid_amount_ngn,
+      }) === 'Paid';
     if (rowPaid && !curPaid) byExpense.set(id, row);
     else if (rowPaid === curPaid) {
       const rowPay = toIsoDate(row.paid_at_iso);
@@ -193,7 +209,15 @@ export function loadExpenseMemoFilingRows(db, opts = {}) {
     rows = rows.filter((row) => getExpenseCategoryLane(row.category) === categoryLane);
   }
   rows = rows.filter((row) =>
-    memoMatchesFilingStatus(status, row.approval_status, row.payment_method)
+    memoMatchesFilingStatus(
+      status,
+      paymentRequestLifecycleStatus({
+        approvalStatus: row.approval_status,
+        amountRequestedNgn: row.amount_requested_ngn,
+        paidAmountNgn: row.paid_amount_ngn,
+      }),
+      row.payment_method
+    )
   );
 
   const expenseIds = rows.map((r) => String(r.expense_id)).filter(Boolean);

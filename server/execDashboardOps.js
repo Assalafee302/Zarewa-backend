@@ -31,6 +31,7 @@ import {
   quotationHasPaymentForMdBelowFloorQueue,
   SQL_PENDING_BELOW_FLOOR_EXCEPTION,
 } from '../shared/lib/quotationPriceException.js';
+import { paymentRequestOpenApprovalSql } from '../shared/lib/paymentRequestStatus.js';
 import { reconcileStaleMdBelowFloorFlags } from './pricingOps.js';
 import { listOfficeThreads, officeTablesReady } from './officeOps.js';
 import { listStockRegisterInbox } from './stockRegisterOps.js';
@@ -216,7 +217,7 @@ export function buildScopedExecutiveCounts(db, branchScope) {
     pendingPaymentRequests = countRow(
       `SELECT COUNT(*) AS c FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
-       WHERE TRIM(IFNULL(pr.approval_status,'')) IN ('Pending','Submitted','Awaiting approval','')${bExp.sql.replace(/branch_id/g, 'e.branch_id')}`,
+       WHERE ${paymentRequestOpenApprovalSql('pr.approval_status')}${bExp.sql.replace(/branch_id/g, 'e.branch_id')}`,
       bExp.args,
       isAll ? 'company' : 'branch'
     );

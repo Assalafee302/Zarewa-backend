@@ -3,18 +3,12 @@
  */
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import { isFinanceExceptionExpenseItem, resolveExpenseCategoryPolicyLimits } from '../shared/expenseCategoryPolicy.js';
+import { paymentRequestCashStage } from '../shared/lib/paymentRequestStatus.js';
 import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
 import { hasColumn } from './ap2ReceivedBasisOps.js';
 
 function roundMoney(n) {
   return Math.round(Number(n) || 0);
-}
-
-function isoInRange(iso, startISO, endISO) {
-  if (!iso) return false;
-  if (startISO && iso < startISO) return false;
-  if (endISO && iso > endISO) return false;
-  return true;
 }
 
 /**
@@ -29,6 +23,22 @@ export function buildExpenseCategoryExceptionReport(db, opts = {}) {
   const hasLane = hasColumn(db, 'expenses', 'category_lane');
   const hasJustification = hasColumn(db, 'payment_requests', 'category_justification');
 
+  const clauses = [];
+  const args = [];
+  if (startISO) {
+    clauses.push('pr.request_date >= ?');
+    args.push(startISO);
+  }
+  if (endISO) {
+    clauses.push('pr.request_date <= ?');
+    args.push(endISO);
+  }
+  if (branchScope !== 'ALL') {
+    clauses.push('e.branch_id = ?');
+    args.push(branchScope);
+  }
+  const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
   const rows = db
     .prepare(
       `SELECT pr.request_id, pr.amount_requested_ngn, pr.request_date, pr.approval_status, pr.description,
@@ -36,37 +46,39 @@ export function buildExpenseCategoryExceptionReport(db, opts = {}) {
               e.category AS expense_category, e.category_lane AS expense_category_lane, e.branch_id
        FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+       ${whereSql}
        ORDER BY pr.request_date DESC, pr.request_id DESC`
     )
-    .all()
+    .all(...args)
     .filter((row) => {
       const category = String(row.expense_category || '').trim();
       const lane = hasLane
         ? String(row.expense_category_lane || '').trim() || getExpenseCategoryLane(category)
         : getExpenseCategoryLane(category);
-      if (!isFinanceExceptionExpenseItem(category, lane)) return false;
-      const date = String(row.request_date || '').slice(0, 10);
-      if (startISO || endISO) {
-        if (!isoInRange(date, startISO, endISO)) return false;
-      }
-      const branchId = String(row.branch_id || '').trim();
-      if (branchScope !== 'ALL' && branchId && branchId !== branchScope) return false;
-      return true;
+      return isFinanceExceptionExpenseItem(category, lane);
     })
     .map((row) => {
       const category = String(row.expense_category || '').trim() || 'Others';
       const lane = hasLane
         ? String(row.expense_category_lane || '').trim() || getExpenseCategoryLane(category)
         : getExpenseCategoryLane(category);
+      const amountRequestedNgn = roundMoney(row.amount_requested_ngn);
+      const paidAmountNgn = roundMoney(row.paid_amount_ngn);
+      const cashStage = paymentRequestCashStage({
+        approvalStatus: row.approval_status,
+        amountRequestedNgn,
+        paidAmountNgn,
+      });
       return {
         requestID: row.request_id,
         requestDate: String(row.request_date || '').slice(0, 10),
         approvalStatus: row.approval_status ?? '',
+        cashStage,
         description: row.description ?? '',
         expenseCategory: category,
         expenseCategoryLane: lane,
-        amountRequestedNgn: roundMoney(row.amount_requested_ngn),
-        paidAmountNgn: roundMoney(row.paid_amount_ngn),
+        amountRequestedNgn,
+        paidAmountNgn,
         branchId: row.branch_id ?? '',
         categoryJustification: hasJustification ? String(row.category_justification || '').trim() : '',
       };
@@ -74,12 +86,32 @@ export function buildExpenseCategoryExceptionReport(db, opts = {}) {
 
   const byLane = new Map();
   const byCategory = new Map();
-  let totalNgn = 0;
+  let pendingNgn = 0;
+  let approvedUnpaidNgn = 0;
+  let paidNgn = 0;
+  let pendingRowCount = 0;
+  let approvedUnpaidRowCount = 0;
+  let paidRowCount = 0;
   for (const r of rows) {
-    totalNgn += r.amountRequestedNgn;
+    if (r.cashStage === 'pending') {
+      pendingNgn += r.amountRequestedNgn;
+      pendingRowCount += 1;
+      continue;
+    }
+    if (r.cashStage === 'approved_unpaid') {
+      approvedUnpaidNgn += r.amountRequestedNgn;
+      approvedUnpaidRowCount += 1;
+    } else if (r.cashStage === 'paid') {
+      paidNgn += r.amountRequestedNgn;
+      paidRowCount += 1;
+    } else {
+      continue;
+    }
     byLane.set(r.expenseCategoryLane, (byLane.get(r.expenseCategoryLane) || 0) + r.amountRequestedNgn);
     byCategory.set(r.expenseCategory, (byCategory.get(r.expenseCategory) || 0) + r.amountRequestedNgn);
   }
+
+  const totalNgn = approvedUnpaidNgn + paidNgn;
 
   return {
     ok: true,
@@ -89,6 +121,12 @@ export function buildExpenseCategoryExceptionReport(db, opts = {}) {
     summary: {
       rowCount: rows.length,
       totalNgn: roundMoney(totalNgn),
+      pendingNgn: roundMoney(pendingNgn),
+      approvedUnpaidNgn: roundMoney(approvedUnpaidNgn),
+      paidNgn: roundMoney(paidNgn),
+      pendingRowCount,
+      approvedUnpaidRowCount,
+      paidRowCount,
       byLane: [...byLane.entries()].map(([lane, amountNgn]) => ({ lane, amountNgn: roundMoney(amountNgn) })),
       byCategory: [...byCategory.entries()].map(([category, amountNgn]) => ({
         category,
@@ -115,7 +153,9 @@ export function buildExpenseCategoryMonthlyAlert(db, opts = {}) {
 
   const exceptions = buildExpenseCategoryExceptionReport(db, { startISO, endISO, branchScope });
   const othersRows = exceptions.rows.filter((r) => r.expenseCategory === 'Others');
-  const othersNgn = othersRows.reduce((s, r) => s + r.amountRequestedNgn, 0);
+  const othersNgn = othersRows
+    .filter((r) => r.cashStage === 'paid' || r.cashStage === 'approved_unpaid')
+    .reduce((s, r) => s + r.amountRequestedNgn, 0);
 
   let ap3UnclassifiedNgn = 0;
   try {
@@ -330,6 +370,7 @@ export function buildExpenseCategoryExceptionCsv(report) {
     'Lane',
     'Amount NGN',
     'Paid NGN',
+    'Cash Stage',
     'Approval Status',
     'Description',
     'Justification',
@@ -343,6 +384,7 @@ export function buildExpenseCategoryExceptionCsv(report) {
       r.expenseCategoryLane,
       r.amountRequestedNgn,
       r.paidAmountNgn,
+      r.cashStage,
       r.approvalStatus,
       r.description,
       r.categoryJustification,

@@ -31,7 +31,7 @@ export const FILING_PRINT_LINE_WIDTH = 86;
 export const FILING_PDF_LINES_PER_PAGE = 50;
 
 const PAID_STATUSES = new Set(['paid']);
-const APPROVED_STATUSES = new Set(['paid', 'approved']);
+const APPROVED_STATUSES = new Set(['paid', 'approved', 'partially paid']);
 
 function roundMoney(n) {
   return Math.round(Number(n) || 0);

@@ -1036,6 +1036,7 @@ import { registerChairmanOfficeRoutes } from './http/chairmanOfficeRoutes.js';
 import { registerPurchasePaymentCashierAckRoutes } from './http/purchasePaymentCashierAckRoutes.js';
 import { registerBranchRefundFreezeRoutes } from './http/branchRefundFreezeRoutes.js';
 import { registerExpenseTreasuryCatchUpRoutes } from './http/expenseTreasuryCatchUpRoutes.js';
+import { registerCashierTillTruthRoutes } from './http/cashierTillTruthRoutes.js';
 
 export function registerHttpApi(app, db) {
   registerMobileApi(app, db);
@@ -1111,6 +1112,7 @@ export function registerHttpApi(app, db) {
   registerPurchasePaymentCashierAckRoutes(app, db);
   registerBranchRefundFreezeRoutes(app, db);
   registerExpenseTreasuryCatchUpRoutes(app, db);
+  registerCashierTillTruthRoutes(app, db);
   registerWorkspaceChatRoutes(app, db);
 
   /** Accounting sub-ledgers — Creditors, Debtors, Assets register. */

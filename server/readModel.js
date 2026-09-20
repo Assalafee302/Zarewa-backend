@@ -3398,7 +3398,7 @@ export function getPaymentRequestDetail(db, requestId) {
     expenseID: row.expense_id,
     amountRequestedNgn: row.amount_requested_ngn,
     requestDate: row.request_date,
-    approvalStatus: row.approval_status,
+    ...paymentRequestStatusApiFields(row),
     description: row.description,
     approvedBy: row.approved_by ?? '',
     approvedAtISO: row.approved_at_iso ?? '',

@@ -1834,22 +1834,11 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it('POST /api/payment-requests and /decision review the approval flow', async () => {
-    const expense = await agent.post('/api/expenses').send({
-      expenseType: 'Generator service',
-      amountNgn: 15_000,
-      date: '2026-03-29',
-      category: 'Maintenance',
-      paymentMethod: 'Cash',
-      treasuryAccountId: 1,
-      reference: 'EXP-REQ',
-    });
-    expect(expense.status).toBe(201);
-
     const createReq = await agent.post('/api/payment-requests').send({
-      expenseID: expense.body.expenseID,
-      amountRequestedNgn: 15_000,
       requestDate: '2026-03-29',
+      expenseCategory: 'Maintenance',
       description: 'Request diesel top-up',
+      lineItems: [{ description: 'Generator service', quantity: 1, unitPriceNgn: 15_000 }],
     });
     expect(createReq.status).toBe(201);
 
@@ -1861,6 +1850,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const boot = await agent.get('/api/bootstrap');
     const reqRow = boot.body.paymentRequests.find((r) => r.requestID === createReq.body.requestID);
     expect(reqRow.approvalStatus).toBe('Approved');
+    expect(reqRow.lifecycleStatus).toBe('Approved');
     expect(reqRow.approvedBy).toBeTruthy();
   });
 
@@ -2117,21 +2107,11 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const before = await agent.get('/api/bootstrap');
     const [cashAccount, bankAccount] = before.body.treasuryAccounts.slice(0, 2);
 
-    const expense = await agent.post('/api/expenses').send({
-      expenseType: 'Diesel refill',
-      amountNgn: 500_000,
-      date: '2026-03-29',
-      category: 'Rent & utilities',
-      paymentMethod: 'Mixed',
-      reference: 'EXP-DIESEL-1',
-    });
-    expect(expense.status).toBe(201);
-
     const requestCreate = await agent.post('/api/payment-requests').send({
-      expenseID: expense.body.expenseID,
-      amountRequestedNgn: 500_000,
       requestDate: '2026-03-29',
+      expenseCategory: 'Rent & utilities',
       description: 'Diesel payout split between cash and GT bank',
+      lineItems: [{ description: 'Diesel refill', quantity: 1, unitPriceNgn: 500_000 }],
     });
     expect(requestCreate.status).toBe(201);
 
@@ -2170,21 +2150,11 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const before = await agent.get('/api/bootstrap');
     const cashAccount = before.body.treasuryAccounts[0];
 
-    const expense = await agent.post('/api/expenses').send({
-      expenseType: 'Duplicate pay guard',
-      amountNgn: 25_000,
-      date: '2026-03-29',
-      category: 'Maintenance',
-      paymentMethod: 'Cash',
-      reference: 'EXP-DUP-PAY',
-    });
-    expect(expense.status).toBe(201);
-
     const requestCreate = await agent.post('/api/payment-requests').send({
-      expenseID: expense.body.expenseID,
-      amountRequestedNgn: 25_000,
       requestDate: '2026-03-29',
+      expenseCategory: 'Maintenance',
       description: 'Duplicate payout guard',
+      lineItems: [{ description: 'Duplicate pay guard', quantity: 1, unitPriceNgn: 25_000 }],
     });
     expect(requestCreate.status).toBe(201);
 
@@ -2224,21 +2194,11 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const before = await agent.get('/api/bootstrap');
     const cashAccount = before.body.treasuryAccounts[0];
 
-    const expense = await agent.post('/api/expenses').send({
-      expenseType: 'Test reversal',
-      amountNgn: 50_000,
-      date: '2026-03-29',
-      category: 'Maintenance',
-      paymentMethod: 'Cash',
-      reference: 'EXP-REV-PR',
-    });
-    expect(expense.status).toBe(201);
-
     const requestCreate = await agent.post('/api/payment-requests').send({
-      expenseID: expense.body.expenseID,
-      amountRequestedNgn: 50_000,
       requestDate: '2026-03-29',
+      expenseCategory: 'Maintenance',
       description: 'Reversal test payout',
+      lineItems: [{ description: 'Test reversal', quantity: 1, unitPriceNgn: 50_000 }],
     });
     expect(requestCreate.status).toBe(201);
 

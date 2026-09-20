@@ -61,6 +61,7 @@ import { userHasPermission } from './auth.js';
 import { buildExpenseCategoryMonthlyAlert, buildExpenseCategoryBranchCoachAlert } from './expenseCategoryReportOps.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { listRefundCreditApplications } from './refundCreditApplyOps.js';
+import { buildCashierTillTruth } from './finance/cashierTillTruthOps.js';
 import {
   canReadCoilAndMovements,
   canReadFinanceDomain,
@@ -236,6 +237,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     partnerWalletPolicy: { enabled: partnerWalletEnabled() },
     // Receipt / advance account pickers — keep on sales so cashiers do not wait on finance pack.
     treasuryAccounts: f.treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
+    cashierTillTruth: f.treasuryOk ? buildCashierTillTruth(db, branchScope) : null,
     bootstrapMeta: {
       deferredDeskArrays: [],
       sort: { customers: 'recent', quotations: 'date_iso_desc', receipts: 'date_iso_desc' },
@@ -549,6 +551,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     cuttingLists,
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
+    cashierTillTruth: treasuryOk ? buildCashierTillTruth(db, branchScope) : null,
     treasuryMovements,
     expenses,
     paymentRequests,

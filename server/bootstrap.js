@@ -401,6 +401,7 @@ export function buildBootstrap(db, opts = {}) {
     /** Ridge / flashing strip add-ons for trim auto-pricing on quotations. */
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
+    cashierTillTruth: treasuryOk ? buildCashierTillTruth(db, branchScope) : null,
     treasuryMovements: treasuryMovementsOk
       ? listTreasuryMovements(db, branchScope, treasuryMovementsHistoryOpts)
       : [],

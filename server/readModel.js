@@ -20,7 +20,8 @@ import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import { SQL_PENDING_BELOW_FLOOR_EXCEPTION } from '../shared/lib/quotationPriceException.js';
 import { approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
-import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
+import { publicUserFromRow, resolveRegisteredPasswordDisplay, roleLabel } from './auth.js';
+import { composeLegalDisplayName } from '../shared/lib/hrLegalDisplayName.js';
 import {
   RECEIPT_PENDING_PO_STATUS_KEYS,
   mapPoLineFromDb,

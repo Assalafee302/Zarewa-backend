@@ -5,6 +5,7 @@ import { buildBootstrap } from './bootstrap.js';
 import { buildSalesDomainSnapshot, buildFinanceDomainSnapshot, buildProcurementDomainSnapshot } from './domainBootstrap.js';
 import { jsonWeakEtag } from './httpEtag.js';
 import { insertAssociatedStaff, insertSupplier } from './writeOps.js';
+import { mergeOpenAccountsPayableWithPurchaseOrders } from './readModel.js';
 
 function mysqlAvailable() {
   try {
@@ -22,6 +23,33 @@ describe('httpEtag', () => {
   it('jsonWeakEtag is deterministic', () => {
     const payload = { ok: true, n: 1 };
     expect(jsonWeakEtag(payload)).toBe(jsonWeakEtag(payload));
+  });
+});
+
+describe('mergeOpenAccountsPayableWithPurchaseOrders', () => {
+  it('synthesizes AP rows from unpaid POs when the register is empty', () => {
+    const rows = mergeOpenAccountsPayableWithPurchaseOrders([], [
+      {
+        poID: 'PO-MD-1',
+        supplierName: 'Supplier 1',
+        outstandingNgn: 100_000,
+        amountNgn: 100_000,
+        paidNgn: 0,
+        invoiceNo: '',
+        expectedDeliveryISO: '2026-07-15',
+        orderDateISO: '2026-07-01',
+        branchId: 'BR-KD',
+        lines: [],
+      },
+    ]);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        apID: 'AP-PO-PO-MD-1',
+        poRef: 'PO-MD-1',
+        outstandingNgn: 100_000,
+        amountNgn: 100_000,
+      }),
+    ]);
   });
 });
 
@@ -118,6 +146,35 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(Array.isArray(snap.accountsPayable[0].lines)).toBe(true);
     expect(snap.outstandingPaymentLines.length).toBeGreaterThan(0);
     expect(snap.bootstrapMeta?.sort?.accountsPayable).toBe('outstanding_then_due_date_desc');
+    db.close();
+  });
+
+  it('finance snapshot keeps unpaid PO payables when AP register is empty (MD desk)', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    insertSupplier(db, { supplierID: 'S1', name: 'Supplier 1' });
+    db.exec(`
+      INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id, supplier_paid_ngn)
+      VALUES ('PO-MD-1', 'S1', 'Supplier 1', '2026-07-01', 'Approved', 'BR-KD', 0);
+      INSERT INTO purchase_order_lines (po_id, line_key, product_id, product_name, qty_ordered, qty_received, unit_price_ngn)
+      VALUES ('PO-MD-1', 'L1', 'P1', 'Coil', 10, 0, 10000);
+    `);
+    const user = {
+      id: 'md-1',
+      roleKey: 'md',
+      displayName: 'Managing Director',
+      permissions: [
+        'hq.view_all_branches',
+        'procurement.view',
+        'purchase_orders.manage',
+        'finance.view',
+        'finance.pay',
+      ],
+    };
+    const snap = buildFinanceDomainSnapshot(db, { user, branchScope: 'ALL' });
+    expect(snap.ok).toBe(true);
+    expect(snap.accountsPayable.some((a) => a.poRef === 'PO-MD-1' && a.outstandingNgn === 100_000)).toBe(
+      true
+    );
     db.close();
   });
 

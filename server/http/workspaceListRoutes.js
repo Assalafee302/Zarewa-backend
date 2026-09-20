@@ -21,6 +21,7 @@ import {
   countPurchaseOrders,
   countStockMovements,
   listAccountsPayable,
+  listOpenSupplierPayablesForDesk,
   listCoilLots,
   listCustomers,
   listCuttingLists,
@@ -270,8 +271,12 @@ export function registerWorkspaceListRoutes(app, db) {
         /^(1|true|yes|on)$/i.test(String(req.query?.open || '')) ||
         /^(1|true|yes|on)$/i.test(String(req.query?.openOnly || ''));
       const listOpts = { ...listOptsFromQuery(parsed), openOnly, includeLines: true };
-      const items = listAccountsPayable(db, branchScope, listOpts);
-      const total = parsed.unlimited ? items.length : countAccountsPayable(db, branchScope, { openOnly });
+      const items = openOnly
+        ? listOpenSupplierPayablesForDesk(db, branchScope, listOpts)
+        : listAccountsPayable(db, branchScope, listOpts);
+      const total = parsed.unlimited
+        ? items.length
+        : Math.max(countAccountsPayable(db, branchScope, { openOnly }), items.length);
       return sendPaginatedList(res, {
         items,
         total,

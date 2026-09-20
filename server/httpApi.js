@@ -9493,7 +9493,7 @@ export function registerHttpApi(app, db) {
     }
   );
 
-  app.post('/api/expenses', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
+  app.post('/api/expenses', requirePermission('finance.post'), (req, res) => {
     try {
       const allowDirect =
         process.env.NODE_ENV === 'test' ||
@@ -9507,10 +9507,19 @@ export function registerHttpApi(app, db) {
       }
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
+      const treasuryAccountId = Number(req.body?.treasuryAccountId);
+      if (!treasuryAccountId) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            'Select the paid-from cash or bank account. Direct expense is an already-paid Finance correction, not a request.',
+        });
+      }
       const r = write.insertExpenseEntry(
         db,
         {
           ...(req.body || {}),
+          treasuryAccountId,
           createdBy: req.user.displayName,
           actor: req.user,
           workspaceViewAll: Boolean(req.workspaceViewAll),
@@ -10527,7 +10536,22 @@ export function registerHttpApi(app, db) {
       }
       const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
       if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
-      res.json({ ok: true, request });
+      const preview = getPaymentRequestGlPreview(db, String(req.params.requestId || ''), req.user);
+      res.json({
+        ok: true,
+        request: {
+          ...request,
+          glPreview: preview.ok
+            ? {
+                debitAccountCode: preview.gl?.debitAccountCode,
+                creditSide: preview.gl?.creditSide,
+                isEquity: preview.gl?.isEquity,
+                isCapex: preview.gl?.isCapex,
+                categoryLane: preview.categoryLane,
+              }
+            : null,
+        },
+      });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

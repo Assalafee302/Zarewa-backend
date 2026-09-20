@@ -196,6 +196,7 @@ import {
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
 import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, actorIsRefundUnclearedHoldAdminOverride, refundTillPayableNgn, assertPaymentRequestPayerNotApprover } from './refundHandlers.js';
+import { expensePaymentMethodFromAccountTypes } from '../shared/lib/expensePaymentMethod.js';
 import { isPaymentRequestApprovedForPayout } from '../shared/lib/paymentRequestStatus.js';
 import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../shared/lib/refundUnclearedPayoutHold.js';
 import { refundCashierPayRelaxed } from './financeFeatureFlags.js';
@@ -4019,7 +4020,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     const raw = Object.prototype.hasOwnProperty.call(b, 'currentWeightKg') ? b.currentWeightKg : b.currentKg;
     targetCurrent = Number(raw);
     if (!Number.isFinite(targetCurrent) || targetCurrent < 0) {
-      return { ok: false, error: 'Current on-hand kg must be a non-negative number.' };
+      return { ok: false, error: 'Current stock kg must be a non-negative number.' };
     }
     massDelta = targetCurrent - prevRem0;
     next.qtyRemaining = targetCurrent;
@@ -4042,7 +4043,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     if (targetCurrent + 1e-9 < qtyRes) {
       return {
         ok: false,
-        error: `Current on-hand kg cannot be below reserved kg (${qtyRes.toFixed(2)} kg).`,
+        error: `Current stock kg cannot be below reserved kg (${qtyRes.toFixed(2)} kg).`,
       };
     }
   }
@@ -4255,7 +4256,7 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
     return {
       ok: false,
       error: allowReservedKg
-        ? `Cannot scrap more than ${maxScrap.toFixed(2)} kg (on-hand on this coil).`
+        ? `Cannot scrap more than ${maxScrap.toFixed(2)} kg (stock on this coil).`
         : `Cannot scrap more than ${maxScrap.toFixed(2)} kg (unreserved balance on this coil).`,
     };
   }
@@ -4596,7 +4597,7 @@ export function postCoilUndoFinishRoll(db, payload = {}, opts = {}) {
     return {
       ok: false,
       error:
-        'No finish-roll tail found to restore on this coil. If steel remains, use Return or Edit on-hand kg instead.',
+        'No finish-roll tail found to restore on this coil. If steel remains, use Return or Edit stock kg instead.',
     };
   }
   if (restoreKg >= COIL_PROFILE_FINISH_MAX_KG + 1e-6) {
@@ -8992,6 +8993,18 @@ export function payPaymentRequest(db, requestID, payload) {
 
       if (nextPaid >= requestedFresh) {
         syncStaffLoanDisbursementOnFullPay(db, requestID, paidAtISO);
+      }
+
+      if (linkedExpense?.expense_id) {
+        const accountTypes = paymentLines.map((line) => {
+          const acc = db.prepare(`SELECT type FROM treasury_accounts WHERE id = ?`).get(line.treasuryAccountId);
+          return acc?.type;
+        });
+        const method = expensePaymentMethodFromAccountTypes(accountTypes);
+        db.prepare(`UPDATE expenses SET payment_method = ? WHERE expense_id = ?`).run(
+          method,
+          linkedExpense.expense_id
+        );
       }
 
       appendAuditLog(db, {

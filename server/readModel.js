@@ -800,7 +800,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
   const expenseBranchArgs = useExpenseBranch ? [String(branchScope).trim()] : [];
   const pendingExpensesRaw = db.prepare(`
     SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.description, pr.approval_status,
-           pr.request_reference, pr.line_items_json, pr.attachment_name,
+           pr.request_reference, pr.line_items_json, pr.attachment_name, pr.category_justification,
            (CASE WHEN TRIM(COALESCE(pr.attachment_name, '')) != '' OR TRIM(COALESCE(pr.attachment_mime, '')) != '' THEN 1 ELSE 0 END) AS attachment_present,
            ${prHasPayee ? 'pr.payee_name, pr.payee_account_no, pr.payee_bank_name,' : ''}
            e.category AS expense_category, e.category_lane AS expense_category_lane, e.branch_id AS branch_id
@@ -809,25 +809,46 @@ export function listManagementItems(db, branchScope = 'ALL') {
     WHERE ${paymentRequestOpenApprovalSql('pr.approval_status')}${expenseBranchSql}
     ORDER BY pr.request_date DESC LIMIT 50
   `).all(...expenseBranchArgs);
-  const pendingExpenses = pendingExpensesRaw.map((row) => ({
-    request_id: row.request_id,
-    expense_id: row.expense_id,
-    amount_requested_ngn: row.amount_requested_ngn,
-    request_date: row.request_date,
-    description: row.description,
-    approval_status: paymentRequestStatusApiFields(row).approvalStatus,
-    request_reference: row.request_reference ?? '',
-    line_items: parsePaymentRequestLineItemsJson(row.line_items_json),
-    attachment_present: Boolean(Number(row.attachment_present) || 0),
-    attachment_name: row.attachment_name ?? '',
-    expense_category: row.expense_category ?? '',
-    expense_category_lane:
-      row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
-    branch_id: row.branch_id ?? '',
-    payee_name: row.payee_name ?? '',
-    payee_account_no: row.payee_account_no ?? '',
-    payee_bank_name: row.payee_bank_name ?? '',
-  }));
+  const pendingExpenses = pendingExpensesRaw.map((row) => {
+    const status = paymentRequestStatusApiFields(row);
+    const justification = String(row.category_justification || '').trim();
+    return {
+      request_id: row.request_id,
+      expense_id: row.expense_id,
+      amount_requested_ngn: row.amount_requested_ngn,
+      request_date: row.request_date,
+      description: row.description,
+      approval_status: status.approvalStatus,
+      request_reference: row.request_reference ?? '',
+      line_items: parsePaymentRequestLineItemsJson(row.line_items_json),
+      attachment_present: Boolean(Number(row.attachment_present) || 0),
+      attachment_name: row.attachment_name ?? '',
+      expense_category: row.expense_category ?? '',
+      expense_category_lane:
+        row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
+      category_justification: justification,
+      branch_id: row.branch_id ?? '',
+      payee_name: row.payee_name ?? '',
+      payee_account_no: row.payee_account_no ?? '',
+      payee_bank_name: row.payee_bank_name ?? '',
+      requestID: row.request_id,
+      expenseID: row.expense_id,
+      amountRequestedNgn: row.amount_requested_ngn,
+      requestDate: row.request_date,
+      approvalStatus: status.approvalStatus,
+      lifecycleStatus: status.lifecycleStatus,
+      expenseCategory: row.expense_category ?? '',
+      expenseCategoryLane:
+        row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
+      categoryJustification: justification,
+      notesForApprovers: justification,
+      attachmentPresent: Boolean(Number(row.attachment_present) || 0),
+      attachmentName: row.attachment_name ?? '',
+      branchId: row.branch_id ?? '',
+      payeeName: row.payee_name ?? '',
+    };
+  });
+  const pendingPaymentRequests = pendingExpenses;
 
   // 6. Completed production jobs awaiting conversion / manager review sign-off (High/Low or flag)
   const pendingConversionReviews = db.prepare(`
@@ -911,6 +932,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
     productionOverrides,
     pendingRefunds,
     pendingExpenses,
+    pendingPaymentRequests,
     pendingConversionReviews,
     pendingMaterialIncidents,
     pendingPurchaseOrders,
@@ -3275,15 +3297,118 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
     }));
 }
 
+}
+
+function isoDay(value) {
+  const s = String(value || '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
+function expenseListFilterSql(opts = {}) {
+  const clauses = [];
+  const args = [];
+  const start = isoDay(opts.startDate || opts.startISO);
+  const end = isoDay(opts.endDate || opts.endISO);
+  const category = String(opts.category || '').trim();
+  const requestID = String(opts.requestID || opts.requestId || '').trim();
+  if (start) {
+    clauses.push('e.date >= ?');
+    args.push(start);
+  }
+  if (end) {
+    clauses.push('e.date <= ?');
+    args.push(end);
+  }
+  if (category) {
+    clauses.push('e.category = ?');
+    args.push(category);
+  }
+  if (requestID) {
+    clauses.push('pr.request_id = ?');
+    args.push(requestID);
+  }
+  return { sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', args };
+}
+
+function paymentRequestListFilterSql(opts = {}) {
+  const clauses = [];
+  const args = [];
+  const status = String(opts.status || opts.lifecycleStatus || '')
+    .trim()
+    .toLowerCase();
+  if (status === 'pending' || status === 'open') {
+    clauses.push(paymentRequestOpenApprovalSql('pr.approval_status'));
+  } else if (status === 'approved') {
+    clauses.push(`TRIM(IFNULL(pr.approval_status,'')) IN ('Approved','Paid')`);
+    clauses.push(`COALESCE(pr.paid_amount_ngn,0) < COALESCE(pr.amount_requested_ngn,0)`);
+  } else if (status === 'paid') {
+    clauses.push(`COALESCE(pr.amount_requested_ngn,0) > 0`);
+    clauses.push(`COALESCE(pr.paid_amount_ngn,0) >= COALESCE(pr.amount_requested_ngn,0)`);
+  } else if (status === 'partial' || status === 'partially paid') {
+    clauses.push(`TRIM(IFNULL(pr.approval_status,'')) IN ('Approved','Paid')`);
+    clauses.push(`COALESCE(pr.paid_amount_ngn,0) > 0`);
+    clauses.push(`COALESCE(pr.paid_amount_ngn,0) < COALESCE(pr.amount_requested_ngn,0)`);
+  } else if (status === 'rejected') {
+    clauses.push(`TRIM(IFNULL(pr.approval_status,'')) = 'Rejected'`);
+  } else if (status === 'cancelled') {
+    clauses.push(`TRIM(IFNULL(pr.approval_status,'')) = 'Cancelled'`);
+  }
+  const start = isoDay(opts.startDate || opts.startISO);
+  const end = isoDay(opts.endDate || opts.endISO);
+  if (start) {
+    clauses.push('pr.request_date >= ?');
+    args.push(start);
+  }
+  if (end) {
+    clauses.push('pr.request_date <= ?');
+    args.push(end);
+  }
+  const payee = String(opts.payee || '').trim();
+  if (payee) {
+    clauses.push(`LOWER(TRIM(IFNULL(pr.payee_name,''))) LIKE ?`);
+    args.push(`%${payee.toLowerCase()}%`);
+  }
+  const category = String(opts.category || '').trim();
+  if (category) {
+    clauses.push('e.category = ?');
+    args.push(category);
+  }
+  const q = String(opts.q || '').trim();
+  if (q) {
+    const like = `%${q.toLowerCase()}%`;
+    clauses.push(
+      `(LOWER(pr.request_id) LIKE ? OR LOWER(IFNULL(pr.description,'')) LIKE ? OR LOWER(IFNULL(pr.payee_name,'')) LIKE ?)`
+    );
+    args.push(like, like, like);
+  }
+  return { sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', args };
+}
+
 export function listExpenses(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const b = branchWhere(db, 'expenses', branchScope);
+  const extra = expenseListFilterSql(opts);
   const lo = sqlLimitOffsetClause(limit, offset);
-  const sql = `SELECT * FROM expenses WHERE 1=1${b.sql} ORDER BY date DESC${lo.sql}`;
+  const hasLane = hasColumn(db, 'expenses', 'category_lane');
+  const sql = `SELECT e.expense_id, e.expense_type, e.amount_ngn, e.date, e.category, e.payment_method, e.reference,
+              e.branch_id${hasLane ? ', e.category_lane' : ''},
+              pr.request_id AS request_id, pr.paid_amount_ngn AS request_paid_ngn,
+              ${PAYMENT_REQUEST_ATTACHMENT_PRESENT_SQL} AS attachment_present
+       FROM expenses e
+       LEFT JOIN payment_requests pr
+         ON pr.expense_id = e.expense_id
+        AND pr.request_id = (
+          SELECT p2.request_id FROM payment_requests p2
+          WHERE p2.expense_id = e.expense_id
+          ORDER BY p2.request_date DESC, p2.request_id DESC
+          LIMIT 1
+        )
+       WHERE 1=1${b.sql}${extra.sql}
+       ORDER BY e.date DESC, e.expense_id DESC${lo.sql}`;
   return db
     .prepare(sql)
-    .all(...b.args, ...lo.args)
+    .all(...b.args, ...extra.args, ...lo.args)
     .map((row) => ({
       expenseID: row.expense_id,
       expenseType: row.expense_type,
@@ -3293,21 +3418,42 @@ export function listExpenses(db, branchScope = 'ALL', opts = {}) {
       paymentMethod: row.payment_method,
       reference: row.reference,
       branchId: row.branch_id ?? '',
+      expenseCategoryLane: hasLane
+        ? row.category_lane ?? getExpenseCategoryLane(row.category ?? '')
+        : getExpenseCategoryLane(row.category ?? ''),
+      requestID: row.request_id ?? '',
+      paidAmountNgn: Math.round(Number(row.request_paid_ngn) || 0),
+      attachmentPresent: Boolean(Number(row.attachment_present) || 0),
     }));
 }
 
 /** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
-export function countExpenses(db, branchScope = 'ALL') {
+export function countExpenses(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'expenses', branchScope);
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM expenses WHERE 1=1${b.sql}`).get(...b.args);
+  const extra = expenseListFilterSql(opts);
+  const sql = `SELECT COUNT(*) AS n
+       FROM expenses e
+       LEFT JOIN payment_requests pr
+         ON pr.expense_id = e.expense_id
+        AND pr.request_id = (
+          SELECT p2.request_id FROM payment_requests p2
+          WHERE p2.expense_id = e.expense_id
+          ORDER BY p2.request_date DESC, p2.request_id DESC
+          LIMIT 1
+        )
+       WHERE 1=1${b.sql}${extra.sql}`;
+  const row = db.prepare(sql).get(...b.args, ...extra.args);
   return Number(row?.n) || 0;
 }
 
 export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const lo = sqlLimitOffsetClause(limit, offset);
   const useScope = branchScope !== 'ALL' && String(branchScope || '').trim();
   const scopeSql = useScope ? ` AND e.branch_id = ?` : '';
   const scopeArgs = useScope ? [branchScope] : [];
+  const filter = paymentRequestListFilterSql(opts);
   const prHasMachine = hasColumn(db, 'payment_requests', 'maintenance_machine_id');
   const sql = `SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.approval_status,
               pr.description, pr.approved_by, pr.approved_at_iso, pr.approval_note, pr.paid_amount_ngn, pr.paid_at_iso,
@@ -3321,9 +3467,9 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
        LEFT JOIN hr_requests hr ON hr.id = e.reference
        LEFT JOIN app_users u ON u.id = hr.user_id
-       WHERE 1=1${scopeSql}
-       ORDER BY pr.request_date DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...scopeArgs, limit] : scopeArgs;
+       WHERE 1=1${scopeSql}${filter.sql}
+       ORDER BY pr.request_date DESC, pr.request_id DESC${lo.sql}`;
+  const args = [...scopeArgs, ...filter.args, ...lo.args];
   return db
     .prepare(sql)
     .all(...args)
@@ -3348,6 +3494,7 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
         expenseCategoryLane:
           row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
         categoryJustification: row.category_justification ?? '',
+        notesForApprovers: String(row.category_justification || '').trim(),
         isStaffLoan: String(row.expense_category || '').toLowerCase().includes('staff loan'),
         hrRequestId: row.expense_reference ?? '',
         staffUserId: row.staff_user_id ?? '',
@@ -3411,6 +3558,7 @@ export function getPaymentRequestDetail(db, requestId) {
     expenseCategory: row.expense_category ?? '',
     expenseCategoryLane: row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
     categoryJustification: row.category_justification ?? '',
+    notesForApprovers: String(row.category_justification || '').trim(),
     isStaffLoan: String(row.expense_category || '').toLowerCase().includes('staff loan'),
     hrRequestId: row.expense_reference ?? '',
     staffUserId: row.staff_user_id ?? '',

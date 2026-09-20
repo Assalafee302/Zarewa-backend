@@ -25,6 +25,7 @@ import {
 } from '../shared/lib/customerLedgerCore.js';
 import { quotationPaymentPolicySnapshot } from '../shared/lib/accountingPolicyV1.js';
 import { readFinanceFeatureFlags, accountingPolicyV1HealthCapabilities } from './financeFeatureFlags.js';
+import { refuseIfGlPostingDisabled, requireLocalGlPosting } from './finance/glPostingGate.js';
 import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
 import { evaluateDeliveryPaymentRelease } from './deliveryReleaseGate.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
@@ -267,7 +268,7 @@ import {
   commitExpenseBulkImport,
   normalizeExpenseImportRows,
 } from './expenseBulkImport.js';
-import { isExpenseUnpostedForVoid, voidUnpostedImportedExpense, attachAllUnpostedImportedExpenses } from './finance/expenseTreasuryCatchUpOps.js';
+import { isExpenseUnpostedForVoid, voidUnpostedImportedExpense } from './finance/expenseTreasuryCatchUpOps.js';
 import { EXPENSE_CATEGORY_OPTIONS } from '../shared/expenseCategories.js';
 import {
   ADMIN_DATA_RESET_CONFIRM_PHRASE,
@@ -566,6 +567,7 @@ import {
   listPriceListItems,
   priceListItemsToCsv,
   quotationPriceViolations,
+  withQuotationPricingFields,
   upsertPriceListItem,
   normalizePricingAsAtIso,
   quotationPricingAsAtIso,
@@ -4322,7 +4324,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/gl/accounts', requireAuth, (req, res) => {
+  app.get('/api/gl/accounts', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4333,7 +4335,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/gl/trial-balance', requireAuth, (req, res) => {
+  app.get('/api/gl/trial-balance', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4346,7 +4348,7 @@ export function registerHttpApi(app, db) {
     res.json(r);
   });
 
-  app.get('/api/gl/journals', requireAuth, (req, res) => {
+  app.get('/api/gl/journals', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4358,7 +4360,7 @@ export function registerHttpApi(app, db) {
     res.json(r);
   });
 
-  app.get('/api/gl/journals/:journalId/lines', requireAuth, (req, res) => {
+  app.get('/api/gl/journals/:journalId/lines', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4367,7 +4369,7 @@ export function registerHttpApi(app, db) {
     res.json(r);
   });
 
-  app.get('/api/gl/activity', requireAuth, (req, res) => {
+  app.get('/api/gl/activity', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4380,13 +4382,14 @@ export function registerHttpApi(app, db) {
     res.json(r);
   });
 
-  app.post('/api/gl/journal', requireAuth, (req, res) => {
+  app.post('/api/gl/journal', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
     if (!userHasPermission(req.user, 'finance.post')) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
       if (lines.length > 20) {
@@ -4456,7 +4459,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/statements-pack', requireAuth, (req, res) => {
+  app.get('/api/finance/statements-pack', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4483,6 +4486,7 @@ export function registerHttpApi(app, db) {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       ensureArchitecturalGlAccounts(db);
       const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
@@ -4496,13 +4500,14 @@ export function registerHttpApi(app, db) {
   app.get('/api/finance/opening-balance/status', requireAuth, openingBalanceStatusHandler);
   app.get('/api/finance/opening-pack/status', requireAuth, openingBalanceStatusHandler);
 
-  app.post('/api/finance/opening-balance', requireAuth, (req, res) => {
+  app.post('/api/finance/opening-balance', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
     if (!userHasPermission(req.user, 'finance.post')) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       const body = req.body || {};
       const lines = Array.isArray(body.lines) ? body.lines : [];
@@ -4526,7 +4531,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/opening-pack', requireAuth, (req, res) => {
+  app.get('/api/finance/opening-pack', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4551,13 +4556,14 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/finance/opening-pack/post', requireAuth, (req, res) => {
+  app.post('/api/finance/opening-pack/post', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
     if (!userHasPermission(req.user, 'finance.post')) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       ensureArchitecturalGlAccounts(db);
       const body = req.body || {};
@@ -4576,7 +4582,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/control-tie-out', requireAuth, (req, res) => {
+  app.get('/api/finance/control-tie-out', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4598,7 +4604,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/cutover-plan', requireAuth, (req, res) => {
+  app.get('/api/finance/cutover-plan', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4613,7 +4619,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/desk-overview', requireAuth, async (req, res) => {
+  app.get('/api/finance/desk-overview', requireAuth, requireLocalGlPosting, async (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4634,7 +4640,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/month-end-close', requireAuth, async (req, res) => {
+  app.get('/api/finance/month-end-close', requireAuth, requireLocalGlPosting, async (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4655,7 +4661,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/depreciation/preview', requireAuth, (req, res) => {
+  app.get('/api/finance/depreciation/preview', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4672,13 +4678,14 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/finance/depreciation/post', requireAuth, (req, res) => {
+  app.post('/api/finance/depreciation/post', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
     if (!userHasPermission(req.user, 'finance.post')) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       const body = req.body || {};
       const periodKey = String(body.period || body.periodKey || '').trim();
@@ -4696,7 +4703,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/payroll-runs/:runId/gl-status', requireAuth, (req, res) => {
+  app.get('/api/finance/payroll-runs/:runId/gl-status', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4708,13 +4715,14 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/finance/payroll-runs/:runId/accrual-gl', requireAuth, (req, res) => {
+  app.post('/api/finance/payroll-runs/:runId/accrual-gl', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
     if (!userHasPermission(req.user, 'finance.post')) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       ensureArchitecturalGlAccounts(db);
       const result = tryPostPayrollAccrualGlTx(db, req.params.runId, {
@@ -4729,13 +4737,14 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/finance/payroll-remittance', requireAuth, (req, res) => {
+  app.post('/api/finance/payroll-remittance', requireAuth, requireLocalGlPosting, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
     if (!userHasPermission(req.user, 'finance.post')) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       const body = req.body || {};
       ensureArchitecturalGlAccounts(db);
@@ -5022,8 +5031,13 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const expenses = listExpenses(db, branchScope, financeHistoryListOpts());
       const treasuryMovements = listTreasuryMovements(db, branchScope, treasuryHistoryListOpts());
-      const { detail, summaryByCategory } = expensesPackReport(expenses, startDate, endDate, treasuryMovements);
-      res.json({ ok: true, startDate, endDate, branchScope, detail, summaryByCategory });
+      const { detail, summaryByCategory, dateBasis } = expensesPackReport(
+        expenses,
+        startDate,
+        endDate,
+        treasuryMovements
+      );
+      res.json({ ok: true, startDate, endDate, branchScope, dateBasis, detail, summaryByCategory });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build expenses pack.' });
@@ -5878,11 +5892,7 @@ export function registerHttpApi(app, db) {
         const pv = quotationPriceViolations(db, rawPv);
         return res.json({
           ok: true,
-          quotation: {
-            ...quotation,
-            pricingViolations: pv.violations,
-            pricingHasFloorRows: pv.hasFloorRows,
-          },
+          quotation: withQuotationPricingFields(quotation, pv),
         });
       } catch (e) {
         console.error(e);
@@ -5908,11 +5918,7 @@ export function registerHttpApi(app, db) {
         return res.json({
           ok: true,
           mdNotified: Boolean(r.mdNotified),
-          quotation: {
-            ...quotation,
-            pricingViolations: pv.violations,
-            pricingHasFloorRows: pv.hasFloorRows,
-          },
+          quotation: withQuotationPricingFields(quotation, pv),
         });
       } catch (e) {
         console.error(e);
@@ -5935,11 +5941,7 @@ export function registerHttpApi(app, db) {
         const pv = quotationPriceViolations(db, rawPv);
         return res.json({
           ok: true,
-          quotation: {
-            ...quotation,
-            pricingViolations: pv.violations,
-            pricingHasFloorRows: pv.hasFloorRows,
-          },
+          quotation: withQuotationPricingFields(quotation, pv),
           deprecated: true,
         });
       } catch (e) {
@@ -6115,7 +6117,7 @@ export function registerHttpApi(app, db) {
               if (!raw.toLowerCase().startsWith('refund:')) continue;
               const refundId = raw.slice(raw.indexOf(':') + 1).trim();
               if (!refundId) continue;
-              const row = getCustomerRefundDetail(db, refundId);
+              const row = getCustomerRefundDetail(db, refundId, { heal: true });
               if (row) refunds.push(row);
             }
             if (refunds.length) bags.refunds = refunds;
@@ -8438,9 +8440,6 @@ export function registerHttpApi(app, db) {
         ancillaryNetKg: bookSummary?.ancillaryNetKg ?? null,
         reconciliationGapKg: bookSummary?.reconciliationGapKg ?? null,
         openingClosingGapKg: bookSummary?.openingClosingGapKg ?? null,
-        wouldRestoreKg:
-          bookSummary != null &&
-          Number(bookSummary.jobsConsumedKgSum) < Number(bookSummary.bookUsedFromJobsKg) - 0.05,
         holders: statementHolders,
       });
     } catch (e) {
@@ -9607,19 +9606,6 @@ export function registerHttpApi(app, db) {
       });
       if (!r.ok) return res.status(400).json(r);
 
-      const paidFromId = Number(r.paidFromAccountId || r.created?.[0]?.treasuryAccountId) || 0;
-      if (paidFromId) {
-        const backfill = attachAllUnpostedImportedExpenses(db, req.user, {
-          treasuryAccountId: paidFromId,
-          workspaceBranchId: branchId,
-          workspaceViewAll: Boolean(req.workspaceViewAll),
-        });
-        if (backfill.ok && backfill.postedCount) {
-          r.backfilledCount = backfill.postedCount;
-          r.message = `${r.message || ''} Also posted ${backfill.postedCount} earlier expense(s) that had no till/bank line.`.trim();
-        }
-      }
-
       const branchScope = resolveBootstrapBranchScope(req);
       const accounts = listTreasuryAccounts(db, branchScope);
       const createdIds = (r.created || []).map((c) => String(c.expenseID || '').trim()).filter(Boolean);
@@ -10050,10 +10036,15 @@ export function registerHttpApi(app, db) {
   app.post('/api/refunds', requirePermission('refunds.request'), (req, res) => {
     try {
       const quotationRef = String(req.body?.quotationRef || req.body?.quotation_ref || '').trim();
-      if (quotationRef) {
-        const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
-        if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
+      if (!quotationRef) {
+        return res.status(400).json({
+          ok: false,
+          code: 'REFUND_QUOTATION_REQUIRED',
+          error: 'Quotation is required for a customer refund.',
+        });
       }
+      const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
       const r = insertRefundRequest(
         db,
         req.body || {},
@@ -10061,7 +10052,9 @@ export function registerHttpApi(app, db) {
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
       if (r.ok) {
-        const refund = getCustomerRefundDetail(db, String(r.refundID || r.refundId || ''));
+        const refund = getCustomerRefundDetail(db, String(r.refundID || r.refundId || ''), {
+          heal: true,
+        });
         return res.status(201).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
       }
       res.status(400).json(r);
@@ -10174,7 +10167,7 @@ export function registerHttpApi(app, db) {
         }
       }
       if (r.ok) {
-        const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
+        const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''), { heal: true });
         return res.status(200).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
       }
       res.status(400).json(r);
@@ -10202,7 +10195,7 @@ export function registerHttpApi(app, db) {
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
       if (r.ok) {
-        const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
+        const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''), { heal: true });
         return res.status(201).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
       }
       res.status(400).json(r);
@@ -11953,11 +11946,7 @@ export function registerHttpApi(app, db) {
         : amountDueOnQuotationFromEntries(quoteLedger, row);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(req.params.id);
       const pv = clearStaleMdBelowFloorReviewFlag(db, rawPv);
-      const quotationOut = {
-        ...row,
-        pricingViolations: pv.violations,
-        pricingHasFloorRows: pv.hasFloorRows,
-      };
+      const quotationOut = withQuotationPricingFields(row, pv);
       if (pv.cleared) quotationOut.priceExceptionMdReviewRequired = false;
       res.json({
         ok: true,
@@ -11996,16 +11985,15 @@ export function registerHttpApi(app, db) {
       const quotation = getQuotation(db, id);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
+      const quotationPriced = withQuotationPricingFields(quotation, pv);
       const payload = withWriteDelta(
         {
           ok: true,
           quotationId: id,
-          quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
+          quotation: quotationPriced,
         },
         {
-          quotations: [
-            { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
-          ],
+          quotations: [quotationPriced],
         }
       );
       // Delta lets the SPA merge — no need to bust poll cache for a full rebuild.
@@ -12109,11 +12097,7 @@ export function registerHttpApi(app, db) {
         const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
         return {
-          quotation: {
-            ...quotation,
-            pricingViolations: pv.violations,
-            pricingHasFloorRows: pv.hasFloorRows,
-          },
+          quotation: withQuotationPricingFields(quotation, pv),
           autoOverpayAppliedNgn: autoOverpayAppliedNgn ?? 0,
         };
       });

@@ -256,6 +256,36 @@ export function tryPostExpensePaymentGlTx(db, payload) {
 }
 
 /**
+ * Inverse of tryPostExpensePaymentGlTx: Dr cash · Cr expense/asset (current category).
+ * sourceId should be the reversal treasury movement id (idempotent with pay's original movement id).
+ * @param {import('better-sqlite3').Database} db
+ */
+export function tryPostExpensePaymentReversalGlTx(db, payload) {
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  if (amt <= 0) return { ok: true, skipped: true, reason: 'zero_amount' };
+  const cash = ensureTreasuryCashGlAccount(db, payload.treasuryAccountId);
+  if (!cash.ok) return cash;
+  const { accountCode } = glAccountForExpenseCategory(payload.expenseCategory || 'Others', {
+    capexAsAsset: true,
+  });
+  ensureArchitecturalGlAccounts(db);
+  const sid = String(payload.sourceId || '').trim();
+  if (!sid) return { ok: false, error: 'sourceId required for expense payment GL reversal.' };
+  return postBalancedJournalTx(db, {
+    entryDateISO: String(payload.entryDateISO || '').slice(0, 10),
+    memo: payload.memo || `Reverse expense payment ${payload.paymentRequestId || sid}`,
+    sourceKind: 'EXPENSE_PAYMENT_REVERSAL_GL',
+    sourceId: sid,
+    branchId: payload.branchId ?? null,
+    createdByUserId: payload.createdByUserId ?? null,
+    lines: [
+      { accountCode: cash.accountCode, debitNgn: amt, memo: payload.paymentRequestId || sid },
+      { accountCode, creditNgn: amt, memo: payload.originalMovementId || sid },
+    ],
+  });
+}
+
+/**
  * Reclass expense debit between GL accounts after payout (Dr new / Cr old).
  * @param {import('better-sqlite3').Database} db
  */

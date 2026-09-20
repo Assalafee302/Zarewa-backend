@@ -6,6 +6,7 @@
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { branchPredicate } from './branchSql.js';
 import { assertPeriodOpen } from './controlOps.js';
+import { isGlPostingEnabled, skippedGlPostingResult } from './finance/glPostingGate.js';
 import { nextGlJournalHumanId, nextGlJournalLineHumanId } from './humanId.js';
 import { resolveCustomerReceiptGlCreditAccount } from './ap1cReceiptGl.js';
 import { resolveReceiptReversalAccountFromMetaOrJournalLines } from './ap1cReversalRefundOps.js';
@@ -141,6 +142,9 @@ export function getGlAccountIdByCode(db, code) {
  * @param {import('better-sqlite3').Database} db
  */
 export function postBalancedJournalTx(db, payload) {
+  // Money paths call this inside the same transaction as treasury/ledger writes.
+  // When local GL is off, skip — do not lock periods, create journals, or fail cash.
+  if (!isGlPostingEnabled()) return skippedGlPostingResult();
   try {
     db.prepare(`SELECT 1 FROM gl_journal_entries LIMIT 1`).get();
   } catch {

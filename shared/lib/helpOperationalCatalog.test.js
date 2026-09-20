@@ -35,6 +35,18 @@ describe('helpOperationalCatalog', () => {
     expect(m.article.answer).toMatch(/payout|treasury/i);
   });
 
+  it('expense payment-request help deep-links use canonical Accounts tabs', () => {
+    const articles = buildOperationalHelpArticles();
+    const submit = articles.find((a) => a.title === 'Submit expense payment request');
+    const payout = articles.find((a) => a.title === 'Treasury payout (approved request)');
+    const transfer = articles.find((a) => a.title === 'Internal treasury transfer');
+    const payFrom = articles.find((a) => a.title === 'Pay-from account correction');
+    expect(submit?.links?.[0]?.state?.accountsTab).toBe('requests');
+    expect(payout?.links?.[0]?.state?.accountsTab).toBe('desk');
+    expect(transfer?.links?.[0]?.state?.accountsTab).toBe('desk');
+    expect(payFrom?.links?.[0]?.state?.accountsTab).toBe('disbursements');
+  });
+
   it('matches Advance modal (no quotation) phrasing', () => {
     const m = matchHelpArticle('how do i record customer advance deposit');
     expect(m).not.toBeNull();

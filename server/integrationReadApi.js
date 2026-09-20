@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { appendAuditLog } from './controlOps.js';
 import { trialBalanceRows, listGlJournalEntries } from './glOps.js';
+import { listAccountingMoneyEvents } from './finance/accountingEventExportOps.js';
+import { refuseIfGlPostingDisabled } from './finance/glPostingGate.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 
 function hashToken(token) {
@@ -58,7 +60,7 @@ function logIntegrationRead(db, req, row, routeLabel, branchScope) {
 }
 
 /**
- * Bearer-token read API for automation (trial balance + journal register).
+ * Bearer-token read API for automation (trial balance, journals, Layer 1 money events).
  * @param {import('express').Express} app
  * @param {import('better-sqlite3').Database} db
  */
@@ -99,6 +101,7 @@ export function registerIntegrationReadApi(app, db) {
   };
 
   app.get('/api/integration/v1/trial-balance', requireIntegrationBearer, (req, res) => {
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
@@ -115,6 +118,7 @@ export function registerIntegrationReadApi(app, db) {
   });
 
   app.get('/api/integration/v1/journals', requireIntegrationBearer, (req, res) => {
+    if (refuseIfGlPostingDisabled(res)) return;
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
@@ -126,6 +130,26 @@ export function registerIntegrationReadApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load journals.' });
+    }
+  });
+
+  app.get('/api/integration/v1/money-events', requireIntegrationBearer, (req, res) => {
+    try {
+      const branchScope = resolveIntegrationBranchScope(req.query.branchId);
+      const r = listAccountingMoneyEvents(db, {
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+        kinds: req.query.kinds,
+        limit: req.query.limit,
+        after: req.query.after,
+        branchScope,
+      });
+      if (!r.ok) return res.status(400).json(r);
+      logIntegrationRead(db, req, req.integrationKeyRow, 'GET /api/integration/v1/money-events', branchScope);
+      return res.json({ ...r, ok: true, branchScope });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load money events.' });
     }
   });
 }

@@ -55,6 +55,8 @@ import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { SUGGESTED_ROLE_BY_DEPARTMENT, WORKSPACE_DEPARTMENT_IDS } from './departmentRoleTemplates.js';
 import { userHasPermission } from './auth.js';
+import { isGlPostingEnabled } from './finance/glPostingGate.js';
+import { localAccountingCapabilities } from '../shared/lib/localAccountingSurfaces.js';
 import { buildExpenseCategoryMonthlyAlert, buildExpenseCategoryBranchCoachAlert } from './expenseCategoryReportOps.js';
 import {
   canListTreasuryAccounts,
@@ -353,6 +355,7 @@ export function buildBootstrap(db, opts = {}) {
     associatedStaffPolicy: {
       enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
     },
+    localAccounting: localAccountingCapabilities(isGlPostingEnabled()),
     // Credit-apply / settle UI — same rows sales/finance packs already ship.
     refundCreditApplications: snapshotRefundCreditApplications(db, { refundsOk, ledgerOk, branchScope }),
     products: productsOk ? listProducts(db, branchScope) : [],
@@ -675,8 +678,8 @@ export function buildDashboardBootstrap(db, opts = {}) {
  *
  * Returns `shell` | `dashboard` | `''` (empty = full desk dump).
  * Outside tests, omitted mode defaults to **shell** so login cannot rebuild the
- * multi-MB workspace pack. Pass `?mode=full` or set `ZAREWA_BOOTSTRAP_DEFAULT_MODE=full`
- * when a caller truly needs the legacy dump (tests, scripts, e2e fixtures).
+ * multi-MB workspace pack. `?mode=full` is ignored in production unless
+ * `ZAREWA_BOOTSTRAP_ALLOW_FULL=1` (tests, scripts, and e2e keep the dump).
  *
  * @param {unknown} queryMode
  * @param {NodeJS.ProcessEnv} [env]
@@ -685,11 +688,16 @@ export function buildDashboardBootstrap(db, opts = {}) {
 export function resolveBootstrapMode(queryMode, env = process.env) {
   const q = String(queryMode ?? '').trim().toLowerCase();
   if (q === 'shell' || q === 'dashboard') return q;
-  if (q === 'full') return '';
+  const nodeEnv = String(env.NODE_ENV || '').toLowerCase();
+  const allowFull =
+    nodeEnv === 'test' ||
+    String(env.ZAREWA_BOOTSTRAP_ALLOW_FULL ?? '').trim() === '1' ||
+    String(env.ZAREWA_BOOTSTRAP_ALLOW_FULL ?? '').trim().toLowerCase() === 'true';
+  if (q === 'full') return allowFull ? '' : 'shell';
   const fromEnv = String(env.ZAREWA_BOOTSTRAP_DEFAULT_MODE ?? '').trim().toLowerCase();
   if (fromEnv === 'shell' || fromEnv === 'dashboard') return fromEnv;
-  if (fromEnv === 'full') return '';
-  if (String(env.NODE_ENV || '').toLowerCase() === 'test') return '';
+  if (fromEnv === 'full') return allowFull ? '' : 'shell';
+  if (nodeEnv === 'test') return '';
   return 'shell';
 }
 
@@ -825,6 +833,7 @@ export function buildShellBootstrap(db, opts = {}) {
     },
     /** Chat/rooms only — branch switch and desk snapshots stay on. */
     workspaceProduct: workspaceProductBootstrap(),
+    localAccounting: localAccountingCapabilities(isGlPostingEnabled()),
     materialPoolSummary: null,
     stainInventory: null,
     wipByProduct: {},

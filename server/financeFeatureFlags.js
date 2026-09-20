@@ -9,6 +9,8 @@ function envFlag(name, defaultOn) {
 }
 
 import { readDeliveryPaymentGateMode } from './deliveryReleaseGate.js';
+import { isGlPostingEnabled } from './finance/glPostingGate.js';
+import { localAccountingCapabilities } from '../shared/lib/localAccountingSurfaces.js';
 
 /** @returns {{
  *   strictCashierRbac: boolean,
@@ -29,11 +31,13 @@ import { readDeliveryPaymentGateMode } from './deliveryReleaseGate.js';
  *   inventoryValuationReportsEnabled: boolean,
  *   apGlAlignmentDiagnosticsEnabled: boolean,
  *   ap3MaterialCostReportEnabled: boolean,
+ *   glPostingEnabled: boolean,
  *   phase: string,
  * }} */
 export function readFinanceFeatureFlags() {
   return {
     phase: 'B3a',
+    glPostingEnabled: isGlPostingEnabled(),
     ap3MaterialCostReportEnabled: envFlag('AP3_MATERIAL_COST_REPORT_ENABLED', true),
     apReceivedBasisEnabled: envFlag('AP_RECEIVED_BASIS_ENABLED', false),
     apReceivedBasisRebuildEnabled: envFlag('AP_RECEIVED_BASIS_REBUILD_ENABLED', false),
@@ -42,9 +46,9 @@ export function readFinanceFeatureFlags() {
     apGlAlignmentDiagnosticsEnabled: envFlag('AP_GL_ALIGNMENT_DIAGNOSTICS_ENABLED', true),
     strictCashierRbac: envFlag('STRICT_CASHIER_RBAC', false),
     allowAccountantReceiptConfirmation: envFlag('ALLOW_ACCOUNTANT_RECEIPT_CONFIRMATION', true),
-    // Off everywhere unless explicitly set — turning this on blocks a refund's approver from
-    // also paying it out, which breaks payouts when approve/pay aren't staffed by different
-    // people. Set ENFORCE_DUAL_CONTROL_PAYMENTS=1 once those roles are actually separated.
+    // Off everywhere unless explicitly set — turning this on blocks a refund or payment-request
+    // approver from also paying it out, which breaks payouts when approve/pay aren't staffed by
+    // different people. Set ENFORCE_DUAL_CONTROL_PAYMENTS=1 once those roles are actually separated.
     enforceDualControlPayments: envFlag('ENFORCE_DUAL_CONTROL_PAYMENTS', false),
     // TEMP desk relief: skip uncleared till holds and pay-time production alignment.
     // Set ZAREWA_REFUND_CASHIER_PAY_RELAXED=0 to restore.
@@ -86,6 +90,8 @@ export function accountingPolicyV1HealthCapabilities(flags = readFinanceFeatureF
     accountingPolicyV1LegacyBridge: flags.accountingPolicyV1LegacyBridge ? 'on' : 'off',
     reclassPreProductionReceipts: flags.reclassPreProductionReceipts ? 'on' : 'off',
     deliveryPaymentGate: flags.deliveryPaymentGateMode,
+    glPostingEnabled: flags.glPostingEnabled ? 'on' : 'off',
+    localAccounting: localAccountingCapabilities(flags.glPostingEnabled),
   };
 }
 

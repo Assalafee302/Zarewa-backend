@@ -17,6 +17,10 @@ import {
   PO_TRANSPORT_TREASURY_PAYABLE_STATUSES,
 } from '../shared/lib/poTransportFee.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
+import {
+  paymentRequestOpenApprovalSql,
+  paymentRequestStatusApiFields,
+} from '../shared/lib/paymentRequestStatus.js';
 import { SQL_PENDING_BELOW_FLOOR_EXCEPTION } from '../shared/lib/quotationPriceException.js';
 import { approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
@@ -61,6 +65,21 @@ const PAYMENT_REQUEST_ATTACHMENT_PRESENT_SQL = `(CASE
   WHEN TRIM(COALESCE(pr.attachment_mime, '')) != '' THEN 1
   ELSE 0
 END)`;
+
+function paymentRequestActorSelectSql(db) {
+  if (!hasColumn(db, 'payment_requests', 'requested_by_user_id')) return '';
+  return ', pr.requested_by, pr.requested_by_user_id, pr.approved_by_user_id, pr.paid_by_user_id';
+}
+
+function paymentRequestActorApiFields(row) {
+  return {
+    requestedBy: row.requested_by ?? '',
+    requestedByUserId: row.requested_by_user_id ?? '',
+    approvedByUserId: row.approved_by_user_id ?? '',
+    paidByUserId: row.paid_by_user_id ?? '',
+  };
+}
+
 /** @param {import('better-sqlite3').Database} db */
 
 /** @type {Map<string, boolean>} */
@@ -787,7 +806,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
            e.category AS expense_category, e.category_lane AS expense_category_lane, e.branch_id AS branch_id
     FROM payment_requests pr
     LEFT JOIN expenses e ON e.expense_id = pr.expense_id
-    WHERE pr.approval_status = 'Pending'${expenseBranchSql}
+    WHERE ${paymentRequestOpenApprovalSql('pr.approval_status')}${expenseBranchSql}
     ORDER BY pr.request_date DESC LIMIT 50
   `).all(...expenseBranchArgs);
   const pendingExpenses = pendingExpensesRaw.map((row) => ({
@@ -796,7 +815,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
     amount_requested_ngn: row.amount_requested_ngn,
     request_date: row.request_date,
     description: row.description,
-    approval_status: row.approval_status,
+    approval_status: paymentRequestStatusApiFields(row).approvalStatus,
     request_reference: row.request_reference ?? '',
     line_items: parsePaymentRequestLineItemsJson(row.line_items_json),
     attachment_present: Boolean(Number(row.attachment_present) || 0),
@@ -3149,8 +3168,8 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
        ORDER BY cr.requested_at_iso DESC${page.sql}`;
   const args = [...b.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
-  // Credit heal stays on getCustomerRefundDetail / pay — list uses the applications ledger
-  // batch below so the desk pack does not N+1 heal + resolveCreditTargets per open refund.
+  // Credit heal stays on write paths (pay / confirm / decide with heal:true). List and GET
+  // detail must not UPDATE customer_refunds.
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
@@ -3294,7 +3313,7 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
               pr.description, pr.approved_by, pr.approved_at_iso, pr.approval_note, pr.paid_amount_ngn, pr.paid_at_iso,
               pr.paid_by, pr.payment_note, pr.request_reference, pr.line_items_json, pr.attachment_name, pr.attachment_mime,
               pr.category_justification, pr.payee_name, pr.payee_account_no, pr.payee_bank_name,
-              pr.maintenance_work_order_id, pr.maintenance_cost_kind${prHasMachine ? ', pr.maintenance_machine_id' : ''},
+              pr.maintenance_work_order_id, pr.maintenance_cost_kind${prHasMachine ? ', pr.maintenance_machine_id' : ''}${paymentRequestActorSelectSql(db)},
               ${PAYMENT_REQUEST_ATTACHMENT_PRESENT_SQL} AS attachment_present,
               e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane, e.reference AS expense_reference,
               hr.user_id AS staff_user_id, u.display_name AS staff_display_name
@@ -3315,7 +3334,7 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
         expenseID: row.expense_id,
         amountRequestedNgn: row.amount_requested_ngn,
         requestDate: row.request_date,
-        approvalStatus: row.approval_status,
+        ...paymentRequestStatusApiFields(row),
         description: row.description,
         approvedBy: row.approved_by ?? '',
         approvedAtISO: row.approved_at_iso ?? '',
@@ -3341,6 +3360,7 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
         payeeName: row.payee_name ?? '',
         payeeAccountNo: row.payee_account_no ?? '',
         payeeBankName: row.payee_bank_name ?? '',
+        ...paymentRequestActorApiFields(row),
         maintenanceWorkOrderId: row.maintenance_work_order_id ?? '',
         maintenanceCostKind: row.maintenance_cost_kind ?? '',
         maintenanceMachineId: row.maintenance_machine_id ?? '',
@@ -3359,7 +3379,7 @@ export function getPaymentRequestDetail(db, requestId) {
               pr.description, pr.approved_by, pr.approved_at_iso, pr.approval_note, pr.paid_amount_ngn, pr.paid_at_iso,
               pr.paid_by, pr.payment_note, pr.request_reference, pr.line_items_json, pr.attachment_name, pr.attachment_mime,
               pr.category_justification, pr.payee_name, pr.payee_account_no, pr.payee_bank_name,
-              pr.maintenance_work_order_id, pr.maintenance_cost_kind${prHasMachine ? ', pr.maintenance_machine_id' : ''},
+              pr.maintenance_work_order_id, pr.maintenance_cost_kind${prHasMachine ? ', pr.maintenance_machine_id' : ''}${paymentRequestActorSelectSql(db)},
               ${PAYMENT_REQUEST_ATTACHMENT_PRESENT_SQL} AS attachment_present,
               e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane,
               e.reference AS expense_reference,
@@ -3403,19 +3423,25 @@ export function getPaymentRequestDetail(db, requestId) {
     payeeName: row.payee_name ?? '',
     payeeAccountNo: row.payee_account_no ?? '',
     payeeBankName: row.payee_bank_name ?? '',
+    ...paymentRequestActorApiFields(row),
     maintenanceWorkOrderId: row.maintenance_work_order_id ?? '',
     maintenanceCostKind: row.maintenance_cost_kind ?? '',
     maintenanceMachineId: row.maintenance_machine_id ?? '',
   };
 }
 
-/** Full refund row for review/detail UIs (mapped like listRefunds). */
-export function getCustomerRefundDetail(db, refundId) {
+/**
+ * Full refund row for review/detail UIs (mapped like listRefunds).
+ * Default is read-only. Pass `{ heal: true }` only after a money write (pay, confirm, decide)
+ * so GET /api/refunds/:id never mutates the register.
+ */
+export function getCustomerRefundDetail(db, refundId, opts = {}) {
   const id = String(refundId || '').trim();
   if (!id) return null;
-  // Heal credit_applied when Confirm payment already spent this refund's reserved overpay.
-  healRefundCreditAppliedFromApplicationsTx(db, id);
-  repairRefundPayoutStateTx(db, id);
+  if (opts.heal === true) {
+    healRefundCreditAppliedFromApplicationsTx(db, id);
+    repairRefundPayoutStateTx(db, id);
+  }
   const row = db
     .prepare(
       `SELECT cr.*,
@@ -4779,7 +4805,7 @@ export function execOrgSummary(db) {
     Number(
       db
         .prepare(
-          `SELECT COUNT(*) AS c FROM payment_requests WHERE TRIM(IFNULL(approval_status,'')) IN ('Pending','Submitted','Awaiting approval','')`
+          `SELECT COUNT(*) AS c FROM payment_requests WHERE ${paymentRequestOpenApprovalSql('approval_status')}`
         )
         .get()?.c
     ) || 0;

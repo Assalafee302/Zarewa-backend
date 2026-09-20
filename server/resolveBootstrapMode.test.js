@@ -5,7 +5,7 @@ describe('resolveBootstrapMode', () => {
   it('honors explicit query modes', () => {
     expect(resolveBootstrapMode('shell', { NODE_ENV: 'production' })).toBe('shell');
     expect(resolveBootstrapMode('dashboard', { NODE_ENV: 'production' })).toBe('dashboard');
-    expect(resolveBootstrapMode('full', { NODE_ENV: 'production' })).toBe('');
+    expect(resolveBootstrapMode('full', { NODE_ENV: 'test' })).toBe('');
   });
 
   it('defaults to shell outside tests so login cannot rebuild the full desk dump', () => {
@@ -23,6 +23,7 @@ describe('resolveBootstrapMode', () => {
       resolveBootstrapMode(undefined, {
         NODE_ENV: 'production',
         ZAREWA_BOOTSTRAP_DEFAULT_MODE: 'full',
+        ZAREWA_BOOTSTRAP_ALLOW_FULL: '1',
       })
     ).toBe('');
     expect(
@@ -31,5 +32,13 @@ describe('resolveBootstrapMode', () => {
         ZAREWA_BOOTSTRAP_DEFAULT_MODE: 'shell',
       })
     ).toBe('shell');
+  });
+
+  it('ignores mode=full in production unless ZAREWA_BOOTSTRAP_ALLOW_FULL is set', () => {
+    expect(resolveBootstrapMode('full', { NODE_ENV: 'production' })).toBe('shell');
+    expect(
+      resolveBootstrapMode('full', { NODE_ENV: 'production', ZAREWA_BOOTSTRAP_ALLOW_FULL: '1' })
+    ).toBe('');
+    expect(resolveBootstrapMode('full', { NODE_ENV: 'test' })).toBe('');
   });
 });

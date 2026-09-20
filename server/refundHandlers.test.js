@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   assertCashierMayNotApproveRefund,
+  assertCashierMayNotApprovePaymentRequest,
+  assertPaymentRequestApproverNotRequester,
+  assertPaymentRequestPayerNotApprover,
   assertRefundApproverNotRequester,
   assertRefundPayerNotApprover,
   assertActorMayPayCustomerRefund,
@@ -125,6 +128,61 @@ describe('refundHandlers (Phase 11A)', () => {
     const r = assertCashierMayNotApproveRefund({ roleKey: 'cashier' }, has);
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/cashiers may only pay/i);
+  });
+
+  it('blocks cashier from payment-request approval even with finance.approve', () => {
+    const has = (p) => p === 'finance.approve';
+    const r = assertCashierMayNotApprovePaymentRequest({ roleKey: 'cashier' }, has);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/payment requests/i);
+    expect(assertCashierMayNotApprovePaymentRequest({ roleKey: 'finance_manager' }, has).ok).toBe(true);
+  });
+
+  it('blocks requester from approving own payment request', () => {
+    const row = { requested_by_user_id: 'USR-FIN', requested_by: 'Finance Manager' };
+    const actor = { id: 'USR-FIN', displayName: 'Finance Manager', roleKey: 'finance_manager' };
+    const r = assertPaymentRequestApproverNotRequester(row, actor, (p) => p === 'finance.approve');
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/cannot approve a payment request you submitted/i);
+  });
+
+  it('allows admin to approve own payment request (trial)', () => {
+    const row = { requested_by_user_id: 'USR-ADMIN', requested_by: 'Zarewa Admin' };
+    const actor = { id: 'USR-ADMIN', displayName: 'Zarewa Admin', roleKey: 'admin' };
+    const r = assertPaymentRequestApproverNotRequester(row, actor, (p) => p === '*');
+    expect(r.ok).toBe(true);
+    expect(r.adminTrial).toBe(true);
+  });
+
+  it('blocks payment-request approver from paying when dual-control flag is on', () => {
+    process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '1';
+    const row = {
+      approved_by_user_id: 'USR-FIN',
+      approved_by: 'Finance Manager',
+    };
+    const actor = { id: 'USR-FIN', displayName: 'Finance Manager', roleKey: 'finance_manager' };
+    const r = assertPaymentRequestPayerNotApprover(row, actor, () => false);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/cannot pay a payment request you approved/i);
+  });
+
+  it('allows a different payer on a payment request when dual-control flag is on', () => {
+    process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '1';
+    const row = {
+      approved_by_user_id: 'USR-FIN',
+      approved_by: 'Finance Manager',
+    };
+    const actor = { id: 'USR-CASH', displayName: 'Cashier', roleKey: 'cashier' };
+    const r = assertPaymentRequestPayerNotApprover(row, actor, () => false);
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not block payment-request approver=payer when dual-control flag is off', () => {
+    process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '0';
+    const row = { approved_by_user_id: 'USR-FIN', approved_by: 'Finance Manager' };
+    const actor = { id: 'USR-FIN', displayName: 'Finance Manager', roleKey: 'finance_manager' };
+    const r = assertPaymentRequestPayerNotApprover(row, actor, () => false);
+    expect(r.ok).toBe(true);
   });
 
   it('blocks approver from paying when dual-control flag is on', () => {

@@ -129,6 +129,7 @@ export function isExecutiveRoleKey(roleKey) {
 export function userMayReviewPaymentRequests(actor, hasPermission) {
   if (hasPermission('*')) return true;
   const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
+  if (rk === 'cashier') return false;
   if (rk === 'admin') return true;
   if (isExecutiveRoleKey(rk)) return true;
   if (isBranchManagerApprovalAuthority(rk)) return true;

@@ -44,6 +44,22 @@ describe('workspaceSearchCore', () => {
     expect(fb?.path).toBe('/procurement');
   });
 
+  it('resolveGlobalSearchEnterFallback opens expense and payment-request Accounts tabs', () => {
+    const exp = resolveGlobalSearchEnterFallback('EXP-99');
+    expect(exp).toEqual({
+      path: '/accounts',
+      state: { accountsTab: 'expenses', highlightExpenseId: 'EXP-99' },
+    });
+    const pr = resolveGlobalSearchEnterFallback('PR-12');
+    expect(pr?.path).toBe('/accounts');
+    expect(pr?.state?.accountsTab).toBe('requests');
+    expect(pr?.state?.highlightPaymentRequestId).toBe('PR-12');
+    const preq = resolveGlobalSearchEnterFallback('PREQ-1');
+    expect(preq?.state?.accountsTab).toBe('requests');
+    const pay = resolveGlobalSearchEnterFallback('PAY-1');
+    expect(pay?.state?.accountsTab).toBe('requests');
+  });
+
   it('resolveTransactionSearchHit opens manager intel for quotations', () => {
     const hit = resolveTransactionSearchHit(
       { kind: 'quotation', id: 'QT-9', label: 'QT-9', path: '/sales' },
@@ -153,5 +169,14 @@ describe('workspaceSearchCore', () => {
     );
     expect(statement?.path).toBe('/expense-cash-catchup?view=statement');
     expect(duplicates?.path).toBe('/expense-cash-catchup?view=duplicates');
+  });
+
+  it('filterNavSearchCommands retitles accounting to collections when local GL is off', () => {
+    const hasPermission = () => true;
+    const hits = filterNavSearchCommands('creditors', hasPermission, () => true, {
+      glPostingEnabled: false,
+    });
+    const accounting = hits.find((h) => h.id === 'nav-accounting');
+    expect(accounting?.sublabel).toBe('Collections & registers');
   });
 });

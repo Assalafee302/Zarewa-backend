@@ -3,6 +3,7 @@
  * Each entry is a HelpArticle-shaped object merged into HELP_ARTICLES.
  * Zare uses these for keyword retrieval — not neural training.
  */
+import { ACCOUNTS_TAB_PAYOUT, ACCOUNTS_TAB_REQUESTS } from './accountsExpenseTabs.js';
 
 /** @typedef {{ id: string; title: string; keywords: string[]; answer: string; steps: string[]; links: Array<{ label: string; to: string; state?: object }> }} HelpArticle */
 
@@ -321,7 +322,7 @@ const OPERATIONAL_TOPICS = [
       'Submit for approval — manager/finance approves in Zarewa.',
       'After approved, record **Payout** from treasury when cash leaves bank.',
     ],
-    links: [{ label: 'Finance — Payments', to: '/accounts', state: { accountsTab: 'disbursements' } }],
+    links: [{ label: 'Finance — Requests', to: '/accounts', state: { accountsTab: ACCOUNTS_TAB_REQUESTS } }],
     extraKeywords: ['payment request', 'expense request', 'pay vendor'],
   },
   {
@@ -343,11 +344,11 @@ const OPERATIONAL_TOPICS = [
     title: 'Treasury payout (approved request)',
     answer: 'Payout records money leaving bank/cash after approval.',
     steps: [
-      'Finance → **Payments** or treasury queue.',
+      'Finance → **Desk** (payout queue).',
       'Open approved request → **Payout**.',
       'Select bank/cash account and confirm amount.',
     ],
-    links: [{ label: 'Finance', to: '/accounts', state: { accountsTab: 'treasury' } }],
+    links: [{ label: 'Finance — Desk', to: '/accounts', state: { accountsTab: ACCOUNTS_TAB_PAYOUT } }],
     extraKeywords: ['payout', 'pay from treasury', 'disburse'],
   },
   {
@@ -466,11 +467,11 @@ const OPERATIONAL_TOPICS = [
     title: 'Internal treasury transfer',
     answer: 'Moves balance between bank/cash accounts in same branch.',
     steps: [
-      'Finance → **Treasury** → transfer.',
+      'Finance → **Desk** → transfer.',
       'Select from/to accounts and amount.',
       'Post transfer — you confirm; Zare guides only.',
     ],
-    links: [{ label: 'Finance — Treasury', to: '/accounts', state: { accountsTab: 'treasury' } }],
+    links: [{ label: 'Finance — Desk', to: '/accounts', state: { accountsTab: ACCOUNTS_TAB_PAYOUT } }],
     extraKeywords: ['transfer', 'move cash', 'bank to bank'],
   },
   {

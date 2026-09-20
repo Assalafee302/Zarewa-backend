@@ -18,6 +18,7 @@ import {
 } from './glOps.js';
 import {
   tryPostExpensePaymentGlTx,
+  tryPostExpensePaymentReversalGlTx,
   tryPostSupplierPaymentGlTx,
 } from './accountingPostingOps.js';
 import { syncFixedAssetFromCapexExpense } from './fixedAssetAutomationOps.js';
@@ -177,7 +178,7 @@ import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
-import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
 import {
@@ -194,7 +195,8 @@ import {
   repairRefundPayoutStateTx,
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
-import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, actorIsRefundUnclearedHoldAdminOverride, refundTillPayableNgn } from './refundHandlers.js';
+import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, actorIsRefundUnclearedHoldAdminOverride, refundTillPayableNgn, assertPaymentRequestPayerNotApprover } from './refundHandlers.js';
+import { isPaymentRequestApprovedForPayout } from '../shared/lib/paymentRequestStatus.js';
 import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../shared/lib/refundUnclearedPayoutHold.js';
 import { refundCashierPayRelaxed } from './financeFeatureFlags.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
@@ -687,7 +689,7 @@ function appendMovementTx(db, entry) {
  * @param {import('better-sqlite3').Database} db
  * @param {Record<string, unknown>} row
  */
-function insertCoilControlEventTx(db, row) {
+export function insertCoilControlEventTx(db, row) {
   const branchId = String(row.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const id = nextCoilControlEventHumanId(db, branchId);
   const createdAtIso = String(row.createdAtIso || new Date().toISOString().slice(0, 19));
@@ -8141,7 +8143,8 @@ function assertPaymentRequestPayoutReversalBranchGate(db, requestId, workspaceBr
 
 /**
  * finance.reverse: Post compensating treasury lines for every unreversed PAYMENT_REQUEST_OUT on this request,
- * reset paid_amount_ngn to zero, and clear linked staff-loan disbursement flags when applicable.
+ * reverse EXPENSE_PAYMENT_GL (Dr cash · Cr current category), reset paid_amount_ngn to zero,
+ * and clear linked staff-loan disbursement flags when applicable.
  * @param {import('better-sqlite3').Database} db
  * @param {string} requestId
  * @param {{ note?: string, actedAtISO?: string, postedAtISO?: string, workspaceBranchId?: string, workspaceViewAll?: boolean, skipInnerTransaction?: boolean }} payload
@@ -8204,6 +8207,44 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
       actor,
       { postedAtISO }
     );
+    const linkedExpense = db
+      .prepare(`SELECT category, branch_id FROM expenses WHERE expense_id = ?`)
+      .get(row.expense_id);
+    for (const mv of created || []) {
+      const reversalRow = db
+        .prepare(`SELECT reverses_movement_id FROM treasury_movements WHERE id = ?`)
+        .get(mv.id);
+      const origId = String(reversalRow?.reverses_movement_id || '').trim();
+      if (!origId) continue;
+      const origGl = tableExists(db, 'gl_journal_entries')
+        ? db
+            .prepare(
+              `SELECT id FROM gl_journal_entries WHERE source_kind = 'EXPENSE_PAYMENT_GL' AND source_id = ?`
+            )
+            .get(origId)
+        : null;
+      if (!origGl) continue;
+      const origMv = db
+        .prepare(`SELECT treasury_account_id, amount_ngn FROM treasury_movements WHERE id = ?`)
+        .get(origId);
+      const lineAmt = Math.abs(roundMoney(origMv?.amount_ngn ?? mv.amountNgn));
+      if (lineAmt <= 0 || !origMv?.treasury_account_id) continue;
+      const glRev = tryPostExpensePaymentReversalGlTx(db, {
+        treasuryAccountId: origMv.treasury_account_id,
+        amountNgn: lineAmt,
+        entryDateISO: day,
+        sourceId: mv.id,
+        originalMovementId: origId,
+        expenseCategory: linkedExpense?.category || 'Others',
+        paymentRequestId: rid,
+        branchId: linkedExpense?.branch_id || null,
+        createdByUserId: actor?.id != null ? String(actor.id) : null,
+        memo: note,
+      });
+      if (!glRev.ok && !glRev.skipped && !glRev.duplicate) {
+        throw new Error(glRev.error || 'Expense payment GL reversal failed.');
+      }
+    }
     db.prepare(
       `UPDATE payment_requests
        SET paid_amount_ngn = 0, paid_at_iso = '', paid_by = '', payment_note = ?
@@ -8236,7 +8277,7 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
   appendPaymentRequestTimelineToOfficeThreads(
     db,
     rid,
-    `Accounts: treasury payout for ${rid} was reversed by ${actorLabel} (compensating credits posted; paid balance reset to zero).${note ? ` Note: ${note}` : ''}`
+    `Accounts: treasury payout for ${rid} was reversed by ${actorLabel} (cash restored and expense GL reversed; paid balance reset to zero).${note ? ` Note: ${note}` : ''}`
   );
 
   return { ok: true, movements: created, priorPaidAmountNgn: paidAmountNgn };
@@ -8466,8 +8507,13 @@ export function deletePaymentRequestRolloutDup(db, requestId, actor, opts = {}) 
       if (eid) {
         const others = db.prepare(`SELECT COUNT(*) AS c FROM payment_requests WHERE expense_id = ?`).get(eid);
         if (!others || Number(others.c) === 0) {
-          db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id = ?`).run(eid);
-          db.prepare(`DELETE FROM expenses WHERE expense_id = ?`).run(eid);
+          const exp = db.prepare(`SELECT expense_type FROM expenses WHERE expense_id = ?`).get(eid);
+          const isPlaceholder =
+            String(exp?.expense_type || '') === PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE;
+          if (isPlaceholder) {
+            db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id = ?`).run(eid);
+            db.prepare(`DELETE FROM expenses WHERE expense_id = ?`).run(eid);
+          }
         }
       }
       appendAuditLog(db, {
@@ -8790,9 +8836,13 @@ export function updateTreasuryTransfer(db, batchId, payload, actor) {
 export function payPaymentRequest(db, requestID, payload) {
   const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
   if (!row) return { ok: false, error: 'Payment request not found.' };
-  if (String(row.approval_status || '') !== 'Approved') {
+  if (!isPaymentRequestApprovedForPayout(row.approval_status)) {
     return { ok: false, error: 'Only approved payment requests can be paid.' };
   }
+  const dualGate = assertPaymentRequestPayerNotApprover(row, payload.actor, (p) =>
+    userHasPermission(payload.actor, p)
+  );
+  if (!dualGate.ok) return dualGate;
 
   const requested = roundMoney(row.amount_requested_ngn);
   const alreadyPaid = roundMoney(row.paid_amount_ngn);
@@ -8888,7 +8938,7 @@ export function payPaymentRequest(db, requestID, payload) {
     const txResult = db.transaction(() => {
       const fresh = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
       if (!fresh) throw new Error('Payment request not found.');
-      if (String(fresh.approval_status || '') !== 'Approved') {
+      if (!isPaymentRequestApprovedForPayout(fresh.approval_status)) {
         throw new Error('Only approved payment requests can be paid.');
       }
       const requestedFresh = roundMoney(fresh.amount_requested_ngn);
@@ -8933,6 +8983,12 @@ export function payPaymentRequest(db, requestID, payload) {
          SET paid_amount_ngn = ?, paid_at_iso = ?, paid_by = ?, payment_note = ?
          WHERE request_id = ?`
       ).run(nextPaid, paidAtISO, paidBy, paymentNote, requestID);
+      if (hasColumn(db, 'payment_requests', 'paid_by_user_id')) {
+        db.prepare(`UPDATE payment_requests SET paid_by_user_id = ? WHERE request_id = ?`).run(
+          actor?.id != null ? String(actor.id) : '',
+          requestID
+        );
+      }
 
       if (nextPaid >= requestedFresh) {
         syncStaffLoanDisbursementOnFullPay(db, requestID, paidAtISO);
@@ -9154,20 +9210,25 @@ export function payRefundEntry(db, refundId, payload) {
     });
   }
   const qrefPay = String(row.quotation_ref ?? '').trim();
-  if (qrefPay) {
-    const qBlock = db
-      .prepare(`SELECT refunds_blocked_at_iso, refunds_blocked_reason FROM quotations WHERE id = ?`)
-      .get(qrefPay);
-    if (quotationRefundsBlocked(qBlock)) {
-      const why = String(qBlock?.refunds_blocked_reason ?? '').trim();
-      return {
-        ok: false,
-        error: why
-          ? `Refunds are permanently blocked on this quotation: ${why}`
-          : 'Refunds are permanently blocked on this quotation.',
-        refundsBlocked: true,
-      };
-    }
+  if (!qrefPay) {
+    return {
+      ok: false,
+      code: 'REFUND_QUOTATION_REQUIRED',
+      error: 'Quotation is required for a customer refund.',
+    };
+  }
+  const qBlock = db
+    .prepare(`SELECT refunds_blocked_at_iso, refunds_blocked_reason FROM quotations WHERE id = ?`)
+    .get(qrefPay);
+  if (quotationRefundsBlocked(qBlock)) {
+    const why = String(qBlock?.refunds_blocked_reason ?? '').trim();
+    return {
+      ok: false,
+      error: why
+        ? `Refunds are permanently blocked on this quotation: ${why}`
+        : 'Refunds are permanently blocked on this quotation.',
+      refundsBlocked: true,
+    };
   }
   const approvedAmountNgn = roundMoney(row.approved_amount_ngn || row.amount_ngn);
   const paidAmountNgn = roundMoney(row.paid_amount_ngn);

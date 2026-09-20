@@ -23,6 +23,7 @@ import {
 } from '../shared/lib/workspaceSearchCore.js';
 import { userMayPerformManagerQuotationClearance } from '../shared/workspaceGovernance.js';
 import { searchCoilLots } from './readModel.js';
+import { isGlPostingEnabled } from './finance/glPostingGate.js';
 import {
   allowedWorkspaceSearchFtsKinds,
   queryWorkspaceSearchFts,
@@ -88,6 +89,7 @@ function workspaceQuickSearchWithFts(db, req, rawQuery, limit, opts = {}) {
   byKind.nav = filterNavSearchCommands(raw, perm, canModule, {
     roleKey: user?.roleKey,
     limit: 4,
+    glPostingEnabled: isGlPostingEnabled(),
   });
 
   const ftsKinds = allowedWorkspaceSearchFtsKinds(user);
@@ -172,6 +174,7 @@ function workspaceQuickSearchWithSql(db, req, rawQuery, limit, opts = {}) {
   byKind.nav = filterNavSearchCommands(raw, perm, canModule, {
     roleKey: user?.roleKey,
     limit: 4,
+    glPostingEnabled: isGlPostingEnabled(),
   });
 
   if (perm('sales.view') || perm('customers.manage')) {
@@ -479,7 +482,7 @@ function workspaceQuickSearchWithSql(db, req, rawQuery, limit, opts = {}) {
       label: row.request_id,
       sublabel: row.description || row.expense_id,
       path: '/accounts',
-      state: { accountsTab: 'payment-requests', highlightPaymentRequestId: row.request_id },
+      state: { accountsTab: 'requests', highlightPaymentRequestId: row.request_id },
       _score: scoreWorkspaceSearchMatch(raw, [row.request_id, row.description, row.expense_id, row.expense_reference]),
     }));
   }
@@ -542,7 +545,7 @@ function workspaceQuickSearchWithSql(db, req, rawQuery, limit, opts = {}) {
     }));
   }
 
-  if (perm('finance.view')) {
+  if (perm('finance.view') && isGlPostingEnabled()) {
     const bp = branchPredicate(db, 'gl_journal_entries', branchScope, 'j');
     const rows = db
       .prepare(

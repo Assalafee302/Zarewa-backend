@@ -7,7 +7,13 @@ import {
   closeIntegrationHarness,
   resolveTestActor,
 } from './testIntegrationHarness.js';
-import { ensureArchitecturalGlAccounts, postOpeningBalanceJournal, tryPostExpensePaymentGlTx, tryPostSupplierPaymentGlTx } from './accountingPostingOps.js';
+import {
+  ensureArchitecturalGlAccounts,
+  postOpeningBalanceJournal,
+  tryPostExpensePaymentGlTx,
+  tryPostExpensePaymentReversalGlTx,
+  tryPostSupplierPaymentGlTx,
+} from './accountingPostingOps.js';
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
 import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
 import { monthBounds, getAccountingStatementsPack } from './accountingStatementsOps.js';
@@ -132,6 +138,43 @@ describe('accounting GL (Phase A + B integration)', () => {
         )
         .get(sid);
       expect(line?.code).toBe('5010');
+    });
+
+    it('tryPostExpensePaymentReversalGlTx credits fuel and debits cash', ({ skip }) => {
+      if (!ready) skip();
+      const origSid = uid('TM-EXP');
+      const revSid = uid('TM-REV');
+      db.prepare(
+        `INSERT OR IGNORE INTO gl_accounts (id, code, name, type, is_active, sort_order) VALUES ('acc-cash-8','1008','Cash ops','asset',1,18)`
+      ).run();
+      expect(
+        tryPostExpensePaymentGlTx(db, {
+          treasuryAccountId: 8,
+          amountNgn: 12_000,
+          entryDateISO: '2026-06-03',
+          sourceId: origSid,
+          expenseCategory: 'Fuel & lubricant',
+        }).ok
+      ).toBe(true);
+      expect(
+        tryPostExpensePaymentReversalGlTx(db, {
+          treasuryAccountId: 8,
+          amountNgn: 12_000,
+          entryDateISO: '2026-06-04',
+          sourceId: revSid,
+          originalMovementId: origSid,
+          expenseCategory: 'Fuel & lubricant',
+        }).ok
+      ).toBe(true);
+      const credit = db
+        .prepare(
+          `SELECT ga.code FROM gl_journal_lines jl
+           JOIN gl_accounts ga ON ga.id = jl.account_id
+           JOIN gl_journal_entries je ON je.id = jl.journal_id
+           WHERE je.source_kind = 'EXPENSE_PAYMENT_REVERSAL_GL' AND je.source_id = ? AND jl.credit_ngn > 0`
+        )
+        .get(revSid);
+      expect(credit?.code).toBe('5010');
     });
   });
 

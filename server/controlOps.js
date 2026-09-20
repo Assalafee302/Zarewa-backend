@@ -20,6 +20,12 @@ import {
   validateExpenseCategorySelection,
 } from '../shared/expenseCategoryPolicy.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
+import {
+  isPaymentRequestApprovedForPayout,
+  isPaymentRequestEditable,
+  isPaymentRequestOpenForReview,
+  paymentRequestLifecycleStatus,
+} from '../shared/lib/paymentRequestStatus.js';
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
 import {
   MIN_MD_DISCOUNT_REASON_LEN,
@@ -120,6 +126,8 @@ import {
 import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { resolveStainSourceMaterialTypeId } from './materialWorkbookQuotationPrice.js';
+import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import { pickQuoteLineFloor } from '../shared/lib/quoteFloorPolicy.js';
 import { isStainMaterialTypeId } from '../shared/lib/stainMaterialPolicy.js';
 import { PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL } from '../shared/lib/productionJobStatus.js';
 import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
@@ -161,6 +169,8 @@ import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore
 import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 import {
   assertCashierMayNotApproveRefund,
+  assertCashierMayNotApprovePaymentRequest,
+  assertPaymentRequestApproverNotRequester,
   assertRefundApproverNotRequester,
 } from './refundHandlers.js';
 import {
@@ -1354,14 +1364,13 @@ function blendedFloorPpmFromQuoteLineStamps(db, quote, pricingAsAtIso) {
       ...headerCtx,
       productName: line?.name,
     });
-    let floor = nums.floor != null && nums.floor > 0 ? Number(nums.floor) : null;
-    const stampedRaw = Math.round(Number(line?.floorPricePerMeter ?? line?.floor_price_per_meter) || 0);
-    const listRec = Math.round(Number(line?.recommendedPricePerMeter ?? line?.recommended_price_per_meter) || 0);
-    let stampedFloor = stampedRaw;
-    // Older quotes stamped list (floor+commission) into floorPricePerMeter.
-    if (stampedFloor > 0 && listRec > 0 && stampedFloor === listRec) stampedFloor = 0;
-    if (stampedFloor > 0 && floor != null) floor = Math.min(floor, stampedFloor);
-    else if (stampedFloor > 0) floor = stampedFloor;
+    const pick = pickQuoteLineFloor({
+      workbookFloorNgn: nums.floor,
+      stampedFloorNgn: line?.floorPricePerMeter ?? line?.floor_price_per_meter,
+      listBadgeNgn: line?.recommendedPricePerMeter ?? line?.recommended_price_per_meter,
+      meterSheet: isMeterSheetProductLine(line?.name),
+    });
+    const floor = pick.floorNgnPerM;
     if (floor == null || floor <= 0) continue;
     weighted += floor * qty;
     metres += qty;
@@ -2169,6 +2178,91 @@ function expenseInsertPlaceholders(db) {
   return hasLane ? '?,?,?,?,?,?,?,?,?' : '?,?,?,?,?,?,?,?';
 }
 
+/** Placeholder expense created with a line-item payment request — safe to delete on rollout-dup. */
+export const PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE = 'Payment request (pending payout)';
+
+/**
+ * Linked-expense side door: same category policy as line items; refuse already-paid spend.
+ * @param {import('better-sqlite3').Database} db
+ */
+function assertLinkedExpenseEligibleForPaymentRequest(db, expense, actor, payload, amountRequestedNgn, hasAttachment) {
+  const expenseId = String(expense?.expense_id || '').trim();
+  if (!expenseId) return { ok: false, error: 'Linked expense was not found.' };
+
+  let treasuryN = 0;
+  try {
+    treasuryN =
+      Number(
+        db
+          .prepare(
+            `SELECT COUNT(*) AS c FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id = ?`
+          )
+          .get(expenseId)?.c
+      ) || 0;
+  } catch {
+    treasuryN = 0;
+  }
+  if (treasuryN > 0) {
+    return {
+      ok: false,
+      error: 'This expense already has a treasury posting. Do not raise a payment request against it.',
+    };
+  }
+
+  const existing = db
+    .prepare(
+      `SELECT request_id, approval_status, paid_amount_ngn, amount_requested_ngn FROM payment_requests WHERE expense_id = ?`
+    )
+    .all(expenseId);
+  for (const pr of existing) {
+    if (roundMoney(pr.paid_amount_ngn) > 0) {
+      return {
+        ok: false,
+        error: 'This expense already has a paid payment request.',
+      };
+    }
+    const life = paymentRequestLifecycleStatus({
+      approvalStatus: pr.approval_status,
+      amountRequestedNgn: pr.amount_requested_ngn,
+      paidAmountNgn: pr.paid_amount_ngn,
+    });
+    if (life === 'Pending' || life === 'Approved' || life === 'Partially paid' || life === 'Paid') {
+      return {
+        ok: false,
+        error: `This expense already has payment request ${pr.request_id}.`,
+      };
+    }
+  }
+
+  return validatePaymentRequestExpenseCategory(
+    db,
+    actor,
+    payload,
+    String(expense.category || '').trim(),
+    amountRequestedNgn,
+    hasAttachment
+  );
+}
+
+function stampPaymentRequestRequesterTx(db, requestID, actor) {
+  if (!hasColumn(db, 'payment_requests', 'requested_by_user_id')) return;
+  db.prepare(
+    `UPDATE payment_requests SET requested_by = ?, requested_by_user_id = ? WHERE request_id = ?`
+  ).run(actorName(actor), actor?.id != null ? String(actor.id) : '', requestID);
+}
+
+function stampPaymentRequestApproverTx(db, requestID, actor) {
+  if (!hasColumn(db, 'payment_requests', 'approved_by_user_id')) return;
+  db.prepare(`UPDATE payment_requests SET approved_by_user_id = ? WHERE request_id = ?`).run(
+    actor?.id != null ? String(actor.id) : '',
+    requestID
+  );
+}
+
+function clearPaymentRequestApproverTx(db, requestID) {
+  if (!hasColumn(db, 'payment_requests', 'approved_by_user_id')) return;
+  db.prepare(`UPDATE payment_requests SET approved_by_user_id = '' WHERE request_id = ?`).run(requestID);
+}
 
 export function insertPaymentRequest(db, payload, actor) {
   const providedRequestId = String(payload.requestID ?? '').trim();
@@ -2227,8 +2321,19 @@ export function insertPaymentRequest(db, payload, actor) {
     if (amountRequestedNgn <= 0) {
       return { ok: false, error: 'Amount requested must be positive.' };
     }
-    const expense = db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = ?`).get(legacyExpenseID);
+    const expense = db
+      .prepare(`SELECT expense_id, category, expense_type, amount_ngn FROM expenses WHERE expense_id = ?`)
+      .get(legacyExpenseID);
     if (!expense) return { ok: false, error: 'Linked expense was not found.' };
+    const linkGate = assertLinkedExpenseEligibleForPaymentRequest(
+      db,
+      expense,
+      actor,
+      payload,
+      amountRequestedNgn,
+      Boolean(attB64)
+    );
+    if (!linkGate.ok) return linkGate;
   }
 
   const maxAttempts = providedRequestId ? 1 : 3;
@@ -2256,7 +2361,7 @@ export function insertPaymentRequest(db, payload, actor) {
             ...(hasColumn(db, 'expenses', 'category_lane')
               ? [
                   newExpId,
-                  'Payment request (pending payout)',
+                  PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE,
                   amountRequestedNgn,
                   requestDate,
                   expenseCategory,
@@ -2267,7 +2372,7 @@ export function insertPaymentRequest(db, payload, actor) {
                 ]
               : [
                   newExpId,
-                  'Payment request (pending payout)',
+                  PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE,
                   amountRequestedNgn,
                   requestDate,
                   expenseCategory,
@@ -2336,6 +2441,7 @@ export function insertPaymentRequest(db, payload, actor) {
              WHERE request_id = ?`
           ).run(payeeName || '', payeeAccountNo || '', payeeBankName || '', requestID);
         }
+        stampPaymentRequestRequesterTx(db, requestID, actor);
         appendAuditLog(db, {
           actor,
           action: 'payment_request.create',
@@ -2368,8 +2474,7 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
   if (!rid) return { ok: false, error: 'Payment request ID is required.' };
   const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
   if (!row) return { ok: false, error: 'Payment request not found.' };
-  const approvalStatus = String(row.approval_status || 'Pending').trim();
-  if (!['Pending', 'Submitted', 'Awaiting approval', '', 'Rejected'].includes(approvalStatus)) {
+  if (!isPaymentRequestEditable(row.approval_status)) {
     return { ok: false, error: 'Only pending or rejected requests can be edited.' };
   }
 
@@ -2491,6 +2596,7 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
            WHERE request_id = ?`
         ).run(payeeName || '', payeeAccountNo || '', payeeBankName || '', rid);
       }
+      clearPaymentRequestApproverTx(db, rid);
 
       const expenseId = String(row.expense_id || '').trim();
       if (expenseId) {
@@ -2519,7 +2625,7 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
           amountRequestedNgn,
           expenseCategory,
           lineItemCount: lineItems.length,
-          approvalStatusBefore: approvalStatus || 'Pending',
+          approvalStatusBefore: row.approval_status || 'Pending',
         },
       });
     })();
@@ -2532,9 +2638,13 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
 export function decidePaymentRequest(db, requestID, payload, actor) {
   const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
   if (!row) return { ok: false, error: 'Payment request not found.' };
-  if (!['Pending', 'Submitted', 'Awaiting approval', ''].includes(String(row.approval_status || 'Pending'))) {
+  if (!isPaymentRequestOpenForReview(row.approval_status)) {
     return { ok: false, error: 'Only pending requests can be reviewed.' };
   }
+  const cashierGate = assertCashierMayNotApprovePaymentRequest(actor, (p) => userHasPermission(actor, p));
+  if (!cashierGate.ok) return cashierGate;
+  const selfGate = assertPaymentRequestApproverNotRequester(row, actor, (p) => userHasPermission(actor, p));
+  if (!selfGate.ok) return selfGate;
   const status = String(payload.status ?? '').trim();
   if (!['Approved', 'Rejected'].includes(status)) {
     return { ok: false, error: 'Decision status must be Approved or Rejected.' };
@@ -2583,6 +2693,7 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
          SET approval_status = ?, approved_by = ?, approved_at_iso = ?, approval_note = ?
          WHERE request_id = ?`
       ).run(status, actorName(actor), actedAtISO, note, requestID);
+      stampPaymentRequestApproverTx(db, requestID, actor);
       recordApprovalAction(db, {
         actor,
         entityKind: 'payment_request',
@@ -2813,8 +2924,7 @@ export function reclassifyPaymentRequestCategory(db, requestID, payload, actor) 
   const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
   if (!row) return { ok: false, error: 'Payment request not found.' };
 
-  const approvalStatus = String(row.approval_status || '').trim();
-  if (approvalStatus !== 'Approved') {
+  if (!isPaymentRequestApprovedForPayout(row.approval_status)) {
     return { ok: false, error: 'Only approved requests awaiting payout can be reclassified.' };
   }
   const paidNgn = roundMoney(row.paid_amount_ngn);
@@ -2892,7 +3002,7 @@ export function reclassifyPaymentRequestCategory(db, requestID, payload, actor) 
 export function cancelApprovedPaymentRequestBeforePay(db, requestID, payload, actor) {
   const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
   if (!row) return { ok: false, error: 'Payment request not found.' };
-  if (String(row.approval_status || '').trim() !== 'Approved') {
+  if (!isPaymentRequestApprovedForPayout(row.approval_status)) {
     return { ok: false, error: 'Only approved requests can be cancelled from payout queue.' };
   }
   const paidAmountNgn = roundMoney(row.paid_amount_ngn);
@@ -3055,8 +3165,21 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     assertPeriodOpen(db, requestedAtISO, 'Refund request date');
     const quotationRef = String(payload.quotationRef ?? '').trim();
     if (!quotationRef) {
-      const noQuoteFreeze = assertBranchRefundsNotFrozen(db, refundBranchId, requestedAtISO);
-      if (!noQuoteFreeze.ok) return noQuoteFreeze;
+      return {
+        ok: false,
+        code: 'REFUND_QUOTATION_REQUIRED',
+        error: 'Quotation is required for a customer refund.',
+      };
+    }
+    const quoteCustomerRow = db.prepare(`SELECT customer_id FROM quotations WHERE id = ?`).get(quotationRef);
+    if (!quoteCustomerRow) return { ok: false, error: 'Quotation not found.' };
+    const quoteCustomerId = String(quoteCustomerRow.customer_id || '').trim();
+    if (quoteCustomerId && customerID !== quoteCustomerId) {
+      return {
+        ok: false,
+        code: 'REFUND_CUSTOMER_MISMATCH',
+        error: `Refund customer must be the quotation customer (${quoteCustomerId}).`,
+      };
     }
     const product = String(payload.product ?? '').trim() || '—';
     const requestedCats = normalizeRefundReasonCategoriesForApi(payload.reasonCategory);
@@ -3726,6 +3849,13 @@ export function decideRefundRequest(db, refundID, payload, actor) {
     return { ok: false, error: 'Approved refund amount must be positive.' };
   }
   const qrefApprove = String(row.quotation_ref ?? '').trim();
+  if (status === 'Approved' && !qrefApprove) {
+    return {
+      ok: false,
+      code: 'REFUND_QUOTATION_REQUIRED',
+      error: 'Quotation is required for a customer refund.',
+    };
+  }
   if (status === 'Approved' && qrefApprove) {
     const qBlock = db
       .prepare(`SELECT refunds_blocked_at_iso, refunds_blocked_reason FROM quotations WHERE id = ?`)

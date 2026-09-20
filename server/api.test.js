@@ -1969,6 +1969,25 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(String(createReq.body?.requestID || '')).toMatch(/^PREQ-/);
   });
 
+  it('finance manager cannot approve a payment request they submitted', async () => {
+    const financeAgent = request.agent(app);
+    await loginAs(financeAgent, 'finance.manager', 'Finance@123');
+    const createReq = await financeAgent.post('/api/payment-requests').send({
+      requestDate: '2026-03-29',
+      expenseCategory: 'Office expenses',
+      description: 'Self-approval should be blocked',
+      lineItems: [{ description: 'Stationery', quantity: 1, unitPriceNgn: 4000 }],
+    });
+    expect(createReq.status).toBe(201);
+    const rid = createReq.body.requestID;
+    const selfApprove = await financeAgent
+      .post(`/api/payment-requests/${encodeURIComponent(rid)}/decision`)
+      .send({ status: 'Approved', note: 'Self approve' });
+    expect(selfApprove.status).toBe(400);
+    expect(selfApprove.body.ok).toBe(false);
+    expect(String(selfApprove.body.error || '')).toMatch(/cannot approve a payment request you submitted/i);
+  });
+
   it('sales officer can PATCH pending payment request with expenses.create', async () => {
     const staffAgent = request.agent(app);
     await loginAs(staffAgent, 'sales.staff', 'Sales@123');
@@ -2251,6 +2270,11 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const reversals = lines.filter((m) => m.type === 'PAYMENT_REQUEST_REVERSAL_IN');
     expect(reversals.length).toBe(1);
     expect(Number(reversals[0].amountNgn)).toBeGreaterThan(0);
+
+    const gl = await agent.get('/api/gl/journals?startDate=2026-03-01&endDate=2026-12-31');
+    if (gl.status === 200 && Array.isArray(gl.body.journals)) {
+      expect(gl.body.journals.some((j) => j.sourceKind === 'EXPENSE_PAYMENT_REVERSAL_GL')).toBe(true);
+    }
   });
 
   it('refund request lifecycle requires approval before payout', async () => {

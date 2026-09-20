@@ -1157,6 +1157,10 @@ CREATE TABLE IF NOT EXISTS payment_requests (
   payee_name TEXT,
   payee_account_no TEXT,
   payee_bank_name TEXT,
+  requested_by TEXT,
+  requested_by_user_id TEXT,
+  approved_by_user_id TEXT,
+  paid_by_user_id TEXT,
   maintenance_work_order_id TEXT,
   maintenance_cost_kind TEXT,
   maintenance_machine_id TEXT

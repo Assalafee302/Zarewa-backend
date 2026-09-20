@@ -3,6 +3,9 @@
  * Frontend copies via `npm run sync:shared` → src/shared/lib/workspaceSearchCore.js
  */
 
+import { accountingNavForLocalGl } from './localAccountingSurfaces.js';
+import { ACCOUNTS_TAB_EXPENSES, ACCOUNTS_TAB_REQUESTS } from './accountsExpenseTabs.js';
+
 /** @typedef {{ kind: string, id: string, label: string, sublabel?: string, path: string, state?: object, _score?: number }} WorkspaceSearchHit */
 
 export const WORKSPACE_SEARCH_KIND_LABELS = {
@@ -421,20 +424,21 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
  * @param {string} rawQuery
  * @param {(p: string) => boolean} hasPermission
  * @param {(moduleKey: string) => boolean} [canAccessModule]
- * @param {{ roleKey?: string, limit?: number }} [opts]
+ * @param {{ roleKey?: string, limit?: number, glPostingEnabled?: boolean }} [opts]
  */
 export function filterNavSearchCommands(rawQuery, hasPermission, canAccessModule, opts = {}) {
   const q = String(rawQuery || '').trim().toLowerCase();
   if (q.length < 2) return [];
   const limit = Math.max(1, opts.limit ?? 4);
   const roleKey = String(opts.roleKey || '').trim().toLowerCase();
+  const glPostingEnabled = opts.glPostingEnabled !== false;
 
   const visible = WORKSPACE_NAV_SEARCH_COMMANDS.filter((cmd) => {
     if (cmd.roleKeys?.length && !cmd.roleKeys.includes(roleKey)) return false;
     if (cmd.module && canAccessModule && !canAccessModule(cmd.module)) return false;
     if (cmd.permissions?.length && !cmd.permissions.some((p) => hasPermission(p))) return false;
     return true;
-  });
+  }).map((cmd) => accountingNavForLocalGl(cmd, glPostingEnabled));
 
   const hits = [];
   for (const cmd of visible) {
@@ -548,10 +552,10 @@ export function resolveGlobalSearchEnterFallback(rawQuery, opts = {}) {
     return { path: '/operations', state: { focusOpsTab: 'deliveries', globalSearchQuery: q } };
   }
   if (lower.startsWith('exp-')) {
-    return { path: '/accounts', state: { accountsTab: 'expenses', highlightExpenseId: q } };
+    return { path: '/accounts', state: { accountsTab: ACCOUNTS_TAB_EXPENSES, highlightExpenseId: q } };
   }
-  if (lower.startsWith('pr-') || lower.startsWith('pay-')) {
-    return { path: '/accounts', state: { accountsTab: 'payment-requests', highlightPaymentRequestId: q } };
+  if (lower.startsWith('pr-') || lower.startsWith('pay-') || lower.startsWith('preq-')) {
+    return { path: '/accounts', state: { accountsTab: ACCOUNTS_TAB_REQUESTS, highlightPaymentRequestId: q } };
   }
   if (lower.startsWith('cl-')) {
     if (/^cl-\d/i.test(q) || q.split('-').length >= 3) {

@@ -281,13 +281,10 @@ export const ROLE_DEFINITIONS = {
       'expenses.create',
       'finance.view',
       'finance.post',
-      'finance.approve',
       'finance.pay',
-      'finance.reverse',
       'treasury.manage',
-      'audit.view',
       'reports.view',
-      /** Phase B: desk routes — legacy finance perms retained for compatibility until B3. */
+      /** Phase B3: pay and till books only — not approve/reverse, not audit.view/export. */
       'cashier.desk.view',
       'cashier.receipts.confirm',
       /** Branch OT — mark paid only; payable locked at BM approve. */

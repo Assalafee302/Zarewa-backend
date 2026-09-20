@@ -103,6 +103,7 @@ describe('workspaceGovernance', () => {
     expect(userMayReviewPaymentRequests({ roleKey: 'sales_manager' }, () => false)).toBe(true);
     expect(userMayReviewPaymentRequests({ roleKey: 'sales_staff' }, () => false)).toBe(false);
     expect(userMayReviewPaymentRequests({ roleKey: 'finance_manager' }, (p) => p === 'finance.approve')).toBe(true);
+    expect(userMayReviewPaymentRequests({ roleKey: 'cashier' }, (p) => p === 'finance.approve')).toBe(false);
   });
 
   it('allows branch manager / executive / admin to override production alignment', () => {

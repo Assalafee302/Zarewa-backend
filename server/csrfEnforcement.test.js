@@ -41,6 +41,18 @@ describe('CSRF enforcement', () => {
     expect(create.body.code).toBe('CSRF_INVALID');
   });
 
+  it('rejects settlement pay without X-CSRF-Token even when authenticated', async () => {
+    const agent = request.agent(app);
+    const login = await agent.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
+    expect(login.status).toBe(200);
+
+    const pay = await agent.post('/api/accounting/settlements/SET-CSRF-MISSING/pay').send({
+      paidAmountNgn: 1,
+    });
+    expect(pay.status).toBe(403);
+    expect(pay.body.code).toBe('CSRF_INVALID');
+  });
+
   it('accepts POST when X-CSRF-Token matches csrf cookie', async () => {
     const agent = request.agent(app);
     const login = await agent.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });

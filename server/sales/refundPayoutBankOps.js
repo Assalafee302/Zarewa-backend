@@ -6,6 +6,7 @@
  * @module server/sales/refundPayoutBankOps
  */
 import { DEFAULT_BRANCH_ID } from '../branches.js';
+import { hasColumn } from '../ap2ReceivedBasisOps.js';
 import { payeeAccountMatchesHrStaffBank } from './refundPayoutStaffBankMatch.js';
 
 function trim(v) {
@@ -48,8 +49,28 @@ export function saveRefundPayoutBank(db, payload = {}) {
     : { staffBankAccountMatch: false, forceClaimingStaffCut: false };
 
   if (kind === 'associated_staff' || kind === 'staff') {
-    const row = db.prepare(`SELECT id, name FROM associated_staff WHERE id = ?`).get(id);
-    if (!row) return { ok: false, error: 'Associated staff not found.' };
+    const bid = trim(payload.branchId) || DEFAULT_BRANCH_ID;
+    let row;
+    if (hasColumn(db, 'associated_staff', 'branch_id')) {
+      row = db
+        .prepare(`SELECT id, name, branch_id FROM associated_staff WHERE id = ? AND branch_id = ?`)
+        .get(id, bid);
+      if (!row) {
+        const any = db.prepare(`SELECT id, branch_id FROM associated_staff WHERE id = ?`).get(id);
+        if (!any) return { ok: false, error: 'Associated staff not found.' };
+        const other = trim(any.branch_id);
+        if (other && other !== bid) {
+          return {
+            ok: false,
+            error: `Associated staff belongs to branch ${other}. Switch workspace before saving bank details.`,
+          };
+        }
+        return { ok: false, error: 'Associated staff not found in the current workspace branch.' };
+      }
+    } else {
+      row = db.prepare(`SELECT id, name FROM associated_staff WHERE id = ?`).get(id);
+      if (!row) return { ok: false, error: 'Associated staff not found.' };
+    }
     db.prepare(
       `UPDATE associated_staff
        SET bank_account_name = ?, bank_name = ?, bank_account_no = ?

@@ -172,4 +172,19 @@ describe.skipIf(!mysqlOk)('coil book keeps orphan job consumption', () => {
     const after = db.prepare(`SELECT qty_remaining FROM coil_lots WHERE coil_no = ?`).get('CL-T-8405');
     expect(Number(after.qty_remaining)).toBeCloseTo(1892, 2);
   });
+
+  it('does not silently put kg back when book used is higher than jobs', () => {
+    db.prepare(
+      `UPDATE coil_lots SET qty_remaining = 1700, current_weight_kg = 1700 WHERE coil_no = ?`
+    ).run('CL-T-8405');
+    const rec = reconcileCoilBookFromProductionHolders(db, 'CL-T-8405', {
+      workspaceBranchId: 'BR-YL',
+      dateISO: '2026-09-18',
+    });
+    expect(rec.ok).toBe(true);
+    expect(rec.restoreBlocked).toBe(true);
+    expect(rec.afterOnHandKg).toBeCloseTo(1700, 2);
+    const after = db.prepare(`SELECT qty_remaining FROM coil_lots WHERE coil_no = ?`).get('CL-T-8405');
+    expect(Number(after.qty_remaining)).toBeCloseTo(1700, 2);
+  });
 });

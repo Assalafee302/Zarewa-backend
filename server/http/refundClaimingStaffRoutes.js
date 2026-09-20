@@ -13,6 +13,7 @@ import {
 import { saveRefundPayoutBank } from '../sales/refundPayoutBankOps.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
 import {
+  assertAssociatedStaffIdInWorkspace,
   assertCustomerIdInWorkspace,
   assertQuotationIdInWorkspace,
 } from '../workspaceBranchGuards.js';
@@ -94,6 +95,10 @@ export function registerRefundClaimingStaffRoutes(app, db) {
         if (kind === 'customer' && id) {
           const cg = assertCustomerIdInWorkspace(db, req, id);
           if (!cg.ok) return res.status(cg.status).json({ ok: false, error: cg.error });
+        }
+        if ((kind === 'associated_staff' || kind === 'staff') && id) {
+          const sg = assertAssociatedStaffIdInWorkspace(db, req, id);
+          if (!sg.ok) return res.status(sg.status).json({ ok: false, error: sg.error });
         }
         const r = saveRefundPayoutBank(db, {
           ...body,

@@ -29,6 +29,8 @@ describe('expensesPackReport', () => {
           accountType: 'Bank',
           accountName: 'Zenith Production',
           bankName: 'Zenith Bank',
+          amountNgn: -20000,
+          postedAtISO: '2026-04-05',
         },
       ]
     );
@@ -38,7 +40,7 @@ describe('expensesPackReport', () => {
   });
 
   it('shows "Cash" for till-paid expenses', () => {
-    const { detail } = expensesPackReport(
+    const { detail, dateBasis } = expensesPackReport(
       [{ expenseID: 'EX-10', date: '2026-04-06', category: 'Sundry', expenseType: 'Fuel', amountNgn: 5000 }],
       '2026-04-01',
       '2026-04-30',
@@ -49,10 +51,83 @@ describe('expensesPackReport', () => {
           sourceId: 'EX-10',
           accountType: 'Cash',
           accountName: 'Cash Office (Till)',
+          amountNgn: -5000,
+          postedAtISO: '2026-04-06',
         },
       ]
     );
+    expect(dateBasis).toBe('paid');
     expect(detail[0].bankAccount).toBe('Cash');
+  });
+
+  it('uses payment-request payout cash and omits unpaid memos', () => {
+    const { detail, summaryByCategory } = expensesPackReport(
+      [
+        {
+          expenseID: 'EX-PR-1',
+          date: '2026-04-01',
+          category: 'Maintenance',
+          expenseType: 'Payment request (pending payout)',
+          amountNgn: 80000,
+          paymentMethod: 'Pending',
+        },
+        {
+          expenseID: 'EX-UNPAID',
+          date: '2026-04-02',
+          category: 'Office expenses',
+          expenseType: 'Payment request (pending payout)',
+          amountNgn: 15000,
+          paymentMethod: 'Pending',
+        },
+      ],
+      '2026-04-01',
+      '2026-04-30',
+      [
+        {
+          type: 'PAYMENT_REQUEST_OUT',
+          sourceKind: 'PAYMENT_REQUEST',
+          sourceId: 'PR-1',
+          counterpartyId: 'EX-PR-1',
+          accountType: 'Bank',
+          bankName: 'Zenith Bank',
+          amountNgn: -80000,
+          postedAtISO: '2026-04-10',
+        },
+      ]
+    );
+    expect(detail).toHaveLength(1);
+    expect(detail[0].expenseIdFull).toBe('EX-PR-1');
+    expect(detail[0].dateISO).toBe('2026-04-10');
+    expect(detail[0].amountNgn).toBe(80000);
+    expect(detail[0].bankAccount).toBe('ZENITH');
+    expect(summaryByCategory.find((s) => s.category === 'Office expenses')).toBeUndefined();
+  });
+
+  it('nets a reversed payment-request payout to zero', () => {
+    const { detail } = expensesPackReport(
+      [{ expenseID: 'EX-REV', date: '2026-04-01', category: 'Fuel', amountNgn: 9000 }],
+      '2026-04-01',
+      '2026-04-30',
+      [
+        {
+          type: 'PAYMENT_REQUEST_OUT',
+          sourceKind: 'PAYMENT_REQUEST',
+          counterpartyId: 'EX-REV',
+          amountNgn: -9000,
+          postedAtISO: '2026-04-08',
+          accountType: 'Cash',
+        },
+        {
+          type: 'PAYMENT_REQUEST_REVERSAL_IN',
+          sourceKind: 'PAYMENT_REQUEST',
+          counterpartyId: 'EX-REV',
+          amountNgn: 9000,
+          postedAtISO: '2026-04-09',
+          accountType: 'Cash',
+        },
+      ]
+    );
+    expect(detail).toHaveLength(0);
   });
 });
 

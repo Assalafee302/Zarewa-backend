@@ -14,53 +14,61 @@ function expenseDateIso(e) {
   return toIsoDate(e?.date || e?.dateISO);
 }
 
-/**
- * Map expense id -> receiving/paying bank label, from the treasury movement
- * posted when the expense was paid out (sourceKind EXPENSE, sourceId = expense id).
- * @param {Array<{ sourceKind?: string, sourceId?: string, accountType?: string, accountName?: string, bankName?: string }>} treasuryMovements
- */
-function bankLabelByExpenseId(treasuryMovements = []) {
-  const m = new Map();
-  for (const t of treasuryMovements || []) {
-    if (String(t.sourceKind || '') !== 'EXPENSE') continue;
-    const id = String(t.sourceId || '').trim();
-    if (!id || m.has(id)) continue;
-    const isCash = String(t.accountType || '').trim().toLowerCase() === 'cash';
-    const label = isCash ? 'Cash' : abbreviateBankName(t.bankName) || String(t.accountName || '').trim();
-    if (label) m.set(id, label);
-  }
-  return m;
+function bankLabelFromMovement(t) {
+  const isCash = String(t?.accountType || '').trim().toLowerCase() === 'cash';
+  if (isCash) return 'Cash';
+  return abbreviateBankName(t?.bankName) || String(t?.accountName || '').trim() || '';
+}
+
+function expenseIdFromCashMovement(t) {
+  const kind = String(t?.sourceKind || '').trim();
+  if (kind === 'EXPENSE') return String(t.sourceId || t.counterpartyId || '').trim();
+  if (kind === 'PAYMENT_REQUEST') return String(t.counterpartyId || '').trim();
+  return '';
+}
+
+function isExpenseCashMovement(t) {
+  const kind = String(t?.sourceKind || '').trim();
+  return kind === 'EXPENSE' || kind === 'PAYMENT_REQUEST';
+}
+
+function movementPostedIso(t, fallbackIso) {
+  return toIsoDate(t?.postedAtISO || t?.posted_at_iso || fallbackIso);
+}
+
+function inDateRange(iso, startDate, endDate) {
+  if (!iso) return false;
+  if (startDate && iso < startDate) return false;
+  if (endDate && iso > endDate) return false;
+  return true;
 }
 
 /**
- * @param {Array} treasuryMovements — used to resolve which bank each expense was paid from
- * @returns {{ detail: object[], summaryByCategory: object[] }}
+ * Net cash paid per expense in the report window (EXPENSE and PAYMENT_REQUEST_OUT,
+ * including reversals so a fully reversed payout nets to zero).
  */
-export function expensesPackReport(expenses = [], startDate, endDate, treasuryMovements = []) {
-  const bankByExpenseId = bankLabelByExpenseId(treasuryMovements);
-  const detail = [];
-  for (const e of expenses || []) {
-    const iso = expenseDateIso(e);
-    if (!iso) continue;
-    if (startDate && iso < startDate) continue;
-    if (endDate && iso > endDate) continue;
-    const id = String(e.expenseID ?? e.expense_id ?? '').trim();
-    const expenseType = String(e.expenseType ?? e.expense_type ?? '').trim();
-    detail.push({
-      expenseIdDisplay: displayDocNumber(id) || '—',
-      expenseIdFull: id || '—',
-      dateISO: iso,
-      category: String(e.category || '').trim() || '—',
-      expenseType: expenseType || '—',
-      description: expenseType || String(e.category || '').trim() || '—',
-      amountNgn: Math.round(Number(e.amountNgn ?? e.amount_ngn) || 0),
-      paymentMethod: String(e.paymentMethod ?? e.payment_method ?? '').trim() || '—',
-      bankAccount: (id && bankByExpenseId.get(id)) || '—',
-      reference: String(e.reference || '').trim() || '—',
-    });
+function cashPaidByExpenseId(treasuryMovements = [], startDate, endDate, expenseById) {
+  /** @type {Map<string, { netNgn: number, bankAccount: string, dateISO: string, counterpartyName: string }>} */
+  const byId = new Map();
+  for (const t of treasuryMovements || []) {
+    if (!isExpenseCashMovement(t)) continue;
+    const id = expenseIdFromCashMovement(t);
+    if (!id) continue;
+    const fallback = expenseDateIso(expenseById.get(id));
+    const iso = movementPostedIso(t, fallback);
+    if (!inDateRange(iso, startDate, endDate)) continue;
+    const amt = Math.round(Number(t.amountNgn ?? t.amount_ngn) || 0);
+    const prev = byId.get(id) || { netNgn: 0, bankAccount: '', dateISO: iso, counterpartyName: '' };
+    prev.netNgn += -amt;
+    if (iso > prev.dateISO) prev.dateISO = iso;
+    if (amt < 0 && !prev.bankAccount) prev.bankAccount = bankLabelFromMovement(t);
+    if (!prev.counterpartyName) prev.counterpartyName = String(t.counterpartyName || t.note || '').trim();
+    byId.set(id, prev);
   }
-  detail.sort((a, b) => a.dateISO.localeCompare(b.dateISO) || a.expenseIdFull.localeCompare(b.expenseIdFull));
+  return byId;
+}
 
+function summarizeExpensePack(detail) {
   const totals = new Map();
   const counts = new Map();
   for (const r of detail) {
@@ -75,8 +83,65 @@ export function expensesPackReport(expenses = [], startDate, endDate, treasuryMo
       rowCount: counts.get(category) || 0,
     }))
     .sort((a, b) => b.totalNgn - a.totalNgn || a.category.localeCompare(b.category));
+  return summaryByCategory;
+}
 
-  return { detail, summaryByCategory };
+function packDetailRow(e, id, iso, amountNgn, bankAccount) {
+  const expenseType = String(e?.expenseType ?? e?.expense_type ?? '').trim();
+  return {
+    expenseIdDisplay: displayDocNumber(id) || '—',
+    expenseIdFull: id || '—',
+    dateISO: iso,
+    category: String(e?.category || '').trim() || '—',
+    expenseType: expenseType || '—',
+    description: expenseType || String(e?.category || '').trim() || '—',
+    amountNgn: Math.round(Number(amountNgn) || 0),
+    paymentMethod: String(e?.paymentMethod ?? e?.payment_method ?? '').trim() || '—',
+    bankAccount: bankAccount || '—',
+    reference: String(e?.reference || '').trim() || '—',
+  };
+}
+
+/**
+ * @param {Array} treasuryMovements — cash-basis when non-empty (EXPENSE + PAYMENT_REQUEST)
+ * @returns {{ detail: object[], summaryByCategory: object[], dateBasis: 'paid' | 'expense' }}
+ */
+export function expensesPackReport(expenses = [], startDate, endDate, treasuryMovements = []) {
+  const movements = Array.isArray(treasuryMovements) ? treasuryMovements : [];
+  const expenseById = new Map();
+  for (const e of expenses || []) {
+    const id = String(e.expenseID ?? e.expense_id ?? '').trim();
+    if (id) expenseById.set(id, e);
+  }
+
+  const detail = [];
+  if (movements.length) {
+    const cash = cashPaidByExpenseId(movements, startDate, endDate, expenseById);
+    for (const [id, paid] of cash) {
+      if (paid.netNgn <= 0) continue;
+      const e = expenseById.get(id);
+      detail.push(
+        packDetailRow(
+          e || { category: paid.counterpartyName, expenseType: paid.counterpartyName, paymentMethod: 'Treasury' },
+          id,
+          paid.dateISO,
+          paid.netNgn,
+          paid.bankAccount
+        )
+      );
+    }
+    detail.sort((a, b) => a.dateISO.localeCompare(b.dateISO) || a.expenseIdFull.localeCompare(b.expenseIdFull));
+    return { detail, summaryByCategory: summarizeExpensePack(detail), dateBasis: 'paid' };
+  }
+
+  for (const e of expenses || []) {
+    const iso = expenseDateIso(e);
+    if (!inDateRange(iso, startDate, endDate)) continue;
+    const id = String(e.expenseID ?? e.expense_id ?? '').trim();
+    detail.push(packDetailRow(e, id, iso, e.amountNgn ?? e.amount_ngn, ''));
+  }
+  detail.sort((a, b) => a.dateISO.localeCompare(b.dateISO) || a.expenseIdFull.localeCompare(b.expenseIdFull));
+  return { detail, summaryByCategory: summarizeExpensePack(detail), dateBasis: 'expense' };
 }
 
 /**

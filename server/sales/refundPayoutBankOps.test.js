@@ -68,6 +68,7 @@ describe.skipIf(!mysqlOk)('saveRefundPayoutBank', () => {
       bankAccountName: 'Driver Payee',
       bankName: 'GTB',
       bankAccountNo: '0987654321',
+      branchId: 'BR-KD',
     });
     expect(r.ok).toBe(true);
     const row = db

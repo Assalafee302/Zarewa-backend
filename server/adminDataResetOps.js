@@ -505,7 +505,7 @@ function resetExpensesApForBranch(db, branchId) {
           ...selectCol(
             db,
             `SELECT id FROM gl_journal_entries
-             WHERE source_kind IN ('EXPENSE_PAYMENT_GL', 'EXPENSE_CATEGORY_RECLASS_GL')
+             WHERE source_kind IN ('EXPENSE_PAYMENT_GL', 'EXPENSE_PAYMENT_REVERSAL_GL', 'EXPENSE_CATEGORY_RECLASS_GL')
                AND source_id IN (${ph})`,
             chunk,
             'id'
@@ -518,7 +518,7 @@ function resetExpensesApForBranch(db, branchId) {
             db,
             `SELECT id FROM gl_journal_entries
              WHERE branch_id = ?
-               AND source_kind IN ('EXPENSE_PAYMENT_GL', 'EXPENSE_CATEGORY_RECLASS_GL')`,
+               AND source_kind IN ('EXPENSE_PAYMENT_GL', 'EXPENSE_PAYMENT_REVERSAL_GL', 'EXPENSE_CATEGORY_RECLASS_GL')`,
             [bid],
             'id'
           )

@@ -83,6 +83,8 @@ describe('quotationPriceViolations freeze after floor raise', () => {
 
     const frozen = quotationPriceViolations(db, row);
     expect(frozen.violations.filter((v) => v.code === 'below_floor')).toHaveLength(0);
+    expect(frozen.floorPolicy?.freezeEvent).toBe('quotation_date');
+    expect(frozen.floorPolicy?.freezeWhy).toMatch(/quotation date \(2026-03-15\)/);
   });
 
   it('does not treat a list-price stamp as the floor gate', () => {
@@ -156,6 +158,8 @@ describe('quotationPriceViolations freeze after floor raise', () => {
     const pv = quotationPriceViolations(db, row);
     expect(pv.violations.some((v) => v.code === 'below_floor')).toBe(true);
     expect(pv.violations.find((v) => v.code === 'below_floor')?.floorSource).toBe('line_stamp');
+    expect(pv.violations.find((v) => v.code === 'below_floor')?.floorWhy).toMatch(/line stamp/);
+    expect(pv.floorPolicy?.freezeEvent).toBe('first_payment');
   });
 
   it('clears stale MD review flag when frozen check is clean', () => {

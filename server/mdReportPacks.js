@@ -128,7 +128,7 @@ export function buildExecutiveWeeklyPack(db, opts = {}) {
   const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate);
 
   const expenses = listExpenses(db, branchScope);
-  const expenseRows = expensesPackReport(expenses, startDate, endDate);
+  const expensePack = expensesPackReport(expenses, startDate, endDate, tm);
 
   const pos = purchasesOrderedRows(listPurchaseOrders(db, branchScope), startDate, endDate);
 
@@ -161,7 +161,7 @@ export function buildExecutiveWeeklyPack(db, opts = {}) {
       receiptsTotalNgn: receiptRows.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0),
     },
     finance: {
-      expensePackRowCount: expenseRows.length,
+      expensePackRowCount: expensePack.detail.length,
       refundsInWeekCount: refunds.length,
     },
     procurement: {

@@ -7,6 +7,7 @@ import {
   canSeeRefundsList,
 } from './workspaceAccess.js';
 import { userHasPermission } from './auth.js';
+import { isGlPostingEnabled } from './finance/glPostingGate.js';
 import { scoreWorkspaceSearchMatch } from '../shared/lib/workspaceSearchCore.js';
 
 const SCHEMA_MIGRATION_FTS = 'workspace-search-fts-v1';
@@ -56,7 +57,7 @@ export function allowedWorkspaceSearchFtsKinds(user) {
   ) {
     kinds.push('hr_staff');
   }
-  if (perm('finance.view')) kinds.push('gl_journal');
+  if (perm('finance.view') && isGlPostingEnabled()) kinds.push('gl_journal');
   return kinds;
 }
 
@@ -412,7 +413,7 @@ export function collectWorkspaceSearchIndexDocs(db) {
           row.request_id,
           row.description || row.expense_id,
           '/accounts',
-          { accountsTab: 'payment-requests', highlightPaymentRequestId: row.request_id },
+          { accountsTab: 'requests', highlightPaymentRequestId: row.request_id },
           [row.request_id, row.description, row.expense_id]
         )
       );

@@ -1,4 +1,9 @@
-import { actorName, userMayEditCoilLotMasterData } from './auth.js';
+import { actorId, actorName, userMayEditCoilLotMasterData } from './auth.js';
+import {
+  COIL_KG_EVENT,
+  coilBookReconcileWouldRestoreKg,
+  coilKgRestoreBlockedResult,
+} from './operations/coilKgEvents.js';
 import { STAIN_COMPLETE_NEEDS_YARD_STOCK } from '../shared/lib/stainMaterialUi.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog, assertPeriodOpen, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
@@ -89,6 +94,7 @@ import {
   assertCoilInWorkspaceBranch,
   coilFinishRollTailNetClearedKg,
   insertProductionOffcutPoolIssueTx,
+  insertCoilControlEventTx,
 } from './writeOps.js';
 import { insertStockMovementTx } from './stockMovementOps.js';
 import { validateConversionVarianceReason } from '../shared/productionConversionReasons.js';
@@ -2952,7 +2958,38 @@ function finishRollTailNetClearedKg(db, jobId, coilNo) {
   return Math.max(0, netCleared);
 }
 
-function undoSingleCompletedCoilLineTx(db, row, atISO, jobId, stockBranch) {
+function appendCompletionCoilKgEventTx(db, {
+  branchId,
+  eventKind,
+  coilNo,
+  productId,
+  kgCoilDelta,
+  bookRef,
+  note,
+  dateISO,
+  actor,
+  gaugeLabel,
+  colour,
+}) {
+  const delta = Number(kgCoilDelta) || 0;
+  if (!(Math.abs(delta) > 1e-6)) return null;
+  return insertCoilControlEventTx(db, {
+    branchId,
+    eventKind,
+    coilNo,
+    productId: productId || null,
+    gaugeLabel: gaugeLabel || null,
+    colour: colour || null,
+    kgCoilDelta: delta,
+    bookRef: bookRef || null,
+    note: note || null,
+    dateIso: String(dateISO || '').slice(0, 10) || undefined,
+    actorUserId: actorId(actor),
+    actorDisplay: actorName(actor),
+  });
+}
+
+function undoSingleCompletedCoilLineTx(db, row, atISO, jobId, stockBranch, actor) {
   const coilNo = String(row.coil_no ?? '').trim();
   const opening = safeNumber(row.opening_weight_kg);
   const closing = safeNumber(row.closing_weight_kg);
@@ -3001,6 +3038,19 @@ function undoSingleCompletedCoilLineTx(db, row, atISO, jobId, stockBranch) {
       unitPriceNgn: uc || null,
       valueNgn: cogsNgn,
     });
+    appendCompletionCoilKgEventTx(db, {
+      branchId: branch,
+      eventKind: COIL_KG_EVENT.COMPLETION_RESTORE,
+      coilNo,
+      productId,
+      kgCoilDelta: consumed,
+      bookRef: jobId,
+      note: `Completion coil correction — restore ${consumed.toFixed(2)} kg`,
+      dateISO: atISO,
+      actor,
+      gaugeLabel: coil.gauge_label,
+      colour: coil.colour,
+    });
   }
   if (tailClearedKg > 1e-6) {
     const tailCogs = uc > 0 ? Math.round(tailClearedKg * uc) : null;
@@ -3016,10 +3066,23 @@ function undoSingleCompletedCoilLineTx(db, row, atISO, jobId, stockBranch) {
       unitPriceNgn: uc || null,
       valueNgn: tailCogs,
     });
+    appendCompletionCoilKgEventTx(db, {
+      branchId: branch,
+      eventKind: COIL_KG_EVENT.COMPLETION_UNDO_FINISH_ROLL,
+      coilNo,
+      productId,
+      kgCoilDelta: tailClearedKg,
+      bookRef: jobId,
+      note: `Completion coil correction — restore roll finished tail ${tailClearedKg.toFixed(2)} kg`,
+      dateISO: atISO,
+      actor,
+      gaugeLabel: coil.gauge_label,
+      colour: coil.colour,
+    });
   }
 }
 
-function applySingleCompletedCoilLineTx(db, jobId, line, atISO, stockBranch) {
+function applySingleCompletedCoilLineTx(db, jobId, line, atISO, stockBranch, actor) {
   const { coilNo, openingWeightKg, consumedWeightKg, metersProduced, productID, finishCoil } = line;
   const coil = coilRow(db, coilNo);
   if (!coil) throw new Error(`Coil ${coilNo} not found.`);
@@ -3052,6 +3115,19 @@ function applySingleCompletedCoilLineTx(db, jobId, line, atISO, stockBranch) {
     unitPriceNgn: uc || null,
     valueNgn: cogsNgn,
   });
+  appendCompletionCoilKgEventTx(db, {
+    branchId: branch,
+    eventKind: COIL_KG_EVENT.COMPLETION_CONSUME,
+    coilNo,
+    productId: productID,
+    kgCoilDelta: -consumedWeightKg,
+    bookRef: jobId,
+    note: `Completion coil correction — consume ${consumedWeightKg.toFixed(2)} kg`,
+    dateISO: atISO,
+    actor,
+    gaugeLabel: coil.gauge_label,
+    colour: coil.colour,
+  });
 
   const closingWeightKg = clampNonNegative(
     safeNumber(line.closingWeightKg, Math.max(0, openingWeightKg - consumedWeightKg))
@@ -3080,6 +3156,19 @@ function applySingleCompletedCoilLineTx(db, jobId, line, atISO, stockBranch) {
       dateISO: atISO,
       unitPriceNgn: uc || null,
       valueNgn: tailCogs,
+    });
+    appendCompletionCoilKgEventTx(db, {
+      branchId: branch,
+      eventKind: COIL_KG_EVENT.COMPLETION_FINISH_ROLL,
+      coilNo,
+      productId: productID,
+      kgCoilDelta: -tailBookedKg,
+      bookRef: jobId,
+      note: `Completion coil correction — roll finished tail ${tailBookedKg.toFixed(2)} kg`,
+      dateISO: atISO,
+      actor,
+      gaugeLabel: coil.gauge_label,
+      colour: coil.colour,
     });
   }
 }
@@ -3112,6 +3201,8 @@ export function recalculateProductionJobCoilStock(db, jobID, opts = {}) {
   for (const coilNo of coilNos) {
     const bookReconcile = reconcileCoilBookFromProductionHolders(db, coilNo, {
       workspaceBranchId: opts.workspaceBranchId,
+      actor: opts.actor,
+      applyOnHandChange: false,
     });
     if (!bookReconcile.ok) {
       errors.push({ coilNo, step: 'book', error: bookReconcile.error });
@@ -3367,7 +3458,7 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     const stockBranch = jobBranchId(job);
     /** Outer transaction from handleWriteWithEditApproval — avoid nested db.transaction for MySQL SAVEPOINTs. */
     for (const r of existing) {
-      undoSingleCompletedCoilLineTx(db, r, atISO, jobId, stockBranch);
+      undoSingleCompletedCoilLineTx(db, r, atISO, jobId, stockBranch, opts.actor);
     }
     if (productId && Math.abs(deltaM) > 1e-6) {
       const prodRow = getProductRowForWorkspace(db, productId, stockBranch);
@@ -3471,7 +3562,8 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
           finishCoil: Boolean(p.finishCoil),
         },
         atISO,
-        stockBranch
+        stockBranch,
+        opts.actor
       );
     }
 
@@ -4193,9 +4285,18 @@ export function syncProductionJobCoilConsumedWeightsForCoil(db, coilNo) {
 }
 
 /**
- * Rebuild coil on-hand (kg used / remaining) from GRN received, summed job consumption
- * (live holders, or leftover COIL_CONSUMPTION if a job row was deleted), coil splits,
- * and non-production scrap/return/finish-roll movements.
+ * Rebuild coil on-hand from GRN received, job consumption, splits, and scrap/return/finish-roll.
+ * Decreases leftover consumption. Increases (putting kg back) are blocked unless
+ * `allowOnHandRestore`. After Save correction, callers pass `applyOnHandChange: false`
+ * so remaining is not rewritten a second time.
+ *
+ * @param {{
+ *   workspaceBranchId?: string;
+ *   actor?: object;
+ *   dateISO?: string;
+ *   applyOnHandChange?: boolean;
+ *   allowOnHandRestore?: boolean;
+ * }} [opts]
  */
 export function reconcileCoilBookFromProductionHolders(db, coilNo, opts = {}) {
   const cn = String(coilNo ?? '').trim();
@@ -4247,12 +4348,63 @@ export function reconcileCoilBookFromProductionHolders(db, coilNo, opts = {}) {
     };
   }
 
-  // This restates a coil's on-hand kg from a background recalculation, not an explicit
-  // operator correction — it must not silently restate a closed period's inventory, and the
-  // movement ledger needs a row explaining the change instead of the balance just moving with
-  // no trail. Type/detail match postCoilScrap/returnCoilMaterialToStock so this reconciliation
-  // line is excluded from future ancillary-kg calculations (see the "Production book reconcile"
-  // check in coilAncillaryKgNetDelta) rather than feeding back into itself.
+  const applyOnHandChange = opts.applyOnHandChange !== false;
+  if (!applyOnHandChange) {
+    updateCoilDerivedStateTx(db, cn);
+    const bookRecalc = recalculateCoilLotBook(db, cn, {
+      workspaceBranchId: opts.workspaceBranchId,
+      skipInnerTransaction: true,
+    });
+    if (!bookRecalc.ok) return bookRecalc;
+    return {
+      ok: true,
+      coilNo: cn,
+      unchanged: true,
+      onHandChangeSkipped: true,
+      restoreBlocked: coilBookReconcileWouldRestoreKg(delta),
+      code: coilBookReconcileWouldRestoreKg(delta) ? 'COIL_KG_RESTORE_BLOCKED' : undefined,
+      beforeOnHandKg: beforeOnHand,
+      afterOnHandKg: beforeOnHand,
+      suggestedOnHandKg: expectedOnHand,
+      onHandDeltaKg: delta,
+      bookUsedKgBefore: Math.max(0, received - beforeOnHand),
+      bookUsedKgAfter: Math.max(0, received - beforeOnHand),
+      jobsConsumedKgSum: jobsConsumedKg,
+      splitOutKg,
+      ancillaryNetKg,
+      syncResult,
+      bookRecalc,
+    };
+  }
+
+  if (coilBookReconcileWouldRestoreKg(delta) && opts.allowOnHandRestore !== true) {
+    updateCoilDerivedStateTx(db, cn);
+    const bookRecalc = recalculateCoilLotBook(db, cn, {
+      workspaceBranchId: opts.workspaceBranchId,
+      skipInnerTransaction: true,
+    });
+    if (!bookRecalc.ok) return bookRecalc;
+    return {
+      ...coilKgRestoreBlockedResult({
+        coilNo: cn,
+        beforeOnHandKg: beforeOnHand,
+        suggestedOnHandKg: expectedOnHand,
+        onHandDeltaKg: delta,
+        jobsConsumedKgSum: jobsConsumedKg,
+        splitOutKg,
+        ancillaryNetKg,
+      }),
+      bookUsedKgBefore: Math.max(0, received - beforeOnHand),
+      bookUsedKgAfter: Math.max(0, received - beforeOnHand),
+      syncResult,
+      bookRecalc,
+    };
+  }
+
+  // Decreases only: leftover job consumption can come off the coil. Putting kg back
+  // (restore) is blocked unless allowOnHandRestore — that class of rewrite is how
+  // leftover corrections silently returned steel to the yard. Movement type/detail
+  // match postCoilScrap so this line is excluded from future ancillary-kg sums.
   const reconcileDateISO = String(opts.dateISO || new Date().toISOString().slice(0, 10)).trim();
   try {
     assertPeriodOpen(db, reconcileDateISO, 'Coil book reconciliation date');
@@ -4401,6 +4553,10 @@ export function listCoilProductionBookReconciliationIssues(db, opts = {}) {
 
     const received = clampNonNegative(coil.weight_kg ?? coil.qty_received);
     const onHand = clampNonNegative(coil.qty_remaining ?? coil.current_weight_kg);
+    const suggestedOnHandKg = clampNonNegative(
+      received - summary.jobsConsumedKgSum - summary.splitOutKg + summary.ancillaryNetKg
+    );
+    const wouldRestoreKg = coilBookReconcileWouldRestoreKg(suggestedOnHandKg - onHand, minGapKg);
     issues.push({
       coilNo: cn,
       branchId: coil.branch_id ?? null,
@@ -4408,6 +4564,8 @@ export function listCoilProductionBookReconciliationIssues(db, opts = {}) {
       gaugeLabel: coil.gauge_label ?? '',
       receivedKg: received,
       onHandKg: onHand,
+      suggestedOnHandKg,
+      wouldRestoreKg,
       bookUsedKg: summary.bookUsedKg,
       jobsConsumedKgSum: summary.jobsConsumedKgSum,
       reconciliationGapKg: gap,

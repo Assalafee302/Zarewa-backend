@@ -66,6 +66,28 @@ function paidPaymentRequestCount(db, expenseId) {
   return Number(row?.n) || 0;
 }
 
+/** Catch-up is for import/direct memos — never a payment-request expense. */
+function expenseOnPaymentRequestWorkflow(db, expenseId) {
+  if (!tableExists(db, 'payment_requests')) return false;
+  const row = db
+    .prepare(`SELECT 1 AS ok FROM payment_requests WHERE expense_id = ? LIMIT 1`)
+    .get(expenseId);
+  return Boolean(row);
+}
+
+function paymentRequestWorkflowExclusionSql(db) {
+  if (!tableExists(db, 'payment_requests')) return '';
+  return ` AND NOT EXISTS (SELECT 1 FROM payment_requests pr WHERE pr.expense_id = e.expense_id)`;
+}
+
+function refuseCatchUpOnPaymentRequest() {
+  return {
+    ok: false,
+    error:
+      'This expense is on a payment request. Pay or reverse it from Accounts (treasury payout), not import catch-up.',
+  };
+}
+
 /**
  * True when the expense has no cash outflow and no paid payment request — safe to void.
  * @param {import('better-sqlite3').Database} db
@@ -83,6 +105,7 @@ export function isExpenseUnpostedForVoid(db, expenseId) {
 
 /**
  * Imported / direct expenses that never reduced till/bank, or reduced till but skipped GL cash.
+ * Payment-request expenses are excluded — those pay via PAYMENT_REQUEST_OUT, not catch-up.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} [branchScope]
  * @param {{ limit?: number, offset?: number, category?: string }} [opts]
@@ -111,6 +134,7 @@ export function listExpensesMissingBankPosting(db, branchScope = 'ALL', opts = {
        ${glJoin}
        WHERE 1=1${b.sql.replace(/\bbranch_id\b/g, 'e.branch_id')}${catSql}
          AND (tm.id IS NULL OR gl.id IS NULL)
+         ${paymentRequestWorkflowExclusionSql(db)}
        ORDER BY e.date DESC, e.expense_id DESC${lo.sql}`;
 
   const rows = db.prepare(sql).all(...b.args, ...catArgs, ...lo.args);
@@ -152,7 +176,8 @@ export function summarizeBranchExpenseCashPosting(db, branchId, opts = {}) {
         AND tm.amount_ngn < 0
         AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
        WHERE TRIM(COALESCE(e.branch_id, '')) = ?${catSql}
-         AND tm.id IS NULL`
+         AND tm.id IS NULL
+         ${paymentRequestWorkflowExclusionSql(db)}`
     )
     .get(bid, ...catArgs);
 
@@ -308,6 +333,7 @@ export function syncImportedExpensesToCashier(db, actor, payload = {}) {
         AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
        WHERE TRIM(COALESCE(e.branch_id, '')) = ?${catSql}
          AND tm.id IS NULL
+         ${paymentRequestWorkflowExclusionSql(db)}
        ORDER BY e.date ASC, e.expense_id ASC
        LIMIT ${MAX_BULK}`
     )
@@ -486,6 +512,7 @@ export function attachTreasuryToImportedExpense(db, expenseId, payload = {}, act
   if (!eid) return { ok: false, error: 'Expense ID is required.' };
   const exp = db.prepare(`SELECT * FROM expenses WHERE expense_id = ?`).get(eid);
   if (!exp) return { ok: false, error: 'Expense not found.' };
+  if (expenseOnPaymentRequestWorkflow(db, eid)) return refuseCatchUpOnPaymentRequest();
 
   const branchGate = assertEntityBranchForWorkspaceWrite(
     actor,

@@ -177,3 +177,15 @@ describe('publicUserFromRow store floor', () => {
     expect(user.permissions).toContain('quotations.manage');
   });
 });
+
+describe('cashier Phase B3 execute-only bundle', () => {
+  it('can pay and post receipts but cannot approve, reverse, or view audit', () => {
+    const perms = permissionsForRole('cashier');
+    expect(perms).toContain('finance.pay');
+    expect(perms).toContain('cashier.desk.view');
+    expect(perms).toContain('receipts.post');
+    expect(perms).not.toContain('finance.approve');
+    expect(perms).not.toContain('finance.reverse');
+    expect(perms).not.toContain('audit.view');
+  });
+});

@@ -10,7 +10,6 @@ import { canReadPriceListItems } from './pricingResolve.js';
 import {
   listPriceListItemsAsOf,
   floorPricePerMeterForGaugeDesignAsOf,
-  quotationPricingLockAsAtIso,
 } from './pricingAsOf.js';
 
 export {
@@ -35,6 +34,11 @@ import { listMaterialPricingRowsAsOf } from './pricingAsOf.js';
 import { getPricingPolicyBundle } from './pricingPolicyOps.js';
 import { actorName, normalizeRoleKey, userHasPermission } from './auth.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
+import {
+  describeQuoteLineFloor,
+  pickQuoteLineFloor,
+} from '../shared/lib/quoteFloorPolicy.js';
+import { resolveQuoteFloorFreeze } from './sales/quoteFloorResolve.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { createHrNotification } from './hrNotifications.js';
 import { upsertWorkItemBySource, workRegistryTablesReady } from './workItems.js';
@@ -200,6 +204,21 @@ function quotationHasPricingFloorData(db) {
 }
 
 /**
+ * Attach floor-gate fields the sales desk prints on a quotation payload.
+ * @param {object | null | undefined} quotation
+ * @param {{ violations?: object[]; hasFloorRows?: boolean; floorPolicy?: object | null }} pv
+ */
+export function withQuotationPricingFields(quotation, pv) {
+  if (!quotation) return quotation;
+  return {
+    ...quotation,
+    pricingViolations: pv?.violations ?? [],
+    pricingHasFloorRows: Boolean(pv?.hasFloorRows),
+    pricingFloor: pv?.floorPolicy ?? null,
+  };
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @param {{
  *   id?: string;
@@ -216,13 +235,22 @@ function quotationHasPricingFloorData(db) {
  */
 export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const violations = [];
-  if (!quoteRow?.id) return { violations, hasFloorRows: false };
-  if (!quotationHasPricingFloorData(db)) return { violations, hasFloorRows: false };
+  const freeze = resolveQuoteFloorFreeze(db, quoteRow, opts);
+  const floorPolicy = quoteRow?.id
+    ? {
+        freezeEvent: freeze.freezeEvent,
+        freezeDateIso: freeze.freezeDateIso,
+        pricingAsAtIso: freeze.asAtIso || null,
+        freezeWhy: freeze.why,
+      }
+    : null;
+  if (!quoteRow?.id) return { violations, hasFloorRows: false, floorPolicy };
+  if (!quotationHasPricingFloorData(db)) return { violations, hasFloorRows: false, floorPolicy };
   let parsed;
   try {
     parsed = JSON.parse(String(quoteRow.lines_json || '{}'));
   } catch {
-    return { violations, hasFloorRows: true };
+    return { violations, hasFloorRows: true, floorPolicy };
   }
   const headerGauge = String(parsed?.materialGauge ?? '').trim();
   const headerColour = String(parsed?.materialColor ?? '').trim();
@@ -234,20 +262,7 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const products = Array.isArray(parsed?.products) ? parsed.products : [];
   const services = Array.isArray(parsed?.services) ? parsed.services : [];
   const branchId = quoteRow.branch_id != null ? String(quoteRow.branch_id).trim() || null : null;
-  const quoteDateIso = String(quoteRow?.date_iso ?? '')
-    .trim()
-    .slice(0, 10);
-  const hasQuoteDate = /^\d{4}-\d{2}-\d{2}$/.test(quoteDateIso);
-  const lockIso = quotationPricingLockAsAtIso(db, quoteRow);
-  let pricingAsAtIso;
-  if (opts.pricingMode === 'current') {
-    pricingAsAtIso = undefined;
-  } else if (opts.pricingMode === 'quotation_date') {
-    pricingAsAtIso = hasQuoteDate ? quoteDateIso : undefined;
-  } else {
-    // payment_lock (default): paid → payment date; unpaid → quotation date (not live).
-    pricingAsAtIso = lockIso || (hasQuoteDate ? quoteDateIso : undefined);
-  }
+  const pricingAsAtIso = freeze.asAtIso;
   const headerCtx = {
     materialTypeId: headerMaterialTypeId,
     stainSourceMaterialTypeId,
@@ -291,41 +306,17 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
 
     const lineHeaderCtx = { ...headerCtx, productName: line?.name };
     const resolvedFloor = floorNgnForServiceLine(db, line, branchId, lineHeaderCtx);
-    const stampedRaw = Math.round(Number(line?.floorPricePerMeter ?? line?.floor_price_per_meter) || 0);
-    const listRec = Math.round(
-      Number(line?.recommendedPricePerMeter ?? line?.recommended_price_per_meter) || 0
-    );
-    // Older quotes sometimes stamped list (floor+commission) into floorPricePerMeter.
-    // If stamp equals the list badge, it is not a workbook minimum — ignore it for the gate.
-    let stampedFloor = stampedRaw;
-    if (isProductMeterSheet && stampedFloor > 0 && listRec > 0 && stampedFloor === listRec) {
-      stampedFloor = 0;
-    }
-    const resolved =
-      resolvedFloor != null && resolvedFloor > 0 ? Math.round(resolvedFloor) : null;
-    let floor = null;
-    let floorSource = 'workbook';
-    if (isProductMeterSheet) {
-      // Roofing/flat sheet: gate on workbook minimum only. Stamp may freeze downward.
-      if (resolved != null && stampedFloor > 0) {
-        floor = Math.min(stampedFloor, resolved);
-        floorSource = floor === stampedFloor ? 'line_stamp' : 'workbook';
-      } else if (resolved != null) {
-        floor = resolved;
-      } else {
-        // No resolvable workbook floor → do not invent a min from a list stamp.
-        return;
-      }
-    } else if (resolved != null && stampedFloor > 0) {
-      floor = Math.min(stampedFloor, resolved);
-      floorSource = floor === stampedFloor ? 'line_stamp' : 'workbook';
-    } else if (stampedFloor > 0) {
-      floor = stampedFloor;
-      floorSource = 'line_stamp';
-    } else if (resolved != null) {
-      floor = resolved;
-    }
+    const pick = pickQuoteLineFloor({
+      workbookFloorNgn: resolvedFloor,
+      stampedFloorNgn: line?.floorPricePerMeter ?? line?.floor_price_per_meter,
+      listBadgeNgn: line?.recommendedPricePerMeter ?? line?.recommended_price_per_meter,
+      meterSheet: isProductMeterSheet,
+    });
+    const stampedFloor = pick.stampedFloorNgnPerM;
+    const floor = pick.floorNgnPerM;
+    const floorSource = pick.source;
     if (floor == null || floor <= 0) return;
+    const floorWhy = describeQuoteLineFloor(pick, freeze);
     const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, lineHeaderCtx);
     const meters = Number(line?.meters ?? line?.qtyMeters ?? line?.qty ?? 0) || 0;
     const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
@@ -340,7 +331,7 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
     // Meter-sheet MD gate is workbook floor only (not trading band / list).
     const minAllowed = isProductMeterSheet
       ? floor
-      : stampedFloor > 0 && resolved != null
+      : stampedFloor > 0 && pick.workbookFloorNgnPerM != null
         ? Math.min(stampedFloor, nums.minAllowed ?? floor)
         : stampedFloor > 0
           ? stampedFloor
@@ -360,6 +351,11 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
         bandNgn: nums.band,
         minAllowedPerMeter: minAllowed,
         floorSource,
+        ignoredListStamp: pick.ignoredListStamp,
+        freezeEvent: freeze.freezeEvent,
+        freezeDateIso: freeze.freezeDateIso,
+        pricingAsAtIso: freeze.asAtIso || null,
+        floorWhy,
       });
       return;
     }
@@ -377,6 +373,10 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
         recommendedPerMeter: nums.recommended ?? floor,
         bandNgn: nums.band,
         minAllowedPerMeter: minAllowed,
+        freezeEvent: freeze.freezeEvent,
+        freezeDateIso: freeze.freezeDateIso,
+        pricingAsAtIso: freeze.asAtIso || null,
+        floorWhy,
       });
     }
   });
@@ -401,7 +401,7 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
       );
     }
   }
-  return { violations, hasFloorRows: true };
+  return { violations, hasFloorRows: true, floorPolicy };
 }
 
 /**

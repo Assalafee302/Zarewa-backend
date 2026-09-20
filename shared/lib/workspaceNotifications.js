@@ -13,6 +13,7 @@ import {
   summarizeCriticalIdleForPromotion,
 } from './storeIdle.js';
 import { approvalAttentionPathForRole, approvalDeskHomeForRole } from './approvalDeskPaths.js';
+import { ACCOUNTS_TAB_PAYOUT, ACCOUNTS_TAB_REQUESTS } from './accountsExpenseTabs.js';
 
 /** @typedef {'critical' | 'warning' | 'info'} NotificationSeverity */
 
@@ -231,7 +232,7 @@ export function buildWorkspaceNotifications({
         severity: 'warning',
         priority: 75,
         path: '/accounts',
-        state: { accountsTab: 'requests' },
+        state: { accountsTab: ACCOUNTS_TAB_REQUESTS },
       });
     }
   }
@@ -245,7 +246,7 @@ export function buildWorkspaceNotifications({
       severity: 'warning',
       priority: 76,
       path: '/accounts',
-      state: { accountsTab: 'desk' },
+      state: { accountsTab: ACCOUNTS_TAB_PAYOUT },
     });
   }
 
@@ -260,7 +261,7 @@ export function buildWorkspaceNotifications({
       severity: 'warning',
       priority: 77,
       path: '/accounts',
-      state: { accountsTab: 'desk' },
+      state: { accountsTab: ACCOUNTS_TAB_PAYOUT },
     });
   }
 
@@ -276,7 +277,7 @@ export function buildWorkspaceNotifications({
       severity: 'warning',
       priority: 74,
       path: '/accounts',
-      state: { accountsTab: 'treasury' },
+      state: { accountsTab: ACCOUNTS_TAB_PAYOUT },
     });
   }
 

@@ -333,4 +333,47 @@ describe.skipIf(!mysqlOk)('expense treasury catch-up (imported refunds)', () => 
       cashBefore - 25_000
     );
   });
+
+  it('does not treat a payment-request expense as unposted import catch-up', () => {
+    const expenseID = 'EXP-PR-CATCHUP-GUARD';
+    const requestID = 'PREQ-CATCHUP-GUARD';
+    db.prepare(
+      `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
+       VALUES (?, 'Payment request (pending payout)', 22000, '2026-07-20', 'Office expenses', 'Pending', 'PR-CATCHUP', ?)`
+    ).run(expenseID, DEFAULT_BRANCH_ID);
+    db.prepare(
+      `INSERT INTO payment_requests (
+        request_id, expense_id, amount_requested_ngn, request_date, approval_status, description, paid_amount_ngn
+      ) VALUES (?, ?, 22000, '2026-07-20', 'Approved', 'Do not catch-up', 22000)`
+    ).run(requestID, expenseID);
+    db.prepare(
+      `INSERT INTO treasury_movements (
+        id, posted_at_iso, type, treasury_account_id, amount_ngn, reference,
+        counterparty_kind, counterparty_id, source_kind, source_id, note, created_by
+      ) VALUES ('TM-PR-CATCHUP-1', '2026-07-20T12:00:00.000Z', 'PAYMENT_REQUEST_OUT', ?, -22000, ?,
+        'EXPENSE', ?, 'PAYMENT_REQUEST', ?, 'PR payout', 'test')`
+    ).run(treasuryId, requestID, expenseID, requestID);
+
+    const missing = listExpensesMissingBankPosting(db, DEFAULT_BRANCH_ID);
+    expect(missing.some((r) => r.expenseID === expenseID)).toBe(false);
+
+    const before = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasuryId).balance);
+    const attached = attachTreasuryToImportedExpense(
+      db,
+      expenseID,
+      { treasuryAccountId: treasuryId, workspaceBranchId: DEFAULT_BRANCH_ID },
+      ACTOR
+    );
+    expect(attached.ok).toBe(false);
+    expect(String(attached.error || '')).toMatch(/payment request/i);
+    const after = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasuryId).balance);
+    expect(after).toBe(before);
+
+    const expenseOuts = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id = ?`
+      )
+      .get(expenseID);
+    expect(Number(expenseOuts?.n) || 0).toBe(0);
+  });
 });

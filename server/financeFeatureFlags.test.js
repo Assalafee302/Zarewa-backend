@@ -16,6 +16,7 @@ describe('financeFeatureFlags', () => {
       'STRICT_CASHIER_RBAC',
       'ALLOW_ACCOUNTANT_RECEIPT_CONFIRMATION',
       'ENFORCE_DUAL_CONTROL_PAYMENTS',
+      'ZAREWA_GL_POSTING_ENABLED',
       'ACCOUNTING_POLICY_V1_LABELS',
       'ACCOUNTING_POLICY_V1_DIAGNOSTICS',
       'ACCOUNTING_POLICY_V1_RECEIPT_GL',
@@ -76,6 +77,15 @@ describe('financeFeatureFlags', () => {
     expect(f.accountingPolicyV1ProductionRelease).toBe(false);
     expect(f.accountingPolicyV1LegacyBridge).toBe(false);
     expect(f.reclassPreProductionReceipts).toBe(false);
+    expect(f.glPostingEnabled).toBe(true);
+  });
+
+  it('honours ZAREWA_GL_POSTING_ENABLED=0', () => {
+    process.env.ZAREWA_GL_POSTING_ENABLED = '0';
+    expect(readFinanceFeatureFlags().glPostingEnabled).toBe(false);
+    expect(accountingPolicyV1HealthCapabilities(readFinanceFeatureFlags()).glPostingEnabled).toBe('off');
+    expect(accountingPolicyV1HealthCapabilities(readFinanceFeatureFlags()).localAccounting.localGl).toBe(false);
+    expect(accountingPolicyV1HealthCapabilities(readFinanceFeatureFlags()).localAccounting.surfaces.creditors).toBe(true);
   });
 
   it('accountingPolicyV1HealthCapabilities reflects env', () => {

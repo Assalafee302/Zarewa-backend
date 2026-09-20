@@ -90,6 +90,83 @@ export function assertCashierMayNotApproveRefund(actor, hasPermission) {
 }
 
 /**
+ * Cashiers execute approved payment requests — they must not review/approve them.
+ * @param {{ roleKey?: string } | null | undefined} actor
+ * @param {(perm: string) => boolean} hasPermission
+ */
+export function assertCashierMayNotApprovePaymentRequest(actor, hasPermission) {
+  if (isRefundAdminTrialActor(actor, hasPermission)) {
+    return { ok: true, adminTrial: true };
+  }
+  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
+  if (rk === 'cashier') {
+    return {
+      ok: false,
+      error:
+        'Cashiers may only pay approved payment requests. Escalate approval to a manager, Head of Accounts, or MD.',
+    };
+  }
+  return { ok: true, adminTrial: false };
+}
+
+/**
+ * Block requester from approving (or rejecting) their own payment request (admin trial exempt).
+ */
+export function assertPaymentRequestApproverNotRequester(row, actor, hasPermission) {
+  if (isRefundAdminTrialActor(actor, hasPermission)) {
+    return { ok: true, adminTrial: true, bypass: 'admin_trial' };
+  }
+  const requesterId = row?.requested_by_user_id != null ? String(row.requested_by_user_id) : '';
+  const approverId = actor?.id != null ? String(actor.id) : '';
+  if (requesterId && approverId && requesterId === approverId) {
+    return {
+      ok: false,
+      error: 'You cannot approve a payment request you submitted. Another approver must review it.',
+    };
+  }
+  const reqName = normalizeRefundActorName(row?.requested_by);
+  const apprName = normalizeRefundActorName(actor?.displayName || actor?.username);
+  if (reqName && apprName && reqName === apprName) {
+    return {
+      ok: false,
+      error: 'You cannot approve a payment request you submitted. Another approver must review it.',
+    };
+  }
+  return { ok: true, adminTrial: false };
+}
+
+/**
+ * When ENFORCE_DUAL_CONTROL_PAYMENTS=1, block the approver from paying the same request (admin trial exempt).
+ */
+export function assertPaymentRequestPayerNotApprover(row, actor, hasPermission) {
+  if (isRefundAdminTrialActor(actor, hasPermission)) {
+    return { ok: true, adminTrial: true, bypass: 'admin_trial' };
+  }
+  if (!financeStrictBlockWouldApply('same_user_approve_pay')) {
+    return { ok: true, adminTrial: false };
+  }
+  const payerId = actor?.id != null ? String(actor.id) : '';
+  const approverId = row?.approved_by_user_id != null ? String(row.approved_by_user_id) : '';
+  if (approverId && payerId && approverId === payerId) {
+    return {
+      ok: false,
+      error:
+        'You cannot pay a payment request you approved. Another finance user or cashier must execute the payout.',
+    };
+  }
+  const payerName = normalizeRefundActorName(actor?.displayName || actor?.username);
+  const approverName = normalizeRefundActorName(row?.approved_by);
+  if (payerName && approverName && payerName === approverName) {
+    return {
+      ok: false,
+      error:
+        'You cannot pay a payment request you approved. Another finance user or cashier must execute the payout.',
+    };
+  }
+  return { ok: true, adminTrial: false };
+}
+
+/**
  * Block requester from approving their own refund (admin trial exempt).
  * @param {Record<string, unknown>} row
  * @param {{ id?: string; roleKey?: string; displayName?: string; username?: string } | null | undefined} actor

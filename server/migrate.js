@@ -600,6 +600,18 @@ function runMigrationsUnlocked(db) {
   if (!payReq.has('payee_bank_name')) {
     db.exec(`ALTER TABLE payment_requests ADD COLUMN payee_bank_name TEXT`);
   }
+  if (!payReq.has('requested_by')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN requested_by TEXT`);
+  }
+  if (!payReq.has('requested_by_user_id')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN requested_by_user_id TEXT`);
+  }
+  if (!payReq.has('approved_by_user_id')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN approved_by_user_id TEXT`);
+  }
+  if (!payReq.has('paid_by_user_id')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN paid_by_user_id TEXT`);
+  }
 
   const expenses = tableCols('expenses');
   if (expenses.size && !expenses.has('category_lane')) {

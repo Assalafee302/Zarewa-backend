@@ -62,7 +62,7 @@ describe('coilDamageRecordCore', () => {
     expect(String(r.error)).toMatch(/unreserved/i);
   });
 
-  it('uses on-hand wording when reserved kg may be stained', () => {
+  it('uses stock wording when reserved kg may be stained', () => {
     const r = validateCoilDamagePayload(
       {
         coilNo: 'C-1',
@@ -74,7 +74,7 @@ describe('coilDamageRecordCore', () => {
       { maxRemoveKg: 4500, allowReservedKg: true }
     );
     expect(r.ok).toBe(false);
-    expect(String(r.error)).toMatch(/on-hand/i);
+    expect(String(r.error)).toMatch(/stock on this coil/i);
   });
 
   it('coil_stain max remove is on-hand including reserved kg', () => {

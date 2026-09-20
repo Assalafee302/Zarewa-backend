@@ -116,7 +116,7 @@ describe('createCoilDamageMaterialIncident', () => {
     expect(lineCount.n).toBe(2);
   });
 
-  it('rejects coil_stain above on-hand kg', () => {
+  it('rejects coil_stain above stock kg', () => {
     db.prepare(
       `UPDATE coil_lots SET qty_remaining = 4000, current_weight_kg = 4000, qty_reserved = 3500 WHERE coil_no = 'C-DMG-1'`
     ).run();
@@ -128,13 +128,13 @@ describe('createCoilDamageMaterialIncident', () => {
         afterKg: 0,
         meters: 1800,
         incidentType: 'coil_stain',
-        note: 'Attempt to remove more than on-hand as stain',
+        note: 'Attempt to remove more than stock as stain',
         submit: false,
       },
       { workspaceBranchId: 'BR-001', actor: { userId: 'u1' } }
     );
     expect(r.ok).toBe(false);
-    expect(String(r.error)).toMatch(/on-hand/i);
+    expect(String(r.error)).toMatch(/stock on this coil/i);
   });
 
   it('rejects production_error above unreserved balance', () => {

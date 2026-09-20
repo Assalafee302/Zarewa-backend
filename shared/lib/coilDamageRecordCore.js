@@ -156,7 +156,7 @@ export function validateCoilDamagePayload(payload = {}, opts = {}) {
   const maxRemove = Number(opts.maxRemoveKg);
   if (Number.isFinite(maxRemove) && kgDeducted > maxRemove + 1e-6) {
     const capLabel = opts.allowReservedKg
-      ? 'on-hand on this coil'
+      ? 'stock on this coil'
       : 'unreserved balance on this coil';
     return {
       ok: false,

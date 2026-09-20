@@ -2,6 +2,8 @@
  * One till truth: Cash / POS / Bank from live `treasury_accounts.balance`
  * (the same column payouts debit). Do not reconstruct from truncated
  * bootstrap movements — shell mode omits the movement register.
+ *
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/treasuryTillLane.js
  */
 export const TILL_LANE = {
   CASH: 'cash',

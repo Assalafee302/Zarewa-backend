@@ -4,6 +4,8 @@
  */
 
 import { hrTableExists } from './hrTableChecks.js';
+import { allowRateLimit, clientIp } from './rateLimit.js';
+import { newId, nowIso, parseJsonValue } from './hrCommon.js';
 
 export function hrRecruitingTablesReady(db) {
   try {
@@ -23,15 +25,6 @@ export const DEFAULT_INTERVIEW_CRITERIA = [
   { key: 'culture', label: 'Culture / values' },
   { key: 'overall', label: 'Overall recommendation' },
 ];
-
-function safeJsonParse(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  try {
-    return JSON.parse(String(raw));
-  } catch {
-    return fallback;
-  }
-}
 
 export function listHrJobPostings(db, opts = {}) {
   if (!hrRecruitingTablesReady(db)) return [];
@@ -145,7 +138,7 @@ export function listHrApplicants(db, jobId) {
     .all(...args)
     .map((r) => ({
       ...r,
-      interviewScores: safeJsonParse(r.interviewScoresJson, null),
+      interviewScores: parseJsonValue(r.interviewScoresJson, null),
       interviewScoresJson: undefined,
     }));
 }
@@ -305,9 +298,6 @@ export function generateOfferLetter(db, applicantId, actor = {}, body = {}) {
   db.prepare(`UPDATE hr_job_applicants SET offer_letter_text = ?, updated_at_iso = ? WHERE id = ?`).run(content, nowIso(), id);
   return { ok: true, offerLetterText: content };
 }
-
-import { allowRateLimit, clientIp } from './rateLimit.js';
-import { newId, nowIso } from './hrCommon.js';
 
 const careersApplyBuckets = new Map();
 const careersListBuckets = new Map();

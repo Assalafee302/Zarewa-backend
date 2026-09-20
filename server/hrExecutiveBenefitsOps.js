@@ -13,7 +13,7 @@ import { appendHrAuditEvent } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { createHrNotification, notifyScholarshipPaymentApproved, notifyScholarshipPaymentPaid } from './hrNotifications.js';
 import { hrUserHas } from './hrPermissions.js';
-import { newId, nowIso } from './hrCommon.js';
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 import {
   isDomesticStaff,
   isScholarshipBeneficiary,
@@ -950,15 +950,6 @@ export function buildExecutiveBeneficiaryBankExport(db, actor, { paymentIds = []
 
 // ── Dashboard summary ─────────────────────────────────────────
 
-function safeJsonParse(raw, fallback = {}) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function currentPeriodYyyymm() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -1216,7 +1207,7 @@ export function getExecutiveFamilyDashboard(db, filters = {}) {
       )
       .all();
     for (const row of staffRows) {
-      const extra = safeJsonParse(row.profileExtraJson, {});
+      const extra = parseJsonObject(row.profileExtraJson, {});
       const school = extra.schoolProfile && typeof extra.schoolProfile === 'object' ? extra.schoolProfile : {};
       const familyLink = resolveFamilyBeneficiaryLink(db, row.displayName, school);
       if (!linkedExecutiveMatchesFilter(familyLink.linkedExecutive, linkedFilter)) continue;

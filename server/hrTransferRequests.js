@@ -8,7 +8,7 @@ import { userCanGmApproveHr } from './hrPermissions.js';
 import { serviceYearsFromJoinedIso } from './hrBusinessRules.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { evaluateTransferTenurePolicy } from './hrPolicyConstants.js';
-import { nowIso } from './hrCommon.js';
+import { newTimeId, nowIso, parseJsonValue } from './hrCommon.js';
 import {
   notifyHrTransferOutcome,
   notifyHrTransferQueueHandoff,
@@ -37,19 +37,6 @@ const TRANSFER_TYPES = [
   'permanent',
 ];
 
-function newId() {
-  return `xfer_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function safeJsonParse(v, fallback) {
-  if (v == null || v === '') return fallback;
-  try {
-    return JSON.parse(String(v));
-  } catch {
-    return fallback;
-  }
-}
-
 export function transferRequiresGmApproval(transferType) {
   return ['inter_branch', 'hq_to_branch', 'branch_to_hq'].includes(String(transferType || ''));
 }
@@ -64,7 +51,7 @@ function initialStatusOnSubmit(transferType) {
 }
 
 function parseTimeline(row) {
-  return safeJsonParse(row?.timeline_json, []);
+  return parseJsonValue(row?.timeline_json, []);
 }
 
 function notesContainPolicyException(notes) {
@@ -255,7 +242,7 @@ export function createHrTransferRequest(db, body, actor) {
       .filter(Boolean)
       .join('\n') || null;
 
-  const id = newId();
+  const id = newTimeId('xfer');
   const ts = nowIso();
   const status = body?.submit ? initialStatusOnSubmit(transferType) : 'draft';
   const timeline = appendTimeline([], {

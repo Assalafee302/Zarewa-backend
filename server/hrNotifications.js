@@ -4,7 +4,7 @@
  */
 
 import { hrTableExists } from './hrTableChecks.js';
-import { newId, nowIso } from './hrCommon.js';
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 
 export function hrNotificationsTableReady(db) {
   try {
@@ -673,15 +673,6 @@ export function notifyDisciplineAppealResolved(db, caseRow, outcome, finalOutcom
   });
 }
 
-function safeJsonParse(raw) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : {};
-  } catch {
-    return {};
-  }
-}
-
 /**
  * Resolve scholarship beneficiary app user from executive benefits linkage.
  * @param {import('better-sqlite3').Database} db
@@ -695,7 +686,7 @@ export function resolveScholarshipUserId(db, input = {}) {
       .prepare(`SELECT user_id, profile_extra_json FROM hr_staff_profiles WHERE payroll_group = 'scholarship'`)
       .all();
     for (const row of rows) {
-      const extra = safeJsonParse(row.profile_extra_json);
+      const extra = parseJsonObject(row.profile_extra_json, {});
       if (String(extra?.schoolProfile?.beneficiaryId || '').trim() === beneficiaryId) {
         return row.user_id;
       }

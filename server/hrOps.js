@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
-import { diffDays, isoDateShift, newId, nowIso, parseJsonObject } from './hrCommon.js';
+import { diffDays, isoDateShift, newId, nowIso, parseJsonArray, parseJsonObject } from './hrCommon.js';
 import { canUseAllBranchesRollup, createAppUserRecord, resolveStaffRegisterPassword, roleLabel, updateUserProfile, userHasPermission, applyHrStaffAuthUpdates, assertActorMayAssignRoleKey, publicUserFromId } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   annualLeaveEntitlementDaysForUser,
   calculateSeveranceEntitlement,
   countWorkingDaysInclusive,
+  listHolidayDaySet,
   getHrPolicyPayload,
   isApprovedLeaveOnDay,
   updateHrPolicyPayload,
@@ -309,7 +310,8 @@ function buildStaffDerived(row, complianceByUserId = new Map()) {
   if (!String(row.branchId || '').trim() && !isNonBranchStaff(row.payrollGroup)) {
     criticalMissing.push('branchId');
   }
-  const compliance = complianceByUserId.get(row.userId) || null;
+  /* Keys are stringified on the way in; a numeric id would miss silently. */
+  const compliance = complianceByUserId.get(String(row.userId)) || null;
   const complianceBadges = {
     handbookAcknowledged: Boolean(compliance?.handbookAcknowledged),
     profileComplete: criticalMissing.length === 0,
@@ -445,7 +447,9 @@ export function hrListScope(req) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {{ viewAll: boolean; branchId: string; includeUnassigned?: boolean }} scope
- * @param {{ includeInactive?: boolean }} [opts]
+ * @param {{ includeInactive?: boolean; lightweight?: boolean }} [opts]
+ *   `lightweight` drops the compensation, merged-desk and overdue-request
+ *   lookups — for callers that only read the register columns.
  */
 export function listHrStaff(db, scope, opts = {}) {
   if (!hrTablesReady(db)) return [];
@@ -510,13 +514,15 @@ export function listHrStaff(db, scope, opts = {}) {
   sql += ` ORDER BY u.display_name ASC`;
 
   const rows = db.prepare(sql).all(...args);
-  return enrichHrStaffListRows(db, rows);
+  return enrichHrStaffListRows(db, rows, { lightweight: Boolean(opts.lightweight) });
 }
 
 /**
  * Attach derived fields, completeness, and manager names to raw staff list rows.
  * @param {import('better-sqlite3').Database} db
  * @param {object[]} rows
+ * @param {{ lightweight?: boolean }} [opts]
+ *   `lightweight` skips compensation, merged-desk, and overdue-request lookups.
  */
 export function enrichHrStaffListRows(db, rows, opts = {}) {
   if (!rows.length) return [];
@@ -3448,9 +3454,13 @@ export function listHrAttendanceDeductionPreview(db, scope, periodYyyymm) {
   const period = String(periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
   if (!/^\d{6}$/.test(period)) return [];
   const staff = listHrStaff(db, scope, { includeInactive: false });
+  const sheets = createAttendanceSheetCache(db);
   const out = [];
   for (const s of staff) {
-    const preview = attendanceDeductionForUser(db, s.userId, s.branchId, period);
+    const preview = attendanceDeductionForUser(db, s.userId, s.branchId, period, {
+      sheets,
+      baseSalaryNgn: s.baseSalaryNgn,
+    });
     if (
       preview.absentDays <= 0 &&
       preview.lateDays <= 0 &&
@@ -3787,7 +3797,7 @@ function incrementLoanMonthsFromPayrollRun(db, runId) {
   incrementRecoveriesFromPayrollRun(db, runId);
 }
 
-function approvedLeaveWorkingDaysInPayrollMonth(db, userId, periodYyyymm) {
+function approvedLeaveWorkingDaysInPayrollMonth(db, userId, periodYyyymm, holidays = null) {
   if (!/^\d{6}$/.test(periodYyyymm)) return 0;
   const y = periodYyyymm.slice(0, 4);
   const mo = periodYyyymm.slice(4, 6);
@@ -3810,42 +3820,100 @@ function approvedLeaveWorkingDaysInPayrollMonth(db, userId, periodYyyymm) {
     const segStart = s > monthStart ? s : monthStart;
     const segEnd = e < monthEnd ? e : monthEnd;
     if (segStart > segEnd) continue;
-    total += countWorkingDaysInclusive(db, segStart, segEnd);
+    total += countWorkingDaysInclusive(db, segStart, segEnd, 'NG', holidays);
   }
   return total;
 }
 
-function attendanceDeductionForUser(db, userId, branchId, periodYyyymm) {
-  const prof = db.prepare(`SELECT base_salary_ngn FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
-  const base = Math.round(Number(prof?.base_salary_ngn) || 0);
-  const daily = base > 0 ? Math.round(base / 22) : 0;
+/**
+ * Per-branch attendance sheets, read and indexed once.
+ *
+ * A payroll run asks the same branch/period question for every one of its staff.
+ * Read straight from the database that is one upload query plus one roll-call
+ * query per person, and every roll-call day's JSON is re-parsed and re-scanned
+ * per person on top. Hold the indexed answer instead and the whole run costs one
+ * pair of queries per branch.
+ *
+ * @returns {{ absentDaysFor(branchId: string, period: string, userId: string): number,
+ *             lateDaysFor(branchId: string, period: string, userId: string): number,
+ *             holidays(): Set<string> }}
+ */
+export function createAttendanceSheetCache(db) {
+  /** @type {Map<string, Map<string, number>>} */
+  const absentByKey = new Map();
+  /** @type {Map<string, Map<string, number>>} */
+  const lateByKey = new Map();
 
-  let absentDays = 0;
-  const upload = db
-    .prepare(
-      `SELECT rows_json FROM hr_attendance_uploads WHERE branch_id = ? AND period_yyyymm = ? ORDER BY created_at_iso DESC LIMIT 1`
-    )
-    .get(branchId, periodYyyymm);
-  if (upload) {
-    const rows = parseJsonObject(upload.rows_json, []);
-    const hit = rows.find((r) => String(r?.userId || '').trim() === userId);
-    if (hit) absentDays = Math.max(0, Math.round(Number(hit.absentDays) || 0));
-  }
+  const absentIndex = (branchId, period) => {
+    const key = `${branchId}|${period}`;
+    let index = absentByKey.get(key);
+    if (index) return index;
+    index = new Map();
+    const upload = db
+      .prepare(
+        `SELECT rows_json FROM hr_attendance_uploads WHERE branch_id = ? AND period_yyyymm = ? ORDER BY created_at_iso DESC LIMIT 1`
+      )
+      .get(branchId, period);
+    for (const r of upload ? parseJsonArray(upload.rows_json) : []) {
+      const uid = String(r?.userId || '').trim();
+      if (uid) index.set(uid, Math.max(0, Math.round(Number(r.absentDays) || 0)));
+    }
+    absentByKey.set(key, index);
+    return index;
+  };
 
-  let lateDays = 0;
-  if (branchId && periodYyyymm && /^\d{6}$/.test(periodYyyymm)) {
-    const y = periodYyyymm.slice(0, 4);
-    const m = periodYyyymm.slice(4, 6);
-    const ym = `${y}-${m}`;
+  const lateIndex = (branchId, period) => {
+    const key = `${branchId}|${period}`;
+    let index = lateByKey.get(key);
+    if (index) return index;
+    index = new Map();
+    const ym = `${period.slice(0, 4)}-${period.slice(4, 6)}`;
     const dayRows = db
       .prepare(`SELECT rows_json FROM hr_daily_roll_calls WHERE branch_id = ? AND substr(day_iso, 1, 7) = ?`)
       .all(branchId, ym);
     for (const dr of dayRows) {
-      const list = parseJsonObject(dr.rows_json, []);
-      const hit = list.find((x) => String(x?.userId || '').trim() === userId);
-      if (hit && String(hit.status || '').toLowerCase() === 'late') lateDays += 1;
+      for (const x of parseJsonArray(dr.rows_json)) {
+        if (String(x?.status || '').toLowerCase() !== 'late') continue;
+        const uid = String(x?.userId || '').trim();
+        if (uid) index.set(uid, (index.get(uid) || 0) + 1);
+      }
     }
-  }
+    lateByKey.set(key, index);
+    return index;
+  };
+
+  /** @type {Set<string>|null} */
+  let holidayDays = null;
+
+  return {
+    absentDaysFor: (branchId, period, userId) => absentIndex(branchId, period).get(userId) || 0,
+    lateDaysFor: (branchId, period, userId) =>
+      branchId && /^\d{6}$/.test(period) ? lateIndex(branchId, period).get(userId) || 0 : 0,
+    /** Public holidays, read once — every leave segment would otherwise re-read them. */
+    holidays: () => (holidayDays ??= listHolidayDaySet(db)),
+  };
+}
+
+/**
+ * @param {object} [opts]
+ * @param {ReturnType<typeof createAttendanceSheetCache>} [opts.sheets] shared across a payroll run
+ * @param {number} [opts.baseSalaryNgn] when the caller already holds the profile row
+ */
+function attendanceDeductionForUser(db, userId, branchId, periodYyyymm, opts = {}) {
+  const sheets = opts.sheets || createAttendanceSheetCache(db);
+  const base =
+    opts.baseSalaryNgn != null
+      ? Math.round(Number(opts.baseSalaryNgn) || 0)
+      : Math.round(
+          Number(
+            db.prepare(`SELECT base_salary_ngn FROM hr_staff_profiles WHERE user_id = ?`).get(userId)
+              ?.base_salary_ngn
+          ) || 0
+        );
+  const daily = base > 0 ? Math.round(base / 22) : 0;
+
+  const absentDays = sheets.absentDaysFor(branchId, periodYyyymm, userId);
+  const lateDays = sheets.lateDaysFor(branchId, periodYyyymm, userId);
 
   // Approved exceptions can waive a day of absent/late deductions.
   let absentExceptions = 0;
@@ -3869,7 +3937,7 @@ function attendanceDeductionForUser(db, userId, branchId, periodYyyymm) {
       if (excType === 'late') lateExceptions += 1;
     }
   }
-  const leaveWaive = approvedLeaveWorkingDaysInPayrollMonth(db, userId, periodYyyymm);
+  const leaveWaive = approvedLeaveWorkingDaysInPayrollMonth(db, userId, periodYyyymm, sheets.holidays());
   const absentAfterLeave = Math.max(0, absentDays - Math.min(absentDays, leaveWaive));
   const effAbsent = Math.max(0, absentAfterLeave - absentExceptions);
   const effLate = Math.max(0, lateDays - lateExceptions);
@@ -4437,6 +4505,7 @@ export function computePayrollRun(db, runId) {
   let totalGross = 0;
   let totalPensionEmployer = 0;
   const salaryIndex = loadSalaryStructureIndex(db);
+  const attendanceSheets = createAttendanceSheetCache(db);
   for (const s of staff) {
     const payrollGroup = normalizePayrollGroup(s.payroll_group);
     if (!isPayrollRunEligible(payrollGroup)) continue;
@@ -4453,7 +4522,10 @@ export function computePayrollRun(db, runId) {
     const salaryVersionId = hit?.id || null;
     const attendance =
       requiresAttendance(payrollGroup) ?
-        attendanceDeductionForUser(db, s.user_id, s.branch_id, period)
+        attendanceDeductionForUser(db, s.user_id, s.branch_id, period, {
+          sheets: attendanceSheets,
+          baseSalaryNgn: s.base_salary_ngn,
+        })
       : { deductionNgn: 0 };
     const deductionNgn = Math.round(Number(attendance.deductionNgn) || 0);
     const bonus = isYearEnd && isPayrollRunEligible(payrollGroup) ? Math.round(salaryAmount * bonusRate) : 0;
@@ -5640,21 +5712,6 @@ export function exportSinglePayslipPdf(db, runId, userId) {
   };
 }
 
-export function exportEmploymentLetterPdf(db, letterId) {
-  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
-  const row = db.prepare(`SELECT * FROM hr_employment_letters WHERE id = ?`).get(letterId);
-  if (!row) return { ok: false, error: 'Letter not found.' };
-  const lines = String(row.content_text || '').split(/\r?\n/);
-  const pdf = buildSimpleTextPdf([{ lines: lines.length ? lines : ['(empty letter)'] }]);
-  const kind = String(row.letter_kind || 'employment').replace(/[^\w-]+/g, '-');
-  return {
-    ok: true,
-    pdf,
-    filename: `${kind}-${letterId}.pdf`,
-    contentType: 'application/pdf',
-  };
-}
-
 export function exportPayrollPayslipsCsv(db, runId) {
   const run = getPayrollRunById(db, runId);
   if (!run) return { ok: false, error: 'Payroll run not found.' };
@@ -6010,49 +6067,6 @@ export function patchHrLoanMaintenance(db, requestId, actorUserId, body) {
 }
 
 /**
- * @param {import('better-sqlite3').Database} db
- * @param {object} actor
- * @param {{ userId: string; letterKind?: string }} body
- */
-export function generateEmploymentLetter(db, actor, body) {
-  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
-  const userId = String(body?.userId || '').trim();
-  if (!userId) return { ok: false, error: 'userId is required.' };
-  const u = db.prepare(`SELECT display_name, username FROM app_users WHERE id = ?`).get(userId);
-  if (!u) return { ok: false, error: 'User not found.' };
-  const p = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
-  const jobTitle = p?.job_title || 'Staff';
-  const dept = p?.department || 'General';
-  const joined = p?.date_joined_iso || 'TBD';
-  const company = 'Zarewa Aluminium and Plastics Ltd';
-  const content = [
-    `${company}`,
-    '',
-    `Date: ${nowIso().slice(0, 10)}`,
-    '',
-    `TO WHOM IT MAY CONCERN`,
-    '',
-    `RE: Letter of employment — ${u.display_name}`,
-    '',
-    `This is to certify that ${u.display_name} (${u.username}) is employed with ${company} as ${jobTitle} in ${dept}, effective from ${joined}.`,
-    '',
-    `This letter is issued at the request of the employee for official use.`,
-    '',
-    `Yours faithfully,`,
-    `${actor.displayName || actor.username || 'HR'}`,
-    `Human Resources (HQ)`,
-  ].join('\n');
-
-  const id = newId('HRL', 10);
-  const now = nowIso();
-  db.prepare(
-    `INSERT INTO hr_employment_letters (id, user_id, letter_kind, content_text, issued_at_iso, issued_by_user_id)
-     VALUES (?,?,?,?,?,?)`
-  ).run(id, userId, String(body?.letterKind || 'employment').trim() || 'employment', content, now, actor.id);
-  return { ok: true, id, contentText: content };
-}
-
-/**
  * Generate staff loan agreement letter for an approved loan request.
  * Stored in hr_employment_letters with letter_kind staff_loan_agreement.
  * @param {import('better-sqlite3').Database} db
@@ -6129,28 +6143,6 @@ export function generateStaffLoanAgreementLetter(db, actor, body) {
     details: { requestId, userId, amountNgn: amount },
   });
   return { ok: true, id, contentText: content, requestId };
-}
-
-export function listEmploymentLetters(db, userId) {
-  if (!hrTablesReady(db)) return [];
-  let sql = `SELECT * FROM hr_employment_letters WHERE 1=1`;
-  const args = [];
-  if (userId) {
-    sql += ` AND user_id = ?`;
-    args.push(userId);
-  }
-  sql += ` ORDER BY issued_at_iso DESC LIMIT 100`;
-  return db
-    .prepare(sql)
-    .all(...args)
-    .map((row) => ({
-      id: row.id,
-      userId: row.user_id,
-      letterKind: row.letter_kind,
-      contentText: row.content_text,
-      issuedAtIso: row.issued_at_iso,
-      issuedByUserId: row.issued_by_user_id,
-    }));
 }
 
 export function acceptHrPolicy(db, actor, body) {
@@ -7993,111 +7985,6 @@ export function leaveOverlayForBranchDay(db, branchId, dayIso) {
   });
 }
 
-export function listHrDisciplineCases(db, scope) {
-  if (!hrTablesReady(db)) return [];
-  try {
-    let sql = `SELECT * FROM hr_discipline_cases WHERE 1=1`;
-    const args = [];
-    const subjectUserId = String(scope?.subjectUserId || '').trim();
-    if (subjectUserId) {
-      sql += ` AND user_id = ?`;
-      args.push(subjectUserId);
-    } else if (!scope?.viewAll) {
-      sql += ` AND branch_id = ?`;
-      args.push(scope?.branchId || DEFAULT_BRANCH_ID);
-    }
-    sql += ` ORDER BY opened_at_iso DESC LIMIT 200`;
-    return db.prepare(sql).all(...args).map((row) => ({
-      id: row.id,
-      userId: row.user_id,
-      branchId: row.branch_id,
-      status: row.status,
-      offenceCategory: row.offence_category,
-      summary: row.summary,
-      openedAtIso: row.opened_at_iso,
-      openedByUserId: row.opened_by_user_id,
-    }));
-  } catch {
-    return [];
-  }
-}
-
-export function createHrDisciplineCase(db, actor, body = {}) {
-  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
-  const userId = String(body.userId || '').trim();
-  const summary = String(body.summary || '').trim();
-  if (!userId || summary.length < 3) return { ok: false, error: 'userId and summary are required.' };
-  const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
-  const branchId = String(body.branchId || prof?.branch_id || DEFAULT_BRANCH_ID).trim();
-  const id = newId('HRDIS', 10);
-  const now = nowIso();
-  try {
-    db.prepare(
-      `INSERT INTO hr_discipline_cases (id, user_id, branch_id, status, offence_category, summary, opened_at_iso, opened_by_user_id)
-       VALUES (?,?,?,?,?,?,?,?)`
-    ).run(
-      id,
-      userId,
-      branchId,
-      String(body.status || 'open').trim() || 'open',
-      String(body.offenceCategory || '').trim() || null,
-      summary,
-      now,
-      actor?.id || null
-    );
-    appendHrAuditEvent(db, {
-      actorUserId: actor?.id || null,
-      action: 'hr.discipline.case_open',
-      entityKind: 'hr_discipline_case',
-      entityId: id,
-      branchId,
-      details: { userId },
-    });
-    return { ok: true, id };
-  } catch (e) {
-    return { ok: false, error: String(e.message || e) };
-  }
-}
-
-export function appendHrDisciplineEvent(db, actor, caseId, body = {}) {
-  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
-  const cid = String(caseId || '').trim();
-  const eventKind = String(body.eventKind || 'note').trim();
-  const note = String(body.note || '').trim();
-  if (!cid || note.length < 2) return { ok: false, error: 'caseId and note are required.' };
-  const id = newId('HRDISev', 10);
-  const now = nowIso();
-  try {
-    db.prepare(
-      `INSERT INTO hr_discipline_events (id, case_id, event_kind, note, actor_user_id, created_at_iso)
-       VALUES (?,?,?,?,?,?)`
-    ).run(id, cid, eventKind, note, actor?.id || null, now);
-    appendHrAuditEvent(db, {
-      actorUserId: actor?.id || null,
-      action: 'hr.discipline.event',
-      entityKind: 'hr_discipline_case',
-      entityId: cid,
-      details: { eventKind },
-    });
-    return { ok: true, id };
-  } catch (e) {
-    return { ok: false, error: String(e.message || e) };
-  }
-}
-
-export function listHrDisciplineEvents(db, caseId) {
-  try {
-    return db
-      .prepare(
-        `SELECT id, case_id AS caseId, event_kind AS eventKind, note, actor_user_id AS actorUserId, created_at_iso AS createdAtIso
-         FROM hr_discipline_events WHERE case_id = ? ORDER BY created_at_iso ASC`
-      )
-      .all(String(caseId || '').trim());
-  } catch {
-    return [];
-  }
-}
-
 export function listHrAppraisalCycles(db) {
   try {
     return db
@@ -8129,6 +8016,60 @@ export function createHrAppraisalCycle(db, actor, body = {}) {
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
+}
+
+const APPRAISAL_CYCLE_STATUSES = new Set(['open', 'closed']);
+
+/**
+ * Open or close a cycle. The appraisal screen's Close button has always called
+ * PATCH /api/hr/appraisal-cycles/:cycleId; this is the handler behind it.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} actor
+ * @param {string} cycleId
+ * @param {{ status?: string; label?: string; dueByIso?: string }} body
+ */
+export function patchHrAppraisalCycle(db, actor, cycleId, body = {}) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const id = String(cycleId || '').trim();
+  if (!id) return { ok: false, error: 'cycleId is required.' };
+  const row = db.prepare(`SELECT id, status FROM hr_appraisal_cycles WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Appraisal cycle not found.' };
+
+  const sets = [];
+  const args = [];
+  let nextStatus = null;
+  if (body.status !== undefined) {
+    nextStatus = String(body.status || '').trim().toLowerCase();
+    if (!APPRAISAL_CYCLE_STATUSES.has(nextStatus)) {
+      return { ok: false, error: 'Status must be open or closed.' };
+    }
+    sets.push('status = ?');
+    args.push(nextStatus);
+  }
+  if (body.label !== undefined) {
+    const label = String(body.label || '').trim();
+    if (label.length < 2) return { ok: false, error: 'Label is required.' };
+    sets.push('label = ?');
+    args.push(label);
+  }
+  if (body.dueByIso !== undefined) {
+    const due = String(body.dueByIso || '').trim().slice(0, 10);
+    if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) return { ok: false, error: 'dueByIso must be YYYY-MM-DD.' };
+    sets.push('due_by_iso = ?');
+    args.push(due || null);
+  }
+  if (!sets.length) return { ok: false, error: 'Nothing to update.' };
+
+  db.prepare(`UPDATE hr_appraisal_cycles SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || null,
+    action: nextStatus === 'closed' ? 'hr.appraisal.cycle_close' : 'hr.appraisal.cycle_update',
+    entityKind: 'hr_appraisal_cycle',
+    entityId: id,
+    details: { from: row.status, to: nextStatus || row.status },
+  });
+  return { ok: true, id, status: nextStatus || row.status };
 }
 
 export function listHrAppraisalForms(db, cycleId) {
@@ -9133,10 +9074,6 @@ export function createHrIncidentMemo(db, actorUserId, body) {
   const memo = listHrIncidentMemos(db, { viewAll: true, branchId }).find((m) => m.id === id);
   notifyIncidentMemoReported(db, memo || { id, branchId, userId, summary, incidentDateIso: dateIso }, actorUserId);
   return { ok: true, memo };
-}
-
-export function escalateHrIncidentToDiscipline() {
-  return { ok: false, error: 'Deprecated: use POST /api/hr/incident-memos/:id/escalate (routes through incidentOps).' };
 }
 
 export function listHrTransferRecommendations(db, scope) {

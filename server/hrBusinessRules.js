@@ -282,9 +282,11 @@ function parseIsoDay(iso) {
 /**
  * Working days between start and end inclusive (Mon–Fri), excluding public holidays.
  * @param {import('better-sqlite3').Database} db
+ * @param {Set<string>|null} [holidays] pre-read day set, for callers looping over
+ *   many date ranges — otherwise the holiday table is re-read for every range.
  */
-export function countWorkingDaysInclusive(db, startIso, endIso, holidayScope = 'NG') {
-  const holidays = listHolidayDaySet(db, holidayScope);
+export function countWorkingDaysInclusive(db, startIso, endIso, holidayScope = 'NG', holidays = null) {
+  const holidayDays = holidays || listHolidayDaySet(db, holidayScope);
   const a = parseIsoDay(startIso);
   const b = parseIsoDay(endIso);
   if (!a || !b) return 0;
@@ -295,7 +297,7 @@ export function countWorkingDaysInclusive(db, startIso, endIso, holidayScope = '
     const d = new Date(x);
     const wd = d.getUTCDay();
     const ds = d.toISOString().slice(0, 10);
-    if (wd !== 0 && wd !== 6 && !holidays.has(ds)) n += 1;
+    if (wd !== 0 && wd !== 6 && !holidayDays.has(ds)) n += 1;
     x += 24 * 60 * 60 * 1000;
   }
   return n;

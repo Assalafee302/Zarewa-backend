@@ -4,16 +4,7 @@
  */
 
 import { hrTableExists } from './hrTableChecks.js';
-import { newId, nowIso } from './hrCommon.js';
-
-function safeJsonParse(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  try {
-    return JSON.parse(String(raw));
-  } catch {
-    return fallback;
-  }
-}
+import { newId, nowIso, parseJsonValue } from './hrCommon.js';
 
 export function hrEngagementTablesReady(db) {
   try {
@@ -44,7 +35,7 @@ export function listHrEngagementSurveys(db) {
     .all()
     .map((r) => ({
       ...r,
-      questions: safeJsonParse(r.questionsJson, []),
+      questions: parseJsonValue(r.questionsJson, []),
       questionsJson: undefined,
     }));
 }
@@ -59,7 +50,7 @@ export function getHrEngagementSurvey(db, surveyId) {
     )
     .get(String(surveyId || '').trim());
   if (!row) return null;
-  return { ...row, questions: safeJsonParse(row.questionsJson, []), questionsJson: undefined };
+  return { ...row, questions: parseJsonValue(row.questionsJson, []), questionsJson: undefined };
 }
 
 export function createHrEngagementSurvey(db, actor, body = {}) {
@@ -168,7 +159,7 @@ export function getHrEngagementSurveySummary(db, surveyId) {
     if (q.type === 'rating') aggregates[q.id] = { sum: 0, count: 0, avg: null };
   }
   for (const r of rows) {
-    const ans = safeJsonParse(r.answersJson, {});
+    const ans = parseJsonValue(r.answersJson, {});
     for (const q of survey.questions || []) {
       if (q.type !== 'rating') continue;
       const v = Number(ans[q.id]);

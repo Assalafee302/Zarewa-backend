@@ -1,13 +1,5 @@
 import { hrTableExists } from './hrTableChecks.js';
-
-function safeJsonParse(value) {
-  try {
-    const parsed = JSON.parse(String(value || '[]'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+import { parseJsonArray } from './hrCommon.js';
 
 function tableReady(db) {
   return hrTableExists(db, 'hr_daily_roll_calls');
@@ -45,7 +37,7 @@ export function listOtBoard(db, opts = {}) {
   sql += ` ORDER BY day_iso DESC`;
   const output = [];
   for (const roll of db.prepare(sql).all(...args)) {
-    for (const row of safeJsonParse(roll.rows_json)) {
+    for (const row of parseJsonArray(roll.rows_json)) {
       const scheduledMinutes = Number(row?.scheduledMinutes ?? row?.scheduled_minutes);
       const workedMinutes = Number(row?.workedMinutes ?? row?.worked_minutes);
       if (!Number.isFinite(scheduledMinutes) || !Number.isFinite(workedMinutes) || workedMinutes <= scheduledMinutes) continue;

@@ -7,8 +7,14 @@ import { hrPhase2TablesReady, listHrAbsenceReports } from './hrPhase2Ops.js';
 import { hrTransferRequestsTableReady, listHrTransferRequests } from './hrTransferRequests.js';
 import { hrTablesReady, listHrStaff, listPayrollRuns } from './hrOps.js';
 
-export function getHrHeadcountAnalytics(db, scope) {
-  const staff = listHrStaff(db, scope, { includeInactive: false });
+const listActiveStaff = (db, scope) =>
+  listHrStaff(db, scope, { includeInactive: false, lightweight: true });
+
+/**
+ * @param {object[]} [activeStaff] register rows the caller already has
+ */
+export function getHrHeadcountAnalytics(db, scope, activeStaff = null) {
+  const staff = activeStaff || listActiveStaff(db, scope);
   const byBranch = new Map();
   const byDepartment = new Map();
   const byDesignation = new Map();
@@ -29,10 +35,13 @@ export function getHrHeadcountAnalytics(db, scope) {
   };
 }
 
-export function getHrMovementAnalytics(db, scope) {
+/**
+ * @param {object[]} [allStaff] register rows the caller already has, including leavers
+ */
+export function getHrMovementAnalytics(db, scope, allStaff = null) {
   const out = { hires: 0, exits: 0, transfers: 0, transferRows: [] };
   if (!hrTablesReady(db)) return out;
-  const staff = listHrStaff(db, scope, { includeInactive: true });
+  const staff = allStaff || listHrStaff(db, scope, { includeInactive: true, lightweight: true });
   const cutoff = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
   out.hires = staff.filter((s) => (s.dateJoinedIso || '') >= cutoff).length;
   out.exits = staff.filter((s) => {
@@ -90,8 +99,11 @@ export function getHrPayrollTrendAnalytics(db, canViewSensitive) {
   };
 }
 
-export function getHrComplianceAnalytics(db, scope) {
-  const staff = listHrStaff(db, scope, { includeInactive: false });
+/**
+ * @param {object[]} [activeStaff] register rows the caller already has
+ */
+export function getHrComplianceAnalytics(db, scope, activeStaff = null) {
+  const staff = activeStaff || listActiveStaff(db, scope);
   let promotionDue = 0;
   let trainingRecords = 0;
   try {
@@ -102,12 +114,17 @@ export function getHrComplianceAnalytics(db, scope) {
 }
 
 export function getHrAnalyticsDashboard(db, scope, { canViewSensitive = false } = {}) {
+  /* Headcount, movement and compliance all walk the same register; read it once. */
+  const allStaff = hrTablesReady(db)
+    ? listHrStaff(db, scope, { includeInactive: true, lightweight: true })
+    : [];
+  const activeStaff = allStaff.filter((s) => s.status === 'active');
   return {
-    headcount: getHrHeadcountAnalytics(db, scope),
-    movement: getHrMovementAnalytics(db, scope),
+    headcount: getHrHeadcountAnalytics(db, scope, activeStaff),
+    movement: getHrMovementAnalytics(db, scope, allStaff),
     attendanceTrend: getHrAttendanceTrendAnalytics(db, scope, 6),
     leaveUsage: getHrLeaveUsageAnalytics(db, scope),
     payrollTrend: getHrPayrollTrendAnalytics(db, canViewSensitive),
-    compliance: getHrComplianceAnalytics(db, scope),
+    compliance: getHrComplianceAnalytics(db, scope, activeStaff),
   };
 }

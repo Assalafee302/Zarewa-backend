@@ -261,7 +261,8 @@ export function isStoneMeterQuotationLinesJson(db, linesJson) {
 }
 
 /**
- * Type of material = Stain (damaged-coil seconds sold from coil_stain incident metres).
+ * Type of material = Stain (damaged-coil seconds sold from coil_stain incident metres,
+ * or produced from a matching coil that still has stained steel on it).
  * @param {import('better-sqlite3').Database} db
  * @param {object | string | null | undefined} linesJson
  */

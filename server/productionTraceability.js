@@ -1,4 +1,5 @@
 import { actorName, userMayEditCoilLotMasterData } from './auth.js';
+import { STAIN_COMPLETE_NEEDS_YARD_STOCK } from '../shared/lib/stainMaterialUi.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog, assertPeriodOpen, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { recordRefundIntegrityDriftAfterProductionChange } from './quotationRecalcOrchestrator.js';
@@ -1050,32 +1051,6 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
     }
   }
 
-  if (jobIsStainMeter(db, job)) {
-    if (append) {
-      return { ok: false, error: 'Stain jobs cannot add coil allocations.' };
-    }
-    if (Array.isArray(allocations) && allocations.length > 0) {
-      return { ok: false, error: 'Stain jobs use stain incident metres, not coil allocations.' };
-    }
-    try {
-      db.transaction(() => {
-        db.prepare(`DELETE FROM production_job_coils WHERE job_id = ?`).run(jobID);
-        refreshJobCoilSpecFlagsTx(db, jobID);
-        appendAuditLog(db, {
-          actor: opts.actor,
-          action: 'production.allocate_stain',
-          entityKind: 'production_job',
-          entityId: jobID,
-          note: 'Stain job — issue coil_stain metres on complete',
-          details: { jobID },
-        });
-      })();
-      return { ok: true, allocations: [] };
-    } catch (error) {
-      return { ok: false, error: String(error.message || error) };
-    }
-  }
-
   if (status !== 'Planned') {
     return { ok: false, error: 'Coil allocation must be completed before the job starts.' };
   }
@@ -1249,7 +1224,7 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   }
   const allocations = listJobCoilsForJob(db, jobID);
   const startMode = completionModeFromPayload(payload);
-  /* Pure alu needs coils (unless offcut start). Stone pure and stone hybrid may start without coils. */
+  /* Pure alu needs coils (unless offcut start). Stain and stone may start without coils (pool / metre stock). */
   if (!allocations.length && !jobIsStoneMeter(db, job) && startMode !== 'offcut' && !jobIsStainMeter(db, job)) {
     return { ok: false, error: 'Allocate at least one coil before starting production.' };
   }
@@ -2005,7 +1980,7 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
   if (jobIsStainMeter(db, job) && metres > 0 && offcutSupplyList.length === 0) {
     return {
       ok: false,
-      error: 'Stain quotations must be completed by issuing matching stain incident metres.',
+      error: STAIN_COMPLETE_NEEDS_YARD_STOCK,
     };
   }
   // Offcut/accessories completion previously skipped every guard the coil completion path
@@ -2209,7 +2184,10 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   if (jobIsStoneMeter(db, job) && !jobExpectsCoilAllocation(db, job)) {
     return completeProductionJobStone(db, job, jobID, payload, opts);
   }
-  if (jobIsStainMeter(db, job) || completionModeFromPayload(payload) === 'offcut') {
+  if (
+    (jobIsStainMeter(db, job) && listJobCoilsForJob(db, jobID).length === 0) ||
+    completionModeFromPayload(payload) === 'offcut'
+  ) {
     return completeProductionJobOffcut(db, job, jobID, payload, opts);
   }
   const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());

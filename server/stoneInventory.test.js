@@ -8,6 +8,7 @@ import {
   stoneFlatsheetProductIdFromSpec,
   stoneProductIdFromSpec,
 } from './stoneInventory.js';
+import { postAccessoryInventoryReceipt, postStoneInventoryReceipt } from './writeOps.js';
 
 function mysqlAvailable() {
   try {
@@ -103,5 +104,48 @@ describe.skipIf(!mysqlOk)('stoneInventory', () => {
     expect(row.unit).toBe('m2');
     expect(String(row.gauge || '').trim()).toBe('');
     expect(row.branch_id).toBe('BR-YL');
+  });
+
+  it('stone receipt on Yola does not increase Kaduna stock', () => {
+    const pid = ensureStoneProduct(db, {
+      designLabel: 'Bond',
+      colourLabel: 'Red',
+      gaugeLabel: '0.50mm',
+      branchId: 'BR-YL',
+    });
+    const r = postStoneInventoryReceipt(
+      db,
+      { designLabel: 'Bond', colourLabel: 'Red', gaugeLabel: '0.50mm', metresReceived: 40 },
+      'BR-YL'
+    );
+    expect(r.ok).toBe(true);
+    expect(
+      Number(db.prepare(`SELECT stock_level FROM products WHERE product_id = ? AND branch_id = ?`).get(pid, 'BR-YL')?.stock_level)
+    ).toBe(40);
+    expect(
+      Number(db.prepare(`SELECT stock_level FROM products WHERE product_id = ? AND branch_id = ?`).get(pid, 'BR-KD')?.stock_level)
+    ).toBe(0);
+    expect(postStoneInventoryReceipt(db, { designLabel: 'Bond', colourLabel: 'Red', gaugeLabel: '0.50mm', metresReceived: 10 }).ok).toBe(
+      false
+    );
+  });
+
+  it('accessory receipt is branch-scoped', () => {
+    const miss = postAccessoryInventoryReceipt(db, { productID: 'ACC-RIVET-PACK', qtyReceived: 5 });
+    expect(miss.ok).toBe(false);
+    const r = postAccessoryInventoryReceipt(db, { productID: 'ACC-RIVET-PACK', qtyReceived: 5 }, 'BR-YL');
+    expect(r.ok).toBe(true);
+    expect(
+      Number(
+        db.prepare(`SELECT stock_level FROM products WHERE product_id = 'ACC-RIVET-PACK' AND branch_id = 'BR-YL'`).get()
+          ?.stock_level
+      )
+    ).toBe(5);
+    expect(
+      Number(
+        db.prepare(`SELECT stock_level FROM products WHERE product_id = 'ACC-RIVET-PACK' AND branch_id = 'BR-KD'`).get()
+          ?.stock_level
+      )
+    ).toBe(0);
   });
 });

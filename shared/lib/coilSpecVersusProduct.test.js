@@ -5,6 +5,8 @@ import {
   coilSpecMismatchIssues,
   coilVersusQuotationAndProductWarning,
   expectedGaugeBoundsMm,
+  firstPrimaryProductNameFromQuotation,
+  quotationExpectsCoilAllocation,
 } from './coilSpecVersusProduct.js';
 
 describe('coilSpecVersusProduct', () => {
@@ -110,5 +112,23 @@ describe('coilSpecVersusProduct', () => {
     };
     const lot = { gaugeLabel: '0.20mm', colour: 'P Red', materialTypeName: 'Aluzinc (PPGI)' };
     expect(coilVersusQuotationAndProductWarning(lot, q, null)).toBeNull();
+  });
+
+  it('stain quotations expect parent-family coil allocation', () => {
+    expect(
+      quotationExpectsCoilAllocation({
+        materialTypeId: 'MAT-006',
+        stainMeterQuote: true,
+        stainSourceMaterialTypeId: 'MAT-002',
+        quotationLines: { products: [{ name: 'Roofing Sheet', qty: '40' }] },
+      })
+    ).toBe(true);
+    expect(
+      firstPrimaryProductNameFromQuotation({
+        materialTypeId: 'MAT-006',
+        stainSourceMaterialTypeId: 'MAT-002',
+        materialTypeName: 'Stain',
+      })
+    ).toBe('Aluzinc');
   });
 });

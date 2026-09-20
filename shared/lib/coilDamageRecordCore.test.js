@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   coilDamagePreview,
+  coilDamageMaxRemoveKg,
   normalizeDamageLinesForPayload,
   sumDamageLineMeters,
   validateCoilDamagePayload,
@@ -59,5 +60,29 @@ describe('coilDamageRecordCore', () => {
     );
     expect(r.ok).toBe(false);
     expect(String(r.error)).toMatch(/unreserved/i);
+  });
+
+  it('uses on-hand wording when reserved kg may be stained', () => {
+    const r = validateCoilDamagePayload(
+      {
+        coilNo: 'C-1',
+        beforeKg: 5000,
+        afterKg: 0,
+        meters: 1800,
+        note: 'Stain cut through reserved kg',
+      },
+      { maxRemoveKg: 4500, allowReservedKg: true }
+    );
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/on-hand/i);
+  });
+
+  it('coil_stain max remove is on-hand including reserved kg', () => {
+    expect(
+      coilDamageMaxRemoveKg({ qtyRemaining: 4000, qtyReserved: 3500, incidentType: 'coil_stain' })
+    ).toBe(4000);
+    expect(
+      coilDamageMaxRemoveKg({ qtyRemaining: 4000, qtyReserved: 3500, incidentType: 'production_error' })
+    ).toBe(500);
   });
 });

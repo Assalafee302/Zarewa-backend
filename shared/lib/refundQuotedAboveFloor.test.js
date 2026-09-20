@@ -6,9 +6,12 @@ describe('quotedAboveFloorCreditNgn', () => {
     expect(quotedAboveFloorCreditNgn(5000, 4500, 10)).toBe(5_000);
   });
 
-  it('is zero when sold at or below floor', () => {
-    expect(quotedAboveFloorCreditNgn(4500, 4500, 10)).toBe(0);
-    expect(quotedAboveFloorCreditNgn(4400, 4500, 10)).toBe(0);
+  it('is zero when sold at stain floor (parent − ₦1,000)', () => {
+    expect(quotedAboveFloorCreditNgn(4000, 4000, 12)).toBe(0);
+  });
+
+  it('credits above stain floor, not the parent workbook floor', () => {
+    expect(quotedAboveFloorCreditNgn(4500, 4000, 10)).toBe(5_000);
   });
 
   it('is zero when sold at list with no floor gap is not this helper’s job — list 5000 vs floor 4500 still credits', () => {

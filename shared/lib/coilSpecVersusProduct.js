@@ -11,6 +11,7 @@ import {
   quotationProductLinesForJobProduct,
   STONE_QUOTE_FLAT_SHEET_COIL_MATERIAL_KEY,
 } from './stoneCoatedQuotationPolicy.js';
+import { quotationIsStainMeterHeader, stainSourceMaterialTypeIdToDisplayName } from './stainMaterialPolicy.js';
 
 /** First numeric gauge in a label, e.g. "0.24mm" → 0.24 */
 export function firstGaugeNumber(value) {
@@ -44,6 +45,7 @@ function skipMaterialCompareToCoil(expectedMaterialType) {
   if (/\broofing sheet\b/.test(m)) return true;
   if (/\baccessory\b/.test(m)) return true;
   if (/\bstone[\s-]*coated\b/.test(m)) return true;
+  if (/\bstain\b/.test(m)) return true;
   if (/\bsteeltile\b/.test(m) && !/\bcoil\b/.test(m)) return true;
   return false;
 }
@@ -81,12 +83,19 @@ export function buildExpectedCoilSpecForStoneHybridFlatsheet(quotation, jobProdu
  * @param {Record<string, unknown> | null | undefined} quotation
  */
 export function firstPrimaryProductNameFromQuotation(quotation) {
+  const mid = String(quotation?.materialTypeId ?? quotation?.material_type_id ?? '').trim();
+  if (quotationIsStainMeterHeader(quotation) || mid === 'MAT-006' || mid.toLowerCase() === 'stain') {
+    const srcName = stainSourceMaterialTypeIdToDisplayName(
+      quotation?.stainSourceMaterialTypeId ?? quotation?.stain_source_material_type_id
+    );
+    if (srcName) return srcName;
+  }
   const named = String(quotation?.materialTypeName ?? quotation?.material_type_name ?? '').trim();
   if (named) return named;
-  const mid = String(quotation?.materialTypeId ?? quotation?.material_type_id ?? '').trim();
   if (mid === 'MAT-001') return 'Aluminium';
   if (mid === 'MAT-002') return 'Aluzinc';
   if (mid === 'MAT-005' || mid === 'stone-coated') return 'Stone coated';
+  if (mid === 'MAT-006' || mid.toLowerCase() === 'stain') return 'Stain';
   return '';
 }
 

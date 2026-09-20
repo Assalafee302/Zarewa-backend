@@ -10,7 +10,7 @@ import {
   issueOffcutSupplyForProductionTx,
 } from './materialIncidentOps.js';
 import { insertCuttingList, insertProductionJob } from './writeOps.js';
-import { completeProductionJob, startProductionJob } from './productionTraceability.js';
+import { completeProductionJob, saveProductionJobAllocations, startProductionJob } from './productionTraceability.js';
 import { STAIN_MATERIAL_TYPE_ID } from '../shared/lib/stainMaterialPolicy.js';
 import { quotedAboveFloorCreditNgn } from '../shared/lib/refundQuotedAboveFloor.js';
 import { isStainMeterQuotationLinesJson } from './stoneInventory.js';
@@ -169,6 +169,8 @@ describe.skipIf(!mysqlOk)('stain material type', () => {
     expect(pool.stainMetersAvailable).toBeCloseTo(40, 2);
     expect(pool.productionOffcutMetersAvailable).toBeCloseTo(25, 2);
     expect(pool.bySpec.some((r) => r.poolKind === 'stain' && r.metersAvailable >= 39)).toBe(true);
+    expect(pool.stainInventory.totals.lotCount).toBeGreaterThanOrEqual(1);
+    expect(pool.stainInventory.lots.some((l) => l.coilNo === 'C-STAIN-1' && l.estMeters >= 39)).toBe(true);
 
     const stainJob = { job_id: 'JOB-STAIN-X', quotation_ref: 'QT-STAIN-X' };
     db.prepare(
@@ -259,7 +261,7 @@ describe.skipIf(!mysqlOk)('stain material type', () => {
 
     const empty = completeProductionJob(db, job.jobID, { offcutMetersProduced: 20 });
     expect(empty.ok).toBe(false);
-    expect(String(empty.error)).toMatch(/stain incident/i);
+    expect(String(empty.error)).toMatch(/yard|matching coil/i);
 
     const done = completeProductionJob(db, job.jobID, {
       completeMode: 'offcut',
@@ -270,5 +272,119 @@ describe.skipIf(!mysqlOk)('stain material type', () => {
     expect(done.ok).toBe(true);
     const avail = db.prepare(`SELECT meters_available FROM material_incidents WHERE id = ?`).get(stainId);
     expect(Number(avail.meters_available)).toBeCloseTo(30, 2);
+  });
+
+  it('coil_stain on a reserved production coil shrinks the job allocation and fills the stain pool', () => {
+    db.prepare(
+      `INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-STAIN-RUN', 'Run Cust', ?)`
+    ).run(DEFAULT_BRANCH_ID);
+    db.prepare(
+      `INSERT INTO quotations (
+        id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json,
+        date_iso, branch_id, manager_production_approved_at_iso, manager_production_approval_level
+      ) VALUES ('QT-STAIN-RUN', 'CUS-STAIN-RUN', 'Run Cust', 200000, 0, 'Unpaid', 'Approved', ?, '2026-06-01', ?, ?, 'admin')`
+    ).run(
+      JSON.stringify({
+        materialTypeId: 'MAT-002',
+        materialGauge: '0.45mm',
+        materialColor: 'Charcoal',
+        materialDesign: 'Longspan (Indus6)',
+        products: [{ name: 'Roofing Sheet', qty: '40', unitPrice: '5000', floorPricePerMeter: 5000 }],
+      }),
+      DEFAULT_BRANCH_ID,
+      '2026-06-01T00:00:00.000Z'
+    );
+    const cl = insertCuttingList(db, {
+      quotationRef: 'QT-STAIN-RUN',
+      lines: [{ sheets: 8, lengthM: 5, lineType: 'Roof' }],
+    });
+    expect(cl.ok).toBe(true);
+    const job = insertProductionJob(db, { cuttingListId: cl.id });
+    expect(job.ok).toBe(true);
+
+    const allocated = saveProductionJobAllocations(
+      db,
+      job.jobID,
+      [{ coilNo: 'C-STAIN-1', openingWeightKg: 4000 }],
+      { workspaceBranchId: DEFAULT_BRANCH_ID }
+    );
+    expect(allocated.ok).toBe(true);
+    const reservedBefore = db.prepare(`SELECT qty_reserved, qty_remaining FROM coil_lots WHERE coil_no = 'C-STAIN-1'`).get();
+    expect(Number(reservedBefore.qty_reserved)).toBeCloseTo(4000, 2);
+
+    const created = createCoilDamageMaterialIncident(
+      db,
+      {
+        coilNo: 'C-STAIN-1',
+        beforeKg: 4000,
+        afterKg: 3700,
+        meters: 40,
+        incidentType: 'coil_stain',
+        note: 'Stain band on the running coil cut out',
+        submit: true,
+      },
+      { workspaceBranchId: DEFAULT_BRANCH_ID, actor: STORE }
+    );
+    expect(created.ok).toBe(true);
+    expect(created.incident?.productionJobId || created.incident?.production_job_id).toBe(job.jobID);
+
+    const approved = approveMaterialIncident(
+      db,
+      created.id,
+      { managerRemark: 'Stain on production coil posted' },
+      { workspaceBranchId: DEFAULT_BRANCH_ID, actor: BM }
+    );
+    expect(approved.ok).toBe(true);
+
+    const coilAfter = db.prepare(`SELECT qty_reserved, qty_remaining FROM coil_lots WHERE coil_no = 'C-STAIN-1'`).get();
+    expect(Number(coilAfter.qty_remaining)).toBeCloseTo(3700, 2);
+    expect(Number(coilAfter.qty_reserved)).toBeCloseTo(3700, 2);
+    const allocAfter = db
+      .prepare(`SELECT opening_weight_kg FROM production_job_coils WHERE job_id = ? AND coil_no = 'C-STAIN-1'`)
+      .get(job.jobID);
+    expect(Number(allocAfter?.opening_weight_kg)).toBeCloseTo(3700, 2);
+
+    const pool = computePoolSummary(db, DEFAULT_BRANCH_ID);
+    expect(pool.stainMetersAvailable).toBeCloseTo(40, 2);
+  });
+
+  it('stain jobs may allocate a matching parent-family coil', () => {
+    db.prepare(
+      `INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-STAIN-COIL', 'Stain Coil Cust', ?)`
+    ).run(DEFAULT_BRANCH_ID);
+    db.prepare(
+      `INSERT INTO quotations (
+        id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json,
+        date_iso, branch_id, manager_production_approved_at_iso, manager_production_approval_level
+      ) VALUES ('QT-STAIN-COIL', 'CUS-STAIN-COIL', 'Stain Coil Cust', 160000, 0, 'Unpaid', 'Approved', ?, '2026-06-01', ?, ?, 'admin')`
+    ).run(
+      JSON.stringify({
+        materialTypeId: STAIN_MATERIAL_TYPE_ID,
+        stainSourceMaterialTypeId: 'MAT-002',
+        materialGauge: '0.45mm',
+        materialColor: 'Charcoal',
+        materialDesign: 'Longspan (Indus6)',
+        products: [{ name: 'Roofing Sheet', qty: '40', unitPrice: '4000', floorPricePerMeter: 4000 }],
+      }),
+      DEFAULT_BRANCH_ID,
+      '2026-06-01T00:00:00.000Z'
+    );
+    const cl = insertCuttingList(db, {
+      quotationRef: 'QT-STAIN-COIL',
+      lines: [{ sheets: 8, lengthM: 5, lineType: 'Roof' }],
+    });
+    expect(cl.ok).toBe(true);
+    const job = insertProductionJob(db, { cuttingListId: cl.id });
+    expect(job.ok).toBe(true);
+    const allocated = saveProductionJobAllocations(
+      db,
+      job.jobID,
+      [{ coilNo: 'C-STAIN-2', openingWeightKg: 800 }],
+      { workspaceBranchId: DEFAULT_BRANCH_ID }
+    );
+    expect(allocated.ok).toBe(true);
+    const rows = db.prepare(`SELECT coil_no, opening_weight_kg FROM production_job_coils WHERE job_id = ?`).all(job.jobID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].coil_no).toBe('C-STAIN-2');
   });
 });

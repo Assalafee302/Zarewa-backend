@@ -6,12 +6,16 @@
 export const INVENTORY_MODEL = {
   COIL_KG: 'coil_kg',
   STONE_METER: 'stone_meter',
+  STAIN_METER: 'stain_meter',
   FINISHED_GOOD: 'finished_good',
   CONSUMABLE: 'consumable',
 };
 
 /** Seeded material type id for stone-coated (metre stock). */
 export const STONE_COATED_MATERIAL_TYPE_ID = 'MAT-005';
+
+/** Seeded material type id for stain / damaged-coil seconds (incident metres). */
+export const STAIN_MATERIAL_TYPE_ID = 'MAT-006';
 
 /** Display label for fourth stone profile (industry-standard spelling). */
 export const STONE_PROFILE_SHINGLE_LABEL = 'Shingle';

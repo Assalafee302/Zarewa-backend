@@ -8,6 +8,15 @@ import {
   isCoilDamageIncident,
   validateCoilDamagePayload,
 } from '../shared/lib/coilDamageRecordCore.js';
+import {
+  incidentMatchesStainQuoteSpec,
+  incidentPoolKind,
+  quotationIsStainMeterHeader,
+  buildStainInventorySnapshot,
+  STAIN_INCIDENT_TYPE,
+} from '../shared/lib/stainMaterialPolicy.js';
+import { decorateStainInventoryForUi, STAIN_RESERVED_KG_NEEDS_JOB } from '../shared/lib/stainMaterialUi.js';
+import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import { branchDisplayName, DEFAULT_BRANCH_ID } from './branches.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { isBranchManagerApprovalAuthority } from '../shared/workspaceGovernance.js';
@@ -145,6 +154,7 @@ function mapIncidentRow(row) {
     status: row.status ?? 'draft',
     bookRef: row.book_ref ?? '',
     metersAvailable: Number(row.meters_available) || 0,
+    poolKind: incidentPoolKind(row.incident_type),
     customerRefundId: row.customer_refund_id ?? '',
     dateISO: row.date_iso ?? '',
     createdAtIso: row.created_at_iso ?? '',
@@ -285,6 +295,7 @@ export function listMaterialIncidents(db, branchScope, filters = {}) {
   const branchId = String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const status = String(filters.status || '').trim();
   const type = String(filters.incidentType || filters.type || '').trim();
+  const poolKind = String(filters.poolKind || '').trim();
   const gauge = String(filters.gaugeLabel || filters.gauge || '').trim();
   const colour = String(filters.colour || '').trim();
   const minMeters = Number(filters.minMeters);
@@ -298,6 +309,13 @@ export function listMaterialIncidents(db, branchScope, filters = {}) {
     sql += ` AND incident_type = ?`;
     args.push(type);
   }
+  if (poolKind === 'stain') {
+    sql += ` AND incident_type = ?`;
+    args.push(STAIN_INCIDENT_TYPE);
+  } else if (poolKind === 'offcut') {
+    sql += ` AND incident_type != ?`;
+    args.push(STAIN_INCIDENT_TYPE);
+  }
   if (gauge) {
     sql += ` AND gauge_label = ?`;
     args.push(gauge);
@@ -310,7 +328,14 @@ export function listMaterialIncidents(db, branchScope, filters = {}) {
     sql += ` AND meters_available >= ? AND status = 'posted'`;
     args.push(minMeters);
   }
-  sql += ` ORDER BY date_iso DESC, created_at_iso DESC LIMIT 500`;
+  sql += ` ORDER BY date_iso DESC, created_at_iso DESC`;
+  const stainInventoryList = poolKind === 'stain' || type === STAIN_INCIDENT_TYPE;
+  const limit = resolveListLimit({
+    ...filters,
+    unlimited: filters.unlimited === true || stainInventoryList,
+  });
+  sql += sqlLimitClause(limit);
+  if (limit > 0) args.push(limit);
   return db.prepare(sql).all(...args).map(mapIncidentRow);
 }
 
@@ -318,25 +343,56 @@ export function computePoolSummary(db, branchScope) {
   const branchId = String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const incidents = db
     .prepare(
-      `SELECT id, material_family, gauge_label, colour, profile_label, meters_available, incident_type, status, date_iso
+      `SELECT id, material_family, gauge_label, colour, profile_label, meters_available, total_meters,
+              kg_deducted, coil_no, production_job_id, quotation_ref, incident_type, status, date_iso
        FROM material_incidents WHERE branch_id = ? AND status = 'posted' AND meters_available > 0.001
        ORDER BY date_iso DESC`
     )
     .all(branchId);
 
   const bySpec = new Map();
+  let stainMetersAvailable = 0;
+  let productionOffcutMetersAvailable = 0;
+  const mappedIncidents = [];
   for (const row of incidents) {
-    const key = `${row.material_family}|${row.gauge_label}|${row.colour}|${row.profile_label || ''}`;
+    const poolKind = incidentPoolKind(row.incident_type);
+    const meters = Number(row.meters_available) || 0;
+    if (poolKind === 'stain') stainMetersAvailable += meters;
+    else productionOffcutMetersAvailable += meters;
+    const mapped = {
+      id: row.id,
+      incidentType: row.incident_type,
+      poolKind,
+      materialFamily: row.material_family,
+      gaugeLabel: row.gauge_label,
+      colour: row.colour,
+      profileLabel: row.profile_label || '',
+      metersAvailable: meters,
+      totalMeters: Number(row.total_meters) || 0,
+      kgDeducted: row.kg_deducted != null ? Number(row.kg_deducted) : null,
+      coilNo: row.coil_no || '',
+      productionJobId: row.production_job_id || '',
+      quotationRef: row.quotation_ref || '',
+      dateISO: row.date_iso,
+    };
+    mappedIncidents.push(mapped);
+    const key = `${poolKind}|${row.material_family}|${row.gauge_label}|${row.colour}|${row.profile_label || ''}`;
     const prev = bySpec.get(key) || {
+      poolKind,
       materialFamily: row.material_family,
       gaugeLabel: row.gauge_label,
       colour: row.colour,
       profileLabel: row.profile_label || '',
       metersAvailable: 0,
+      kgBooked: 0,
       incidentCount: 0,
     };
-    prev.metersAvailable += Number(row.meters_available) || 0;
+    prev.metersAvailable += meters;
     prev.incidentCount += 1;
+    const totalM = Number(row.total_meters) || 0;
+    const kgDeducted = Number(row.kg_deducted) || 0;
+    if (totalM > 0 && kgDeducted > 0) prev.kgBooked += kgDeducted * (meters / totalM);
+    else if (kgDeducted > 0) prev.kgBooked += kgDeducted;
     bySpec.set(key, prev);
   }
 
@@ -358,23 +414,23 @@ export function computePoolSummary(db, branchScope) {
 
   const incidentMeters = incidents.reduce((s, r) => s + (Number(r.meters_available) || 0), 0);
   const legacyAvailable = Math.max(0, legacyIn - legacyIssue - legacyOut);
+  const bySpecRows = [...bySpec.values()].map((r) => ({
+    ...r,
+    kgBooked: Math.round((Number(r.kgBooked) || 0) * 100) / 100,
+  }));
+  const stainInventory = decorateStainInventoryForUi(buildStainInventorySnapshot(mappedIncidents));
 
   return {
     branchId,
     incidentMetersAvailable: incidentMeters,
+    stainMetersAvailable,
+    stainKgAvailable: stainInventory.totals.kgBooked,
+    productionOffcutMetersAvailable,
     legacyPoolMetersAvailable: legacyAvailable,
     totalMetersAvailable: incidentMeters + legacyAvailable,
-    bySpec: [...bySpec.values()],
-    incidents: incidents.map((r) => ({
-      id: r.id,
-      incidentType: r.incident_type,
-      materialFamily: r.material_family,
-      gaugeLabel: r.gauge_label,
-      colour: r.colour,
-      profileLabel: r.profile_label || '',
-      metersAvailable: Number(r.meters_available) || 0,
-      dateISO: r.date_iso,
-    })),
+    bySpec: bySpecRows,
+    stainInventory,
+    incidents: mappedIncidents,
   };
 }
 
@@ -402,6 +458,21 @@ export function listPendingCoilDamageIncidents(db, branchScope) {
     });
 }
 
+function listActiveProductionJobsForCoil(db, coilNo) {
+  const cn = String(coilNo || '').trim();
+  if (!cn) return [];
+  return db
+    .prepare(
+      `SELECT pj.job_id, pj.quotation_ref, pj.cutting_list_id, pj.status, pjc.opening_weight_kg
+       FROM production_job_coils pjc
+       INNER JOIN production_jobs pj ON pj.job_id = pjc.job_id
+       WHERE pjc.coil_no = ?
+         AND LOWER(TRIM(COALESCE(pj.status, ''))) IN ('planned', 'running')
+       ORDER BY pjc.allocated_at_iso ASC, pjc.sequence_no ASC`
+    )
+    .all(cn);
+}
+
 function materialFamilyFromCoil(db, coil) {
   const pid = String(coil?.product_id || '').trim();
   if (pid === 'PRD-102') return 'aluzinc';
@@ -417,6 +488,10 @@ function materialFamilyFromCoil(db, coil) {
   return 'aluminium';
 }
 
+/**
+ * Record damaged metres on a coil (stain, production error, yard offcut, supplier defect).
+ * coil_stain may cut reserved kg on a Planned/Running job; remaining good kg stays allocated.
+ */
 export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
   if (!materialIncidentsTableReady(db)) return { ok: false, error: 'Material incidents module is not migrated.' };
 
@@ -438,11 +513,13 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
 
   const qtyRem = Math.max(0, Number(coil.qty_remaining) || Number(coil.current_weight_kg) || 0);
   const qtyRes = Math.max(0, Number(coil.qty_reserved) || 0);
-  const maxRemove = qtyRem - qtyRes;
   let incidentType = String(payload.incidentType ?? payload.incident_type ?? '').trim();
   if (!INCIDENT_TYPES.has(incidentType)) {
     incidentType = 'coil_stain';
   }
+  /* coil_stain may cut reserved kg already allocated to a Planned/Running job; production_error stays unreserved-only. */
+  const stainOnProdCoil = incidentType === STAIN_INCIDENT_TYPE;
+  const maxRemove = stainOnProdCoil ? qtyRem : qtyRem - qtyRes;
 
   const validated = validateCoilDamagePayload(
     {
@@ -457,6 +534,7 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
     },
     {
       maxRemoveKg: maxRemove,
+      allowReservedKg: stainOnProdCoil,
       supplierConversionKgPerM: coil.supplier_conversion_kg_per_m,
     }
   );
@@ -479,12 +557,42 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
           },
         ];
 
-  const linkedProductionJobId =
-    incidentType === 'production_error' ? '' : productionJobId;
+  const activeJobs = stainOnProdCoil ? listActiveProductionJobsForCoil(db, coilNo) : [];
+  let linkedProductionJobId = incidentType === 'production_error' ? '' : productionJobId;
+  if (stainOnProdCoil && !linkedProductionJobId && activeJobs.length === 1) {
+    linkedProductionJobId = String(activeJobs[0].job_id || '').trim();
+  }
   if (linkedProductionJobId) {
-    const job = db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(linkedProductionJobId);
+    const job = db
+      .prepare(`SELECT job_id, quotation_ref, cutting_list_id FROM production_jobs WHERE job_id = ?`)
+      .get(linkedProductionJobId);
     if (!job) return { ok: false, error: `Production job ${linkedProductionJobId} not found.` };
   }
+
+  const unreserved = Math.max(0, qtyRem - qtyRes);
+  const eatsReserved = stainOnProdCoil && kgDeducted > unreserved + 1e-6;
+  if (eatsReserved) {
+    if (!linkedProductionJobId) {
+      return {
+        ok: false,
+        error:
+          STAIN_RESERVED_KG_NEEDS_JOB,
+      };
+    }
+    const alloc = activeJobs.find((j) => String(j.job_id) === linkedProductionJobId);
+    if (!alloc) {
+      return {
+        ok: false,
+        error: `Coil ${coilNo} is not allocated to production job ${linkedProductionJobId}.`,
+      };
+    }
+  }
+
+  const linkedJob = linkedProductionJobId
+    ? db
+        .prepare(`SELECT job_id, quotation_ref, cutting_list_id FROM production_jobs WHERE job_id = ?`)
+        .get(linkedProductionJobId)
+    : null;
 
   const storekeeperDisplay =
     String(payload.storekeeperDisplay ?? payload.storekeeper_display ?? actorName(opts.actor) ?? '').trim() || undefined;
@@ -497,6 +605,14 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
     colour: String(coil.colour ?? '').trim(),
     coilNo,
     productionJobId: linkedProductionJobId || undefined,
+    quotationRef:
+      String(payload.quotationRef ?? payload.quotation_ref ?? '').trim() ||
+      String(linkedJob?.quotation_ref || '').trim() ||
+      undefined,
+    cuttingListRef:
+      String(payload.cuttingListRef ?? payload.cutting_list_ref ?? '').trim() ||
+      String(linkedJob?.cutting_list_id || '').trim() ||
+      undefined,
     customerLabel,
     beforeKg,
     afterKg,
@@ -808,6 +924,8 @@ function postIncidentStockEffects(db, row, opts) {
         bookRef: incidentId,
         quotationRef: row.quotation_ref,
         cuttingListRef: row.cutting_list_ref,
+        productionJobId: row.production_job_id,
+        allowReservedKg: type === STAIN_INCIDENT_TYPE,
         creditScrapInventory: creditScrap,
         scrapProductID: creditScrap ? 'SCRAP-COIL' : undefined,
         controlEventKind: 'scrap_offcut',
@@ -1106,6 +1224,19 @@ export function getMaterialIncident(db, incidentId) {
   return loadIncidentDetail(db, incidentId);
 }
 
+function quotationLinesJsonForJob(db, job) {
+  const ref = String(job?.quotation_ref || job?.quotationRef || '').trim();
+  if (!ref || !db) return null;
+  try {
+    const row = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(ref);
+    if (!row?.lines_json) return null;
+    const j = JSON.parse(String(row.lines_json));
+    return j && typeof j === 'object' ? j : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Issue metres from one or more material incidents on production complete.
  * @param {import('better-sqlite3').Database} db
@@ -1113,6 +1244,15 @@ export function getMaterialIncident(db, incidentId) {
  */
 export function issueOffcutSupplyForProductionTx(db, job, issues, actor) {
   const jobID = String(job.job_id || job.jobID || '').trim();
+  const quoteLines = quotationLinesJsonForJob(db, job);
+  const stainJob = quotationIsStainMeterHeader(quoteLines);
+  const stainQuoteSpec = stainJob
+    ? {
+        materialGauge: quoteLines?.materialGauge,
+        materialColor: quoteLines?.materialColor,
+        stainSourceMaterialTypeId: quoteLines?.stainSourceMaterialTypeId,
+      }
+    : null;
   const supply = [];
   for (const row of issues || []) {
     const incidentId = String(row.materialIncidentId ?? row.incidentId ?? '').trim();
@@ -1120,6 +1260,21 @@ export function issueOffcutSupplyForProductionTx(db, job, issues, actor) {
     if (!incidentId || !Number.isFinite(meters) || meters <= 0) continue;
     const inc = getIncidentRow(db, incidentId);
     if (!inc) throw new Error(`Offcut incident ${incidentId} not found.`);
+    const type = String(inc.incident_type || '').trim();
+    if (stainJob) {
+      if (type !== STAIN_INCIDENT_TYPE) {
+        throw new Error('Stain quotations can only issue coil stain metres, not generic offcut.');
+      }
+      if (!incidentMatchesStainQuoteSpec(inc, stainQuoteSpec)) {
+        throw new Error(
+          `Incident ${incidentId} does not match this stain quotation (gauge, colour, or parent material).`
+        );
+      }
+    } else if (type === STAIN_INCIDENT_TYPE) {
+      throw new Error(
+        'Coil stain metres are reserved for stain quotations. Use production error or yard offcut for this job.'
+      );
+    }
     const iid = issueId();
     const coilEventId = insertProductionOffcutPoolIssueTx(
       db,
@@ -1273,6 +1428,7 @@ export function materialIncidentAgingReport(db, branchScope) {
       profileLabel: r.profile_label || '',
       metersAvailable: Number(r.meters_available) || 0,
       totalMeters: Number(r.total_meters) || 0,
+      poolKind: incidentPoolKind(r.incident_type),
       dateISO: r.date_iso,
       ageDays,
     };
@@ -1284,9 +1440,13 @@ export function materialIncidentPoolReconciliationReport(db, branchScope) {
   const summary = computePoolSummary(db, branchScope);
   return {
     incidentMetersAvailable: summary.incidentMetersAvailable,
+    stainMetersAvailable: summary.stainMetersAvailable,
+    stainKgAvailable: summary.stainKgAvailable,
+    productionOffcutMetersAvailable: summary.productionOffcutMetersAvailable,
     legacyPoolMetersAvailable: summary.legacyPoolMetersAvailable,
     totalMetersAvailable: summary.totalMetersAvailable,
     bySpec: summary.bySpec,
+    stainInventory: summary.stainInventory,
     openIncidentCount: (summary.incidents || []).length,
   };
 }

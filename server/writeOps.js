@@ -2449,8 +2449,10 @@ export function confirmGrn(
   }
 
   const lines = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
-  const coilBranch =
-    String(po.branch_id || '').trim() || String(branchFallback || DEFAULT_BRANCH_ID).trim();
+  const coilBranch = String(po.branch_id || '').trim();
+  if (!coilBranch) {
+    return { ok: false, error: 'Purchase order has no branch — cannot receive into stock.' };
+  }
   const sid = supplierID ?? po.supplier_id;
   const sname = supplierName ?? po.supplier_name;
 
@@ -2876,7 +2878,7 @@ export function confirmGrn(
  * Direct stone-coated receipt (metres) without a PO — optional supplier for traceability.
  * @param {import('better-sqlite3').Database} db
  */
-export function postStoneInventoryReceipt(db, payload, branchFallback = DEFAULT_BRANCH_ID, opts = {}) {
+export function postStoneInventoryReceipt(db, payload, branchFallback = '', opts = {}) {
   const designLabel = String(payload?.designLabel ?? '').trim();
   const colourLabel = String(payload?.colourLabel ?? '').trim();
   const gaugeLabel = String(payload?.gaugeLabel ?? '').trim();
@@ -2887,7 +2889,9 @@ export function postStoneInventoryReceipt(db, payload, branchFallback = DEFAULT_
   if (!Number.isFinite(metres) || metres <= 0) {
     return { ok: false, error: 'Enter a valid metres received.' };
   }
-  const bid = String(branchFallback || DEFAULT_BRANCH_ID).trim();
+  const branchGate = requireExplicitBranchId(branchFallback || payload?.branchId, 'stone receipt');
+  if (!branchGate.ok) return { ok: false, error: branchGate.error };
+  const bid = branchGate.branchId;
   const productId = ensureStoneProduct(db, { designLabel, colourLabel, gaugeLabel, branchId: bid });
   const upM = Math.round(Number(payload?.unitPricePerMeterNgn) || 0);
   const landed = upM > 0 ? Math.round(metres * upM) : null;
@@ -2934,7 +2938,7 @@ export function postStoneInventoryReceipt(db, payload, branchFallback = DEFAULT_
  * Direct stone flatsheet receipt (m²) without a PO — optional supplier for traceability.
  * @param {import('better-sqlite3').Database} db
  */
-export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback = DEFAULT_BRANCH_ID, opts = {}) {
+export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback = '', opts = {}) {
   const colourLabel = String(payload?.colourLabel ?? '').trim();
   const lengthMRaw = payload?.lengthM ?? payload?.stoneFlatsheetLengthM;
   const m2 = Number(payload?.m2Received ?? payload?.qtyReceived ?? payload?.metresReceived);
@@ -2944,7 +2948,9 @@ export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback =
   if (!Number.isFinite(m2) || m2 <= 0) {
     return { ok: false, error: 'Enter a valid m² received.' };
   }
-  const bid = String(branchFallback || DEFAULT_BRANCH_ID).trim();
+  const branchGate = requireExplicitBranchId(branchFallback || payload?.branchId, 'stone flatsheet receipt');
+  if (!branchGate.ok) return { ok: false, error: branchGate.error };
+  const bid = branchGate.branchId;
   let productId;
   try {
     productId = ensureStoneFlatsheetProduct(db, { colourLabel, lengthM: lengthMRaw, branchId: bid });
@@ -2995,12 +3001,14 @@ export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback =
 /**
  * Accessory stock receipt (pcs / pack / tube). No supplier required.
  */
-export function postAccessoryInventoryReceipt(db, payload, branchFallback = DEFAULT_BRANCH_ID, opts = {}) {
+export function postAccessoryInventoryReceipt(db, payload, branchFallback = '', opts = {}) {
   const productID = String(payload?.productID ?? '').trim();
   const qty = Number(payload?.qtyReceived ?? payload?.qty);
   if (!productID) return { ok: false, error: 'productID is required.' };
   if (!Number.isFinite(qty) || qty <= 0) return { ok: false, error: 'Enter a valid quantity received.' };
-  const bid = String(branchFallback || DEFAULT_BRANCH_ID).trim();
+  const branchGate = requireExplicitBranchId(branchFallback || payload?.branchId, 'accessory receipt');
+  if (!branchGate.ok) return { ok: false, error: branchGate.error };
+  const bid = branchGate.branchId;
   const row = getProductRowForWorkspace(db, productID, bid);
   if (!row) return { ok: false, error: 'Product not found for this branch.' };
   const up = Math.round(Number(payload?.unitCostNgn) || 0);
@@ -4173,7 +4181,44 @@ export function recalculateCoilLotBook(db, coilNo, opts = {}) {
 }
 
 /**
+ * Shrink Planned/Running job allocations when reserved kg is physically removed (in-production stain).
+ * Prefer the linked job, then oldest remaining allocations. Invariant: opening_weight_kg must not
+ * exceed remaining reserved kg after scrap, or reservation reconcile will flag COIL_OVER_RESERVED.
+ */
+function shrinkActiveCoilJobAllocationsTx(db, coilNo, reservedReleasedKg, preferredJobId) {
+  let remaining = Number(reservedReleasedKg) || 0;
+  if (!(remaining > 1e-6)) return;
+  const preferred = String(preferredJobId || '').trim();
+  const rows = db
+    .prepare(
+      `SELECT pjc.id, pjc.job_id, pjc.opening_weight_kg
+       FROM production_job_coils pjc
+       INNER JOIN production_jobs pj ON pj.job_id = pjc.job_id
+       WHERE pjc.coil_no = ?
+         AND LOWER(TRIM(COALESCE(pj.status, ''))) IN ('planned', 'running')
+       ORDER BY CASE WHEN pjc.job_id = ? THEN 0 ELSE 1 END,
+                pjc.allocated_at_iso ASC,
+                pjc.sequence_no ASC`
+    )
+    .all(coilNo, preferred);
+  const upd = db.prepare(`UPDATE production_job_coils SET opening_weight_kg = ? WHERE id = ?`);
+  const del = db.prepare(`DELETE FROM production_job_coils WHERE id = ?`);
+  for (const row of rows) {
+    if (remaining <= 1e-6) break;
+    const opening = Math.max(0, Number(row.opening_weight_kg) || 0);
+    if (opening <= 1e-6) continue;
+    const take = Math.min(opening, remaining);
+    const next = opening - take;
+    remaining -= take;
+    if (next <= 1e-6) del.run(row.id);
+    else upd.run(next, row.id);
+  }
+}
+
+/**
  * Remove kg from a coil (physical scrap, damage, trim). Reduces raw product stock; optionally credits SCRAP-COIL (or other) SKU.
+ * `allowReservedKg` is for coil_stain on a coil already allocated to a Planned/Running job: remaining
+ * good kg stays on the job; stained kg is released from qty_reserved and production_job_coils.
  */
 export function postCoilScrap(db, payload = {}, opts = {}) {
   const coilNo = String(payload.coilNo ?? '').trim();
@@ -4202,24 +4247,38 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
 
   const qtyRem = Math.max(0, Number(row.qty_remaining) || Number(row.current_weight_kg) || 0);
   const qtyRes = Math.max(0, Number(row.qty_reserved) || 0);
-  const maxScrap = qtyRem - qtyRes;
+  const allowReservedKg = payload.allowReservedKg === true;
+  const maxScrap = allowReservedKg ? qtyRem : qtyRem - qtyRes;
   if (kg > maxScrap + 1e-6) {
     return {
       ok: false,
-      error: `Cannot scrap more than ${maxScrap.toFixed(2)} kg (unreserved balance on this coil).`,
+      error: allowReservedKg
+        ? `Cannot scrap more than ${maxScrap.toFixed(2)} kg (on-hand on this coil).`
+        : `Cannot scrap more than ${maxScrap.toFixed(2)} kg (unreserved balance on this coil).`,
     };
   }
 
   const productID = row.product_id;
   const newRem = qtyRem - kg;
+  const newRes = Math.min(qtyRes, newRem);
+  const reservedReleasedKg = Math.max(0, qtyRes - newRes);
   const stockBranch = coilStockBranchId(row, workspaceBranchId);
 
   const runCore = () => {
-    db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
+    db.prepare(`UPDATE coil_lots SET qty_remaining = ?, qty_reserved = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
       newRem,
+      newRes,
       newRem,
       coilNo
     );
+    if (allowReservedKg && reservedReleasedKg > 1e-6) {
+      shrinkActiveCoilJobAllocationsTx(
+        db,
+        coilNo,
+        reservedReleasedKg,
+        payload.productionJobId ?? payload.production_job_id
+      );
+    }
     finalizeCoilLotStateTx(db, coilNo);
 
     bumpCoilLinkedProductStock(db, productID, stockBranch, -kg);

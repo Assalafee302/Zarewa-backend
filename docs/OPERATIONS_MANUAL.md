@@ -330,8 +330,9 @@ Authenticated ledger money POSTs (receipt, advance, refund-advance) are rate-lim
 **Below-floor pricing exception**
 
 1. If quotation is below floor, save is **allowed** with a warning.
-2. **Managing Director or administrator** records approval (`md.price_exception.approve`).
-3. **Cutting list** and **production** may proceed after MD approval.
+2. **Branch manager**, **Managing Director**, or **administrator** records approval (`PATCH /api/quotations/:id/bm-price-exception` or `…/md-price-exception-approve`).
+3. If the **branch manager** approves, the **MD is notified** (in-app + executive work item). MD does not need to re-approve.
+4. **Cutting list** and **refunds** may proceed after that approval. Production warns but does not block.
 
 **Substitution / accessory rules**
 
@@ -537,8 +538,9 @@ Authenticated ledger money POSTs (receipt, advance, refund-advance) are rate-lim
 3. **Save draft** → **Print** (draft watermark) for yard file if needed.
 4. **Submit** → branch manager queue.
 5. **Approve & post** → coil kg reduced (if applicable), metres added to incident pool.
-6. **Production** picks incident(s) when using offcut stock; completion shows “supplied from offcut”.
-7. **Customer return:** choose sellable FG or offcut pool; optional **Create refund request**.
+6. **Coil stain** → sellable stain pool; Sales quotes Type = Stain (floor = workbook − ₦1,000); production issues those metres or runs stain from a matching coil (including a coil already in production).
+7. **Production error / yard offcut** → pick incident(s) when using generic offcut stock; completion shows “supplied from offcut”.
+8. **Customer return:** choose sellable FG or offcut pool; optional **Create refund request**.
 
 **Anti-theft controls**
 
@@ -1077,7 +1079,7 @@ npm run verify:ci
 | Receive goods (GRN) | Operations |
 | Approve material incident | Branch manager |
 | Mark production / delivery complete | Operations |
-| Approve below-floor price for production | Managing Director or administrator |
+| Approve below-floor price for production | Branch manager, MD, or admin (MD is notified when BM approves) |
 | Lock payroll | HR after MD payroll sign-off |
 | Approve leave / loan | HR queue → branch endorsement → GM HR |
 | Import bank statement lines | Finance |

@@ -538,6 +538,15 @@ const MASTER_DATA_CONFIG = {
         sortOrder: 4,
         inventoryModel: 'stone_meter',
       },
+      {
+        id: 'MAT-006',
+        name: 'Stain',
+        densityKgPerM3: 7850,
+        widthM: 1.2,
+        active: true,
+        sortOrder: 5,
+        inventoryModel: 'stain_meter',
+      },
     ],
     normalizePayload(payload, fallbackSort = 0) {
       const inv = trimText(payload.inventoryModel || payload.inventory_model || 'coil_kg') || 'coil_kg';

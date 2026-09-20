@@ -7,7 +7,8 @@ import {
   listAssociatedStaff,
   listProducts,
   listPurchaseOrders,
-  accountsPayableRowsFromPurchaseOrders,
+  mergeOpenAccountsPayableWithPurchaseOrders,
+  listOpenSupplierPayablesForDesk,
   listCoilLotsForDesk,
   listCoilControlEvents,
   listStockMovements,
@@ -202,6 +203,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
   const cuttingLists = salesOk ? listCuttingLists(db, branchScope, cuttingOpts) : [];
   const pageSize = deskPageLimit();
   const lim = (optsObj) => (optsObj.unlimited ? 0 : Number(optsObj.limit) || pageSize);
+  const materialPoolSummary = salesOk ? computePoolSummary(db, branchScope) : null;
   return {
     ok: true,
     domain: 'sales',
@@ -220,6 +222,8 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     /** Quotation form material type / gauge / colour options (shell may also include this). */
     masterData: masterOk ? listMasterData(db, { branchId: branchScope }) : EMPTY_MASTER_DATA,
     salesAvailableStock: availableStock,
+    materialPoolSummary,
+    stainInventory: materialPoolSummary?.stainInventory ?? null,
     customerDashboard,
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     ledgerEntries: ledgerOk ? ledgerRows : [],
@@ -341,6 +345,7 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
   const deliveries = opsOk ? listDeliveries(db, branchScope, historyOpts) : [];
   const movements = coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [];
   const coilControlEvents = coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [];
+  const materialPoolSummary = coilMovOk ? computePoolSummary(db, branchScope) : null;
   // Store GRN list needs Approved POs even before transport creates an in_transit_loads row.
   // Shell/dashboard defer purchaseOrders; ops hydrate must ship receivable ones.
   const poDeskOpts = deskPageListOpts();
@@ -378,7 +383,8 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     coilLots: coilDesk.coilLots,
     coilControlEvents,
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
-    materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
+    materialPoolSummary,
+    stainInventory: materialPoolSummary?.stainInventory ?? null,
     movements,
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
     yardCoilRegister: yardOk ? listYardCoils(db, branchScope) : [],
@@ -526,7 +532,11 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
   const paymentRequests = payReqOk ? listPaymentRequests(db, branchScope, historyOpts) : [];
   const refunds = refundsOk ? listRefunds(db, branchScope, historyOpts) : [];
   const accountsPayable = finOk
-    ? listAccountsPayable(db, branchScope, { ...registerOpts, openOnly: true })
+    ? listOpenSupplierPayablesForDesk(db, branchScope, {
+        ...registerOpts,
+        openOnly: true,
+        includeLines: true,
+      })
     : [];
   const pageSize = deskPageLimit();
   const lim = (o) => (o.unlimited ? 0 : Number(o.limit) || pageSize);
@@ -711,11 +721,7 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
   // Purchases outstanding table reads AP and/or PO lines; shell bootstrap leaves both empty.
   const apOk = procOk || finOk;
   const apFromRegister = apOk ? listAccountsPayable(db, branchScope, registerOpts) : [];
-  const apPoRefs = new Set(apFromRegister.map((row) => String(row.poRef || '').trim()).filter(Boolean));
-  const synthesizedAp = accountsPayableRowsFromPurchaseOrders(
-    outstandingPos.filter((po) => !apPoRefs.has(String(po.poID || '').trim()))
-  );
-  const accountsPayable = [...apFromRegister, ...synthesizedAp];
+  const accountsPayable = mergeOpenAccountsPayableWithPurchaseOrders(apFromRegister, outstandingPos);
   const outstandingPaymentLines = purchaseOrders.flatMap((po) => {
     if (!(Number(po.outstandingNgn) > 0)) return [];
     const lines = Array.isArray(po.lines) && po.lines.length ? po.lines : [{ lineKey: po.poID, productName: po.supplierName, lineValueNgn: po.amountNgn, amountNgn: po.amountNgn }];

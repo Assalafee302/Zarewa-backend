@@ -53,6 +53,19 @@ export function coilDamagePreview(input = {}) {
 }
 
 /**
+ * coil_stain may cut reserved kg on a coil in production; other damage types stay unreserved-only.
+ * Frontend copies this with the rest of the module via `npm run sync:shared`.
+ * @param {{ qtyRemaining?: number; qtyReserved?: number; incidentType?: string; allowReservedKg?: boolean }} input
+ */
+export function coilDamageMaxRemoveKg(input = {}) {
+  const rem = Math.max(0, Number(input.qtyRemaining ?? input.qty_remaining) || 0);
+  const res = Math.max(0, Number(input.qtyReserved ?? input.qty_reserved) || 0);
+  const type = String(input.incidentType ?? input.incident_type ?? '').trim();
+  const allowReserved = input.allowReservedKg === true || type === 'coil_stain';
+  return allowReserved ? rem : Math.max(0, rem - res);
+}
+
+/**
  * @param {Array<{ lengthM?: number | string; length_m?: number | string; quantity?: number | string }>} [lines]
  * @returns {number}
  */
@@ -91,7 +104,7 @@ export function normalizeDamageLinesForPayload(raw) {
 
 /**
  * @param {object} payload
- * @param {{ maxRemoveKg?: number; supplierConversionKgPerM?: number }} [opts]
+ * @param {{ maxRemoveKg?: number; supplierConversionKgPerM?: number; allowReservedKg?: boolean }} [opts]
  */
 export function validateCoilDamagePayload(payload = {}, opts = {}) {
   const coilNo = String(payload.coilNo ?? payload.coil_no ?? '').trim();
@@ -142,9 +155,12 @@ export function validateCoilDamagePayload(payload = {}, opts = {}) {
   const kgDeducted = beforeKg - afterKg;
   const maxRemove = Number(opts.maxRemoveKg);
   if (Number.isFinite(maxRemove) && kgDeducted > maxRemove + 1e-6) {
+    const capLabel = opts.allowReservedKg
+      ? 'on-hand on this coil'
+      : 'unreserved balance on this coil';
     return {
       ok: false,
-      error: `Cannot remove more than ${maxRemove.toFixed(2)} kg (unreserved balance on this coil).`,
+      error: `Cannot remove more than ${maxRemove.toFixed(2)} kg (${capLabel}).`,
     };
   }
 

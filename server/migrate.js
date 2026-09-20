@@ -3749,6 +3749,17 @@ function migrateStoneCoatedAndPricingArch(db) {
     } else {
       db.prepare(`UPDATE setup_material_types SET inventory_model = 'stone_meter', name = 'Stone coated' WHERE material_type_id = 'MAT-005'`).run();
     }
+    const hasStain = db.prepare(`SELECT 1 FROM setup_material_types WHERE material_type_id = 'MAT-006'`).get();
+    if (!hasStain) {
+      db.prepare(
+        `INSERT INTO setup_material_types (material_type_id, name, density_kg_per_m3, width_m, active, sort_order, inventory_model)
+         VALUES ('MAT-006','Stain',7850,1.2,1,5,'stain_meter')`
+      ).run();
+    } else {
+      db.prepare(
+        `UPDATE setup_material_types SET inventory_model = 'stain_meter', name = 'Stain', active = 1 WHERE material_type_id = 'MAT-006'`
+      ).run();
+    }
   }
 
   const prCols = tableCols('setup_profiles');
@@ -3943,7 +3954,7 @@ function migrateRoofingProfileCatalog2026(db) {
 
 /**
  * Quotations must offer coil (Aluminium / Aluzinc) and stone-coated types. Some DBs only had
- * MAT-005 after partial migrations, or MAT-001/002 were left inactive — repair rows so Sales sees all three.
+ * MAT-005 after partial migrations, or MAT-001/002 were left inactive — repair rows so Sales sees Aluminium, Aluzinc, Stone coated, and Stain.
  */
 function migrateEnsureQuotationMaterialTypes(db) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_material_types'`).get()) {
@@ -3967,6 +3978,7 @@ function migrateEnsureQuotationMaterialTypes(db) {
   insert.run('MAT-001', 'Aluminium', 7850, 1.2, 1, 'coil_kg');
   insert.run('MAT-002', 'Aluzinc', 7850, 1.2, 2, 'coil_kg');
   insert.run('MAT-005', 'Stone coated', 0, 0, 4, 'stone_meter');
+  insert.run('MAT-006', 'Stain', 7850, 1.2, 5, 'stain_meter');
 
   db.prepare(
     `UPDATE setup_material_types SET active = 1, name = 'Aluminium', inventory_model = 'coil_kg' WHERE material_type_id = 'MAT-001'`
@@ -3976,6 +3988,9 @@ function migrateEnsureQuotationMaterialTypes(db) {
   ).run();
   db.prepare(
     `UPDATE setup_material_types SET active = 1, name = 'Stone coated', inventory_model = 'stone_meter' WHERE material_type_id = 'MAT-005'`
+  ).run();
+  db.prepare(
+    `UPDATE setup_material_types SET active = 1, name = 'Stain', inventory_model = 'stain_meter' WHERE material_type_id = 'MAT-006'`
   ).run();
 }
 

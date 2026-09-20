@@ -266,7 +266,8 @@ function salesContextLines(db, req, snapshot, branchScope, pageContext) {
     cuttingLists,
     quotes,
     buildSalesCoilInventoryRows(snapshot),
-    snapshot?.masterData
+    snapshot?.masterData,
+    snapshot?.materialPoolSummary?.bySpec
   );
   const searchRows = searchSection(db, req, pageContext);
 
@@ -275,6 +276,7 @@ function salesContextLines(db, req, snapshot, branchScope, pageContext) {
     `Current sales tab: ${activeTab}`,
     `Visible sales records: ${quotes.length} quotations, ${receipts.length} receipts, ${cuttingLists.length} cutting lists, ${refunds.length} refunds, ${customers.length} customers.`,
     `Attention counts: ${followUps.length} quotations need follow-up, ${overdueQuotes.length} quotations are past due, ${refundsAwaitingPay.length} refunds await payout, ${readiness.waitingWithSpecNoStock} cutting lists have spec but no stock match.`,
+    `Stain inventory: ${Number(snapshot?.materialPoolSummary?.stainMetersAvailable || snapshot?.stainInventory?.totals?.metersAvailable || 0).toFixed(1)} m across ${Number(snapshot?.stainInventory?.totals?.lotCount || snapshot?.materialPoolSummary?.stainInventory?.totals?.lotCount || 0)} lots.`,
   ];
 
   pushLines(

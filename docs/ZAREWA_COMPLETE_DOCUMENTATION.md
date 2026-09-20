@@ -690,8 +690,9 @@ Authenticated ledger money POSTs (receipt, advance, refund-advance) are rate-lim
 **Below-floor pricing exception**
 
 1. If quotation is below floor, save is **allowed** with a warning.
-2. **Managing Director or administrator** records approval (`md.price_exception.approve`).
-3. **Cutting list** and **production** may proceed after MD approval.
+2. **Branch manager**, **Managing Director**, or **administrator** records approval (`PATCH /api/quotations/:id/bm-price-exception` or `…/md-price-exception-approve`).
+3. If the **branch manager** approves, the **MD is notified** (in-app + executive work item). MD does not need to re-approve.
+4. **Cutting list** and **refunds** may proceed after that approval. Production warns but does not block.
 
 **Substitution / accessory rules**
 
@@ -897,8 +898,9 @@ Authenticated ledger money POSTs (receipt, advance, refund-advance) are rate-lim
 3. **Save draft** → **Print** (draft watermark) for yard file if needed.
 4. **Submit** → branch manager queue.
 5. **Approve & post** → coil kg reduced (if applicable), metres added to incident pool.
-6. **Production** picks incident(s) when using offcut stock; completion shows “supplied from offcut”.
-7. **Customer return:** choose sellable FG or offcut pool; optional **Create refund request**.
+6. **Coil stain** → sellable stain pool; Sales quotes Type = Stain (floor = workbook − ₦1,000); production issues those metres.
+7. **Production error / yard offcut** → pick incident(s) when using generic offcut stock; completion shows “supplied from offcut”.
+8. **Customer return:** choose sellable FG or offcut pool; optional **Create refund request**.
 
 **Anti-theft controls**
 
@@ -1437,7 +1439,7 @@ npm run verify:ci
 | Receive goods (GRN) | Operations |
 | Approve material incident | Branch manager |
 | Mark production / delivery complete | Operations |
-| Approve below-floor price for production | Managing Director or administrator |
+| Approve below-floor price for production | Branch manager, MD, or admin (MD is notified when BM approves) |
 | Lock payroll | HR after MD payroll sign-off |
 | Approve leave / loan | HR queue → branch endorsement → GM HR |
 | Import bank statement lines | Finance |
@@ -1544,7 +1546,7 @@ The SPA loads a single snapshot. Row-level lists are **filtered by role** in `se
 - **Branch manager** (role key still `sales_manager`): label and permissions updated for branch duties; holds `refunds.approve` for refund decisions alongside MD and **admin** (`*`).
 - **Receipt bank confirmation**: `PATCH /api/sales-receipts/:receiptId/bank-confirmation` with `{ confirmed: boolean }` — requires `finance.pay` or `receipts.post`; audited as `receipt.bank_confirmation`.
 - **Payroll**: draft runs record `md_approved_at_iso` / `md_approved_by_user_id` via `POST /api/hr/payroll-runs/:runId/md-approve` (permission `hr.payroll.md_approve`). HR cannot **lock** a draft until MD approval is recorded.
-- **Price list & production**: canonical rows in `price_list_items` and material pricing workbook floors; **cutting lists and production** are blocked when a quotation is below floor until **MD or administrator** records approval (`PATCH /api/quotations/:id/md-price-exception-approve` with `md.price_exception.approve`). Quotation saves below floor are allowed with warnings.
+- **Price list & production**: canonical rows in `price_list_items` and material pricing workbook floors; **cutting lists** are blocked when a quotation is below floor until a **branch manager**, **MD**, or **administrator** records approval (`PATCH /api/quotations/:id/bm-price-exception` or `…/md-price-exception-approve`). Branch-manager approval notifies MD (informational — MD does not re-approve). Production register and start warn but do not block. Quotation saves below floor are allowed with warnings.
 - **HR self-service**: staff profiles include `selfServiceEligible`; leave/loan self-apply on **My profile** is gated on that flag (and the user matching their HR record).
 
 ## HR
@@ -1581,7 +1583,7 @@ The SPA loads a single snapshot. Row-level lists are **filtered by role** in `se
 | Payroll lock → export | HR (`hr.payroll.manage`) | GM HR (`hr.payroll.gm_approve`) **or** MD (`hr.payroll.md_approve`) | Draft run must have `gm_approved_at_iso` **or** `md_approved_at_iso` before lock (unless `admin` `*`). See `patchPayrollRun` in `server/hrOps.js`. |
 | Staff loan agreement PDF | HR (`hr.letters.generate` or `hr.loans.manage`) | — | Only for **approved** loan requests: `POST /api/hr/loan-requests/:requestId/agreement-letter`. |
 | Public careers | — | — | `GET/POST /api/public/careers/*` — no session; registered before auth middleware. |
-| Below floor price → production | Branch manager or **administrator** (`refunds.approve` + `sales_manager` / `branch_manager` / `admin` role) | MD confirms after production (`md.price_exception.approve`) | BM/admin approval unblocks production; MD confirm required before refund. Approval is available on the quotation and in **Operations → production register**. |
+| Below floor price → cutting list / refunds | Branch manager (`bm.price_exception.approve` / `PATCH …/bm-price-exception`) or **Managing Director** / **administrator** (`md.price_exception.approve`) | MD is notified when the branch manager approves (no second MD approval) | Unblocks cutting list and refunds. Production warns only. Saves below floor are allowed with a warning. |
 | Delivery / produced (authoritative) | — | Operations (`deliveries.manage`, `production.manage`, …) | Sales sees status read-only where enforced. |
 | Bank statement lines | Finance post (`finance.post`) | Same role matches lines | `GET /api/bank-reconciliation` is `finance.view`; bulk paste: `POST /api/bank-reconciliation/import`. |
 | Receipt vs bank | Cashier / poster | `PATCH /api/sales-receipts/:id/bank-confirmation` | `finance.pay` or `receipts.post`. |
@@ -4798,12 +4800,13 @@ Control coil stain, production error, customer return, yard offcut, and supplier
 3. **Save draft** → **Print** (draft watermark) for yard file if needed.
 4. **Submit** → branch manager queue.
 5. **Approve & post** → coil kg reduced (if applicable), metres added to incident pool balance.
-6. **Production** → pick incident(s) when using offcut stock metres; completion shows “supplied from offcut”.
-7. **Customer return** → choose sellable FG or offcut pool; optional **Create refund request**.
+6. **Coil stain** metres become sellable stain stock. Sales quotes Type = Stain (floor = workbook − ₦1,000). Production issues matching stain incidents or runs stain from a matching coil (including stain found on a coil already in production).
+7. **Production error / yard offcut** → pick incident(s) when using generic offcut stock metres; completion shows “supplied from offcut”.
+8. **Customer return** → choose sellable FG or offcut pool; optional **Create refund request**.
 
 ## Incident types
 
-- **Coil stain** — after unwind; kg off coil + metres to offcut pool.
+- **Coil stain** — after unwind, including on a coil already in production; kg off remaining good coil; damaged metres go to the stain pool for stain quotations. Remaining good coil stays on the job.
 - **Production error** — requires production job ID.
 - **Customer return** — sellable restores FG metres; otherwise offcut pool.
 - **Yard offcut** — pool inward (trim/scratch).
@@ -5913,7 +5916,7 @@ Short reference for day-to-day approvals in Zarewa. Technical detail lives in `d
 | **Approve staff leave or loan** | **HR** (queue and final steps per your HR role). |
 | **Lock payroll for the month** | **HR** prepares the run; **Managing Director** must **sign off** the draft first; then HR can lock and export. |
 | **Set or change list prices** | Users with **pricing** access (typically **MD** / settings). |
-| **Sell below list price and still start production** | **MD** must record a **price exception** on that quotation. |
+| **Sell below list price and still start production** | **Branch manager**, **MD**, or **Administrator** records a **price exception** on that quotation. If the branch manager approves, the **MD is notified**. |
 | **Mark goods delivered / production truth** | **Operations** (not sales). |
 | **Confirm bank deposit matches a receipt** | **Cashier** / finance with receipt permissions — **bank confirmation** on the receipt row. |
 | **Add many bank statement lines at once** | **Finance** — Finance & accounts → Bank reconciliation → **Import CSV** or **Import JSON**. |

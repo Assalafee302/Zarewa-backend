@@ -10,12 +10,21 @@ import {
   colourSelectOptionsFromRows,
   mergeStockColourSelectOptions,
 } from './colourCanonicalization.js';
+import {
+  isStainInventoryModel,
+  isStainInventoryRow,
+  isStainMaterialTypeId,
+  isStoneCoatedMaterialTypeId,
+  isStoneInventoryModel,
+  isStoneStockCheckProduct,
+} from './stainMaterialPolicy.js';
 
 export { mergeStockColourSelectOptions };
 
 export { canonicalColourName };
 
-const QUOTATION_MATERIAL_INVENTORY_MODELS = new Set(['coil_kg', 'stone_meter']);
+/** Keep in sync with QuotationModal — stain_meter is Type of material = Stain (damaged coils). */
+export const QUOTATION_MATERIAL_INVENTORY_MODELS = new Set(['coil_kg', 'stone_meter', 'stain_meter']);
 
 /**
  * @param {{ materialTypes?: object[]; gauges?: object[]; colours?: object[] } | null | undefined} masterData
@@ -81,12 +90,23 @@ export function stockCheckSelectOptionsFromCoilRows(coilRows, masterData = null)
  * @param {string} materialTypeId
  * @param {string} rowMaterialType free-text from coil / product
  */
-export function stockRowMatchesMaterialTypeFilter(masterData, materialTypeId, rowMaterialType) {
+export function stockRowMatchesMaterialTypeFilter(masterData, materialTypeId, rowMaterialTypeOrRow) {
   const id = String(materialTypeId || '').trim();
   if (!id) return true;
-  const row = String(rowMaterialType || '').trim().toLowerCase();
-  if (!row) return false;
+  const rowObj = rowMaterialTypeOrRow && typeof rowMaterialTypeOrRow === 'object' ? rowMaterialTypeOrRow : null;
+  const row = String((rowObj?.materialType ?? rowMaterialTypeOrRow) || '').trim().toLowerCase();
   const mt = (masterData?.materialTypes || []).find((m) => String(m.id || '').trim() === id);
+  if (isStainMaterialTypeId(id) || isStainInventoryModel(mt?.inventoryModel)) {
+    if (rowObj && isStainInventoryRow(rowObj)) return true;
+    if (row.includes('stain')) return true;
+    return false;
+  }
+  if (isStoneCoatedMaterialTypeId(id) || isStoneInventoryModel(mt?.inventoryModel)) {
+    if (rowObj && isStoneStockCheckProduct(rowObj)) return true;
+    if (row.includes('stone')) return true;
+    return false;
+  }
+  if (!row) return false;
   const name = String(mt?.name || '').trim().toLowerCase();
   if (name && row === name) return true;
   if (name && (row.includes(name) || name.includes(row))) return true;

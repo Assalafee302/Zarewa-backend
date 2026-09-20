@@ -329,6 +329,7 @@ export function buildBootstrap(db, opts = {}) {
     coilMovOk && !omitDesk.coilLots
       ? listCoilLotsForDesk(db, branchScope, coilDeskListOpts())
       : { coilLots: [], truncated: Boolean(omitDesk.coilLots), mode: 'active' };
+  const materialPoolSummary = coilMovOk ? computePoolSummary(db, branchScope) : null;
 
   return {
     ok: true,
@@ -359,7 +360,8 @@ export function buildBootstrap(db, opts = {}) {
     coilLots: coilDesk.coilLots,
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
-    materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
+    materialPoolSummary,
+    stainInventory: materialPoolSummary?.stainInventory ?? null,
     movements: coilMovOk ? listStockMovements(db, branchScope, rowListOpts(opts, 'movements')) : [],
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
     deliveries: opsOk ? listDeliveries(db, branchScope, listOpts('deliveries')) : [],
@@ -819,6 +821,7 @@ export function buildShellBootstrap(db, opts = {}) {
       enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
     },
     materialPoolSummary: null,
+    stainInventory: null,
     wipByProduct: {},
     productionMetrics: {
       jobCount: 0,

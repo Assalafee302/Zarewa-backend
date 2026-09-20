@@ -116,7 +116,10 @@ describe('createCoilDamageMaterialIncident', () => {
     expect(lineCount.n).toBe(2);
   });
 
-  it('rejects kg removal above unreserved balance', () => {
+  it('rejects coil_stain above on-hand kg', () => {
+    db.prepare(
+      `UPDATE coil_lots SET qty_remaining = 4000, current_weight_kg = 4000, qty_reserved = 3500 WHERE coil_no = 'C-DMG-1'`
+    ).run();
     const r = createCoilDamageMaterialIncident(
       db,
       {
@@ -124,13 +127,52 @@ describe('createCoilDamageMaterialIncident', () => {
         beforeKg: 5000,
         afterKg: 0,
         meters: 1800,
-        note: 'Attempt to remove entire coil as damage',
+        incidentType: 'coil_stain',
+        note: 'Attempt to remove more than on-hand as stain',
+        submit: false,
+      },
+      { workspaceBranchId: 'BR-001', actor: { userId: 'u1' } }
+    );
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/on-hand/i);
+  });
+
+  it('rejects production_error above unreserved balance', () => {
+    db.prepare(`UPDATE coil_lots SET qty_reserved = 4500 WHERE coil_no = 'C-DMG-1'`).run();
+    const r = createCoilDamageMaterialIncident(
+      db,
+      {
+        coilNo: 'C-DMG-1',
+        beforeKg: 5000,
+        afterKg: 0,
+        meters: 1800,
+        incidentType: 'production_error',
+        note: 'Attempt to remove reserved kg as production error',
         submit: false,
       },
       { workspaceBranchId: 'BR-001', actor: { userId: 'u1' } }
     );
     expect(r.ok).toBe(false);
     expect(String(r.error)).toMatch(/unreserved/i);
+  });
+
+  it('requires a linked job when coil_stain eats reserved kg', () => {
+    db.prepare(`UPDATE coil_lots SET qty_reserved = 4500 WHERE coil_no = 'C-DMG-1'`).run();
+    const r = createCoilDamageMaterialIncident(
+      db,
+      {
+        coilNo: 'C-DMG-1',
+        beforeKg: 5000,
+        afterKg: 4000,
+        meters: 40,
+        incidentType: 'coil_stain',
+        note: 'Stain into reserved kg without a job',
+        submit: false,
+      },
+      { workspaceBranchId: 'BR-001', actor: { userId: 'u1' } }
+    );
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/booked for a job/i);
   });
 
   it('posts scrap disposition to SCRAP-COIL not offcut pool on approve', () => {

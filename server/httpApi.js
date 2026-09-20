@@ -43,7 +43,7 @@ import {
   purchasesPaidRows,
   purchasesReceivedRows,
 } from '../shared/lib/standardReportsPurchases.js';
-import { stockCoilAsAtRows, stockCoilAsAtTotals } from '../shared/lib/standardReportsStock.js';
+import { stockCoilAsAtRows, stockCoilAsAtTotals, stockStainInventoryRows, stockStainInventoryTotals, stockStoneAsAtRows, stockStoneAsAtTotals, stockAccessoryAsAtRows, stockAccessoryAsAtTotals } from '../shared/lib/standardReportsStock.js';
 import { coilStockTieOutRows } from '../shared/lib/coilStockTieOut.js';
 import { isInventoryMovementType } from '../shared/lib/inventoryMovementTypes.js';
 import {
@@ -5098,6 +5098,26 @@ export function registerHttpApi(app, db) {
         return res.status(400).json({ ok: false, error: 'asAtDate (or endDate) required' });
       }
       const snap = listInventoryCoilSnapshots(db, asAtDate, branchScope);
+      const stainSummary = computePoolSummary(db, req.workspaceBranchId || branchScope);
+      const stainRows = stockStainInventoryRows(stainSummary.stainInventory?.lots || []);
+      const stainInventory = {
+        asAtMode: 'live',
+        rows: stainRows,
+        totals: stockStainInventoryTotals(stainRows),
+      };
+      const products = listProducts(db, branchScope);
+      const stoneRows = stockStoneAsAtRows(products);
+      const accessoryRows = stockAccessoryAsAtRows(products);
+      const stoneInventory = {
+        asAtMode: 'live',
+        rows: stoneRows,
+        totals: stockStoneAsAtTotals(stoneRows),
+      };
+      const accessoryInventory = {
+        asAtMode: 'live',
+        rows: accessoryRows,
+        totals: stockAccessoryAsAtTotals(accessoryRows),
+      };
       if (snap.length > 0) {
         const rows = stockCoilAsAtRows(snap);
         return res.json({
@@ -5108,6 +5128,9 @@ export function registerHttpApi(app, db) {
           snapshotRowCount: snap.length,
           rows,
           totals: stockCoilAsAtTotals(rows),
+          stainInventory,
+          stoneInventory,
+          accessoryInventory,
         });
       }
       const live = listCoilLots(db, branchScope);
@@ -5119,9 +5142,12 @@ export function registerHttpApi(app, db) {
         asAtMode: 'live',
         snapshotRowCount: 0,
         disclaimer:
-          'No snapshot for this date — rows show current coil balances. Capture a month-end snapshot (POST /api/reports/coil-snapshot-capture) for historical closing.',
+          'No snapshot for this date — coil rows show current lot balances. Capture a month-end snapshot (POST /api/reports/coil-snapshot-capture) for historical closing. Stain metres are live posted coil_stain balances. Stone-coated and accessories are live per-branch SKU balances.',
         rows,
         totals: stockCoilAsAtTotals(rows),
+        stainInventory,
+        stoneInventory,
+        accessoryInventory,
       });
     } catch (e) {
       console.error(e);
@@ -8768,6 +8794,22 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/material-incidents/stain-inventory', requirePermission(materialIncidentReadPerms), (req, res) => {
+    try {
+      const summary = computePoolSummary(db, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      res.json({
+        ok: true,
+        branchId: summary.branchId,
+        stainMetersAvailable: summary.stainMetersAvailable,
+        stainKgAvailable: summary.stainKgAvailable,
+        ...(summary.stainInventory || { lots: [], bySpec: [], totals: { lotCount: 0, metersAvailable: 0, kgBooked: 0 } }),
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.get('/api/material-incidents/reports/loss', requirePermission(['reports.view', ...materialIncidentApprovePerms]), (req, res) => {
     try {
       res.json({ ok: true, rows: materialIncidentLossReport(db, req.workspaceBranchId || DEFAULT_BRANCH_ID) });
@@ -8807,6 +8849,7 @@ export function registerHttpApi(app, db) {
       const rows = listMaterialIncidents(db, req.workspaceBranchId || DEFAULT_BRANCH_ID, {
         status: req.query.status,
         incidentType: req.query.incidentType || req.query.type,
+        poolKind: req.query.poolKind,
         gaugeLabel: req.query.gauge,
         colour: req.query.colour,
         minMeters: req.query.minMeters,

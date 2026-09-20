@@ -8,6 +8,7 @@ import {
   expectedGaugeBoundsMm,
   quotationExpectsCoilAllocation,
 } from './coilSpecVersusProduct.js';
+import { quotationIsStainMeterHeader, stainPoolRowMatchesQuotation } from './stainMaterialPolicy.js';
 
 function skipMaterialCompareToCoil(expectedMaterialType) {
   const m = String(expectedMaterialType ?? '').toLowerCase();
@@ -86,17 +87,36 @@ export function formatNoCoilMatchAlertForCuttingList(cl, quotation) {
 }
 
 /**
+ * @param {Record<string, unknown>} cl
+ * @param {Record<string, unknown>} quotation
+ */
+export function formatNoStainPoolMatchAlertForCuttingList(cl, quotation) {
+  const colour = String(quotation?.materialColor || '').trim() || EM_DASH;
+  const gauge = String(quotation?.materialGauge || '').trim() || EM_DASH;
+  const mat = String(quotation?.materialTypeName ?? quotation?.material_type_name ?? 'Stain').trim() || 'Stain';
+  const id = String(cl?.id || 'Cutting list').trim();
+  return `${id} is waiting: no stain in the yard and no matching coil for ${colour}, ${gauge} (${mat}). Record stain from a coil, or receive a matching roll.`;
+}
+
+/**
  * @param {object[]} cuttingLists
  * @param {object[]} quotations
  * @param {object[]} coilInventoryRows — from Sales.jsx coilInventoryRows
  * @param {{ colours?: object[] } | null | undefined} [masterData] — optional Setup colours for coil ↔ quote colour resolution
+ * @param {object[]} stainPoolRows — materialPoolSummary.bySpec / incidents with metersAvailable
  * @returns {{
  *   ready: Array<{ cl: object, quotation: object, matches: object[], totalKg: number, totalEstM: number, needM: number, meterCoverageOk: boolean }>,
  *   waitingWithSpecNoStock: number,
  *   waitingNoMatch: Array<{ cl: object, quotation: object, alertText: string }>,
  * }}
  */
-export function computeCuttingListMaterialReadiness(cuttingLists, quotations, coilInventoryRows, masterData) {
+export function computeCuttingListMaterialReadiness(
+  cuttingLists,
+  quotations,
+  coilInventoryRows,
+  masterData,
+  stainPoolRows
+) {
   const byQ = new Map(quotations.map((q) => [String(q.id), q]));
   const ready = [];
   const waitingNoMatch = [];
@@ -105,6 +125,37 @@ export function computeCuttingListMaterialReadiness(cuttingLists, quotations, co
     if (!isWaitingCuttingListForMaterial(cl)) continue;
     const q = byQ.get(String(cl.quotationRef || '').trim());
     if (!q) continue;
+
+    if (quotationIsStainMeterHeader(q)) {
+      const poolMatches = (stainPoolRows || []).filter((r) => stainPoolRowMatchesQuotation(r, q));
+      const coilMatches = (coilInventoryRows || []).filter((r) =>
+        inventoryRowMatchesQuotationCoilSpec(r, q, masterData)
+      );
+      const poolM = poolMatches.reduce((s, r) => s + (Number(r.metersAvailable) || 0), 0);
+      const coilKg = coilMatches.reduce((s, r) => s + (Number(r.kg) || 0), 0);
+      const coilEstM = coilMatches.reduce((s, r) => s + (Number(r.estMeters) || 0), 0);
+      const totalEstM = poolM + coilEstM;
+      const needM = Number(cl.totalMeters) || 0;
+      if (poolM <= 0 && coilMatches.length === 0) {
+        waitingNoMatch.push({
+          cl,
+          quotation: q,
+          alertText: formatNoStainPoolMatchAlertForCuttingList(cl, q),
+        });
+        continue;
+      }
+      ready.push({
+        cl,
+        quotation: q,
+        matches: [...poolMatches, ...coilMatches],
+        totalKg: coilKg,
+        totalEstM,
+        needM,
+        meterCoverageOk: needM <= 0 || totalEstM >= needM * 0.85 || coilMatches.length > 0,
+      });
+      continue;
+    }
+
     if (!quotationExpectsCoilAllocation(q)) continue;
     if (!quotationHasComparableCoilSpec(q)) continue;
 

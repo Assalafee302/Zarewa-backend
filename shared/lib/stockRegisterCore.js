@@ -506,8 +506,9 @@ function productMovementsInPeriod(movements, productId, start, end, branchId = '
     if (String(m.productID || m.product_id || '') !== productId) continue;
     if (bid) {
       const mb = String(m.branchId || m.branch_id || '').trim();
-      // Untagged movements are allowed (legacy); tagged ones must match the register branch.
-      if (mb && mb !== bid) continue;
+      // Shared STONE-/ACC- ids exist on every branch. Untagged rows must not
+      // reconstruct Kaduna receipts onto Yola (product_id match is not enough).
+      if (mb !== bid) continue;
     }
     const d = toIsoDate(m.dateISO || m.date_iso || m.atISO || m.at_iso);
     if (!inPeriod(d, start, end)) continue;

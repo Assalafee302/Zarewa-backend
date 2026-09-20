@@ -1681,6 +1681,21 @@ export function accountsPayableRowsFromPurchaseOrders(pos) {
 }
 
 /**
+ * Union AP register rows with unpaid POs that never landed in accounts_payable.
+ * MD/finance snapshots otherwise overwrite Purchases payables with an empty register.
+ * @param {object[]} apFromRegister
+ * @param {object[]} outstandingPos
+ */
+export function mergeOpenAccountsPayableWithPurchaseOrders(apFromRegister, outstandingPos) {
+  const register = Array.isArray(apFromRegister) ? apFromRegister : [];
+  const apPoRefs = new Set(register.map((row) => String(row.poRef || '').trim()).filter(Boolean));
+  const synthesized = accountsPayableRowsFromPurchaseOrders(
+    (outstandingPos || []).filter((po) => !apPoRefs.has(String(po.poID || '').trim()))
+  );
+  return [...register, ...synthesized];
+}
+
+/**
  * POs with a quoted transport fee and transporter assigned, where treasury payments are still below the fee.
  * Used on Finance → Treasury (same pattern as refunds / payment requests awaiting payout).
  * @param {import('better-sqlite3').Database} db
@@ -3651,6 +3666,32 @@ export function countAccountsPayable(db, branchScope = 'ALL', opts = {}) {
     )
     .get(...b.args);
   return Number(row?.n) || 0;
+}
+
+/**
+ * Open supplier balances for Purchases / MD desks: AP register plus unpaid POs
+ * that were never synced into accounts_payable.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ * @param {object} [opts]
+ */
+export function listOpenSupplierPayablesForDesk(db, branchScope = 'ALL', opts = {}) {
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const includeLines = Boolean(opts.includeLines);
+  const apFromRegister = listAccountsPayable(db, branchScope, {
+    ...opts,
+    openOnly: true,
+    includeLines,
+  });
+  // Later pages of the AP register should not re-append the first page of unpaid POs.
+  if (offset > 0) return apFromRegister;
+  const outstandingPos = listPurchaseOrders(db, branchScope, {
+    outstandingOnly: true,
+    skipSideEffects: true,
+    unlimited: opts.unlimited,
+    limit: opts.limit,
+  });
+  return mergeOpenAccountsPayableWithPurchaseOrders(apFromRegister, outstandingPos);
 }
 
 export function listBankReconciliation(db, branchScope = 'ALL', opts) {

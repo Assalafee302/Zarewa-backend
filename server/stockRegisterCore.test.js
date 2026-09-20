@@ -344,4 +344,34 @@ describe('stockRegisterCore', () => {
     expect(row).toBeUndefined();
     expect(pack.accessories.rows.every((r) => r.balance !== 500)).toBe(true);
   });
+
+  it('does not count untagged accessory receipts against another branch', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-YL',
+      periodEnd: '2026-04-30',
+      coilLots: [],
+      productionJobs: [],
+      productionJobCoils: [],
+      coilControlEvents: [],
+      products: [
+        {
+          productID: 'ACC-RIVET-PACK',
+          name: 'Rivets',
+          stockLevel: 0,
+          unit: 'pack',
+          dashboardAttrs: { inventoryModel: 'consumable' },
+        },
+      ],
+      stockMovements: [
+        {
+          type: 'STORE_ACCESSORY_DIRECT',
+          productID: 'ACC-RIVET-PACK',
+          qty: 500,
+          dateISO: '2026-04-10',
+          branchId: '',
+        },
+      ],
+    });
+    expect(pack.accessories.rows.find((r) => r.productID === 'ACC-RIVET-PACK')).toBeUndefined();
+  });
 });

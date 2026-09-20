@@ -134,4 +134,19 @@ describe('productBranchInventory', () => {
     expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', '')).toBeNull();
     db.close();
   });
+
+  it('adjusting Yola accessory stock does not change Kaduna', async () => {
+    const db = await tryMemDb();
+    if (!db) return;
+    migrateProductsBranchCompositeInventory(db);
+    db.prepare(
+      `INSERT OR IGNORE INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, dashboard_attrs_json, branch_id)
+       VALUES ('ACC-RIVET-PACK','Rivets',50,'pack',0,0,'{"inventoryModel":"consumable"}','BR-KD')`
+    ).run();
+    ensureNonCoilProductRowsForAllBranches(db);
+    adjustProductStockForBranch(db, 'ACC-RIVET-PACK', 7, 'BR-YL');
+    expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', 'BR-YL')?.stock_level).toBe(7);
+    expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', 'BR-KD')?.stock_level).toBe(50);
+    db.close();
+  });
 });

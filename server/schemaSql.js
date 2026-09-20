@@ -169,8 +169,10 @@ CREATE TABLE IF NOT EXISTS associated_staff (
   branch_id TEXT NOT NULL
 );
 
+-- Non-coil SKUs (STONE-* / ACC-*) are per-branch: PK (branch_id, product_id).
+-- Coil catalogue SKUs (COIL-ALU, PRD-102) keep branch_id '' -- on-hand is coil_lots.
 CREATE TABLE IF NOT EXISTS products (
-  product_id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL,
   name TEXT NOT NULL,
   stock_level REAL NOT NULL DEFAULT 0,
   unit TEXT NOT NULL,
@@ -180,8 +182,11 @@ CREATE TABLE IF NOT EXISTS products (
   colour TEXT,
   material_type TEXT,
   dashboard_attrs_json TEXT,
-  branch_id TEXT NOT NULL
+  branch_id TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (branch_id, product_id)
 );
+CREATE INDEX IF NOT EXISTS idx_ws_products_branch ON products(branch_id);
+CREATE INDEX IF NOT EXISTS idx_ws_products_id ON products(product_id);
 
 CREATE TABLE IF NOT EXISTS purchase_orders (
   po_id TEXT PRIMARY KEY,

@@ -2,6 +2,7 @@
  * Stock movement insert + branch_id resolution/backfill.
  */
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import { isBranchOwnedSkuProductId } from './productBranchInventory.js';
 
 function hasColumn(db, table, col) {
   try {
@@ -11,10 +12,30 @@ function hasColumn(db, table, col) {
   }
 }
 
+function isDirectBranchSkuMovement(type, productId) {
+  const t = String(type || '').trim().toUpperCase();
+  if (
+    t.startsWith('STORE_STONE') ||
+    t.startsWith('STORE_ACCESSORY') ||
+    t.startsWith('STORE_GRN_STONE') ||
+    t.startsWith('STORE_GRN_ACCESSORY') ||
+    t === 'STONE_CONSUMPTION' ||
+    t === 'STONE_FLATSHEET_ISSUE' ||
+    t === 'STONE_FLATSHEET_ISSUE_ADJUSTMENT' ||
+    t === 'ACCESSORY_ISSUE' ||
+    t === 'ACCESSORY_ISSUE_ADJUSTMENT'
+  ) {
+    return true;
+  }
+  return isBranchOwnedSkuProductId(productId);
+}
+
 /**
  * Infer workspace branch from movement ref / product when caller omits branchId.
+ * Stone/accessory SKUs exist on every branch — never invent Kaduna from product_id.
  * @param {import('better-sqlite3').Database} db
- * @param {{ ref?: string, productID?: string, product_id?: string }} entry
+ * @param {{ ref?: string, productID?: string, product_id?: string, type?: string }} entry
+ * @returns {string | null}
  */
 export function resolveStockMovementBranchId(db, entry) {
   const ref = String(entry?.ref ?? '').trim();
@@ -59,6 +80,7 @@ export function resolveStockMovementBranchId(db, entry) {
     }
   }
 
+  if (isDirectBranchSkuMovement(entry?.type, productId)) return null;
   return DEFAULT_BRANCH_ID;
 }
 
@@ -70,9 +92,19 @@ export function insertStockMovementTx(db, entry) {
   const id = String(entry?.id ?? '').trim();
   if (!id) throw new Error('Stock movement id is required.');
   const atISO = String(entry.atISO || new Date().toISOString()).slice(0, 19);
-  const branchId =
-    String(entry.branchId ?? entry.branch_id ?? resolveStockMovementBranchId(db, entry) ?? '').trim() ||
-    DEFAULT_BRANCH_ID;
+  const productId = String(entry.productID ?? entry.product_id ?? '').trim();
+  let branchId = String(entry.branchId ?? entry.branch_id ?? '').trim();
+  if (!branchId) {
+    branchId = String(resolveStockMovementBranchId(db, entry) ?? '').trim();
+  }
+  if (!branchId) {
+    if (isDirectBranchSkuMovement(entry.type, productId)) {
+      throw new Error(
+        'branch_id is required for stone/accessory stock movements — will not default to Kaduna.'
+      );
+    }
+    branchId = DEFAULT_BRANCH_ID;
+  }
   const dateISO = String(entry.dateISO ?? atISO).slice(0, 10);
 
   if (hasColumn(db, 'stock_movements', 'branch_id')) {

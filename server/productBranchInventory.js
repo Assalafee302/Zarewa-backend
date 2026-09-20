@@ -1,5 +1,8 @@
 /**
  * Branch-scoped non-coil inventory vs global coil catalogue SKUs.
+ *
+ * Invariant: STONE-* and ACC-* on-hand is products.stock_level at (branch_id, product_id).
+ * Coil kg on-hand is coil_lots, not the global COIL-ALU / PRD-102 catalogue rows.
  */
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 
@@ -18,6 +21,12 @@ export function isGlobalCoilCatalogProductId(productId, dashboardAttrs = null) {
   if (GLOBAL_COIL_PRODUCT_IDS.has(pid)) return true;
   const model = String(dashboardAttrs?.inventoryModel || '').trim();
   return model === 'coil_kg';
+}
+
+/** Stone / accessory SKUs are per-branch — never infer Kaduna from product_id alone. */
+export function isBranchOwnedSkuProductId(productId) {
+  const pid = String(productId || '').trim();
+  return /^STONE-/i.test(pid) || /^ACC-/i.test(pid);
 }
 
 export function isGlobalCoilCatalogRow(row) {
@@ -218,6 +227,11 @@ export function migrateProductsBranchCompositeInventory(db) {
     return;
   }
   if (productsTableHasBranchCompositePk(db)) {
+    try {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ws_products_id ON products(product_id)`);
+    } catch {
+      /* ignore */
+    }
     repairNonCoilProductBranchAssignment(db);
     ensureNonCoilProductRowsForAllBranches(db);
     return;
@@ -290,6 +304,7 @@ export function migrateProductsBranchCompositeInventory(db) {
     db.exec(`DROP TABLE products`);
     db.exec(`ALTER TABLE products__branch_new RENAME TO products`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_ws_products_branch ON products(branch_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_ws_products_id ON products(product_id)`);
   })();
 
   repairNonCoilProductBranchAssignment(db);

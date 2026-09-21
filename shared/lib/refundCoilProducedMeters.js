@@ -45,8 +45,32 @@ function coilMetersForJob(db, jobId) {
 }
 
 /**
+ * Post-completion finished-goods metre corrections (`production_completion_adjustments`).
+ * Production UI shows these via effectiveOutputMeters; refunds must too or unproduced
+ * headroom stays stuck at the pre-correction actual_meters.
+ */
+export function fgCompletionAdjustmentMetresForJob(db, jobId) {
+  if (!db) return 0;
+  const jid = String(jobId ?? '').trim();
+  if (!jid) return 0;
+  try {
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(delta_finished_goods_m), 0) AS s
+         FROM production_completion_adjustments WHERE job_id = ?`
+      )
+      .get(jid);
+    return Number(row?.s) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * FG metres credited against unproduced refunds for one completed job.
  * Uses coil allocation metres when present; otherwise job actual metres (offcut/accessories-only completion).
+ * Includes post-completion FG adjustments (Save correction), which restate finished output
+ * without rewriting production_jobs.actual_meters.
  */
 export function jobOutputMetresForUnproducedRefund(db, job) {
   const st = String(job?.status ?? '').trim().toLowerCase();
@@ -55,8 +79,9 @@ export function jobOutputMetresForUnproducedRefund(db, job) {
   const coilM = coilMetersForJob(db, jid);
   const actualM = Number(job?.actual_meters ?? job?.actualMeters) || 0;
   const offcutInv = Number(job?.offcut_inventory_meters ?? job?.offcutInventoryMeters) || 0;
-  if (coilM > 0.001) return Math.max(actualM, coilM + offcutInv);
-  return Math.max(actualM, offcutInv);
+  const fgAdj = fgCompletionAdjustmentMetresForJob(db, jid);
+  const base = coilM > 0.001 ? Math.max(actualM, coilM + offcutInv) : Math.max(actualM, offcutInv);
+  return Math.max(0, base + fgAdj);
 }
 
 /**
@@ -93,8 +118,10 @@ export function producedMetersForUnproducedRefund(db, productionJobs, opts = {})
     for (const j of productionJobs) {
       const st = String(j.status ?? '').trim().toLowerCase();
       if (st !== 'completed') continue;
-      const stoneM = netStoneConsumptionMetresForJob(db, j.job_id ?? j.jobID);
-      sum += jobStoneRoofingMetres(j, stoneM);
+      const jid = j.job_id ?? j.jobID;
+      const stoneM = netStoneConsumptionMetresForJob(db, jid);
+      // Pure-stone FG corrections restate finished output the same way coil jobs do.
+      sum += Math.max(0, jobStoneRoofingMetres(j, stoneM) + fgCompletionAdjustmentMetresForJob(db, jid));
     }
     return sum;
   }

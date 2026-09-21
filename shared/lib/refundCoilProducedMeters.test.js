@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   coilProducedMetersFromProductionJobs,
   jobActualMetersFromProductionJobs,
+  jobOutputMetresForUnproducedRefund,
   producedMetersForUnproducedRefund,
 } from './refundCoilProducedMeters.js';
 
-function memDbWithCoils(coilRows = []) {
+function memDbWithCoils(coilRows = [], fgAdjByJob = {}) {
   return {
     prepare(sql) {
       const s = String(sql);
@@ -17,6 +18,10 @@ function memDbWithCoils(coilRows = []) {
               .filter((c) => String(c.job_id || '').trim() === jid)
               .reduce((acc, c) => acc + (Number(c.meters_produced) || 0), 0);
             return { s: sum };
+          }
+          if (s.includes('FROM production_completion_adjustments')) {
+            const jid = String(jobId ?? '').trim();
+            return { s: Number(fgAdjByJob[jid]) || 0 };
           }
           return undefined;
         },
@@ -113,5 +118,18 @@ describe('refundCoilProducedMeters', () => {
     const db = memDbWithCoils([{ job_id: 'PRO-MIX', meters_produced: 5 }]);
     const jobs = [{ job_id: 'PRO-MIX', status: 'Completed', actual_meters: 7 }];
     expect(producedMetersForUnproducedRefund(db, jobs)).toBe(7);
+  });
+
+  it('jobOutputMetresForUnproducedRefund includes post-completion FG adjustments', () => {
+    const db = memDbWithCoils([{ job_id: 'PRO-ADJ', meters_produced: 10 }], { 'PRO-ADJ': -1.25 });
+    const job = { job_id: 'PRO-ADJ', status: 'Completed', actual_meters: 10 };
+    expect(jobOutputMetresForUnproducedRefund(db, job)).toBeCloseTo(8.75, 5);
+    expect(producedMetersForUnproducedRefund(db, [job])).toBeCloseTo(8.75, 5);
+  });
+
+  it('producedMetersForUnproducedRefund applies FG adjustments on stone meter quotes', () => {
+    const db = memDbWithCoils([], { 'PRO-ST-ADJ': -2 });
+    const jobs = [{ job_id: 'PRO-ST-ADJ', status: 'Completed', actual_meters: 28 }];
+    expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: true })).toBe(26);
   });
 });

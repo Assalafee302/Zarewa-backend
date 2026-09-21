@@ -40,23 +40,24 @@ export function buildRefundProductionFulfillmentSummary(db, quote, productionJob
     const jobId = String(j.job_id ?? j.jobID ?? '').trim();
     const status = String(j.status ?? '').trim();
     const plannedMeters = Number(j.planned_meters ?? j.plannedMeters) || 0;
-    const actualMeters = Number(j.actual_meters ?? j.actualMeters) || 0;
+    const rawActualMeters = Number(j.actual_meters ?? j.actualMeters) || 0;
     const offcutInventoryMeters =
       Number(j.offcut_inventory_meters ?? j.offcutInventoryMeters) || 0;
     const jobCoilMeters = jobOutputMetresForUnproducedRefund(db, j);
     let outputSource = 'none';
     if (String(status).toLowerCase() === 'completed') {
-      if (jobCoilMeters > 0 && actualMeters > jobCoilMeters + 0.001) outputSource = 'coil_and_offcut';
-      else if (actualMeters > 0 && coilProducedMetersFromProductionJobs(db, [j]) <= 0.001) {
+      if (jobCoilMeters > 0 && rawActualMeters > jobCoilMeters + 0.001) outputSource = 'coil_and_offcut';
+      else if (rawActualMeters > 0 && coilProducedMetersFromProductionJobs(db, [j]) <= 0.001) {
         outputSource = 'offcut_or_accessories';
       } else if (jobCoilMeters > 0) outputSource = 'coil';
-      else if (actualMeters > 0) outputSource = 'offcut_or_accessories';
+      else if (rawActualMeters > 0) outputSource = 'offcut_or_accessories';
     }
     return {
       jobId,
       status,
       plannedMeters,
-      actualMeters,
+      /** Effective produced metres (includes FG completion adjustments). */
+      actualMeters: jobCoilMeters > 0 ? jobCoilMeters : rawActualMeters,
       offcutInventoryMeters,
       eligibleProducedMeters: jobCoilMeters,
       outputSource,

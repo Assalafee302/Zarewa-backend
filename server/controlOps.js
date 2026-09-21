@@ -4628,19 +4628,17 @@ export function previewRefundRequest(db, payload) {
   const quotedMetersFromQuote = stoneMeterQuoteForUnproduced
     ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
     : quotedCoilSheetPoolMetresFromLines(quote?.lines_json ?? '');
-  const actualMetersFromJobs = productionJobs.reduce((sum, j) => sum + (Number(j.actual_meters) || 0), 0);
   const coilProducedMetersFromJobs = coilProducedMetersFromProductionJobs(db, productionJobs);
   const quotedMetersOverride = positiveNumber(payload.quotedMeters);
   const actualMetersOverride = positiveNumber(payload.actualMeters);
   const coilProducedMetersOverride = positiveNumber(payload.coilProducedMeters);
   const quotedMeters =
     quotedMetersOverride != null ? Math.max(0, roundMoney(quotedMetersOverride)) : quotedMetersFromQuote;
-  const actualMeters =
-    actualMetersOverride != null ? Math.max(0, roundMoney(actualMetersOverride)) : actualMetersFromJobs;
   const coilProducedMeters =
     coilProducedMetersOverride != null
       ? Math.max(0, roundMoney(coilProducedMetersOverride))
       : coilProducedMetersFromJobs;
+  // Includes post-completion FG adjustments — same figure production shows as effectiveOutputMeters.
   const producedMetersForUnproduced =
     coilProducedMetersOverride != null
       ? Math.max(0, roundMoney(coilProducedMetersOverride))
@@ -4649,6 +4647,11 @@ export function previewRefundRequest(db, payload) {
         : producedMetersForUnproducedRefund(db, productionJobs, {
             isStoneMeterQuote: stoneMeterQuoteForUnproduced,
           });
+  // Keep preview.actualMeters aligned with refund math (not raw production_jobs.actual_meters).
+  const actualMeters =
+    actualMetersOverride != null
+      ? Math.max(0, roundMoney(actualMetersOverride))
+      : producedMetersForUnproduced;
   const productionFulfillment = buildRefundProductionFulfillmentSummary(db, quote, productionJobs, {
     isStoneMeterQuote: stoneMeterQuoteForUnproduced,
     quotedMeters,

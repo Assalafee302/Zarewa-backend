@@ -10583,6 +10583,69 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
       );
     }
     if (payload.lines) syncQuotationLineRows(db, quotationId, linesJson);
+
+    // Refund create requires customer_id to match the quotation; Cashier desk lists
+    // customer_refunds.customer_name (create-time snapshot). Keep open refunds aligned.
+    const prevCustomerId = String(existing.customer_id || '').trim();
+    const nextCustomerId = String(customerID || '').trim();
+    const customerReassigned = prevCustomerId !== nextCustomerId;
+    const customerLabelChanged =
+      customerReassigned || String(existing.customer_name || '') !== String(customerName || '');
+    db.prepare(
+      `UPDATE customer_refunds
+       SET customer_id = ?, customer_name = ?
+       WHERE quotation_ref = ?
+         AND status IN ('Pending', 'Approved', 'Partially paid')`
+    ).run(customerID, customerName, quotationId);
+    if (customerReassigned) {
+      db.prepare(
+        `UPDATE sales_receipts SET customer_id = ?, customer_name = ? WHERE quotation_ref = ?`
+      ).run(customerID, customerName, quotationId);
+      db.prepare(
+        `UPDATE cutting_lists SET customer_id = ?, customer_name = ? WHERE quotation_ref = ?`
+      ).run(customerID, customerName, quotationId);
+      db.prepare(
+        `UPDATE ledger_entries SET customer_id = ?, customer_name = ? WHERE quotation_ref = ?`
+      ).run(customerID, customerName, quotationId);
+      try {
+        db.prepare(
+          `UPDATE production_jobs SET customer_id = ?, customer_name = ? WHERE quotation_ref = ?`
+        ).run(customerID, customerName, quotationId);
+      } catch {
+        /* production_jobs may be absent on older schemas */
+      }
+      try {
+        db.prepare(
+          `UPDATE refund_credit_applications
+           SET customer_id = ?
+           WHERE refund_id IN (SELECT refund_id FROM customer_refunds WHERE quotation_ref = ?)
+              OR source_quotation_ref = ?`
+        ).run(customerID, quotationId, quotationId);
+      } catch {
+        /* optional table */
+      }
+    } else if (customerLabelChanged) {
+      db.prepare(`UPDATE sales_receipts SET customer_name = ? WHERE quotation_ref = ?`).run(
+        customerName,
+        quotationId
+      );
+      db.prepare(`UPDATE cutting_lists SET customer_name = ? WHERE quotation_ref = ?`).run(
+        customerName,
+        quotationId
+      );
+      db.prepare(`UPDATE ledger_entries SET customer_name = ? WHERE quotation_ref = ?`).run(
+        customerName,
+        quotationId
+      );
+      try {
+        db.prepare(`UPDATE production_jobs SET customer_name = ? WHERE quotation_ref = ?`).run(
+          customerName,
+          quotationId
+        );
+      } catch {
+        /* optional */
+      }
+    }
   })();
 
   /** Booked paid must follow receipts + advance applied, not whatever the client last sent. */
@@ -10767,12 +10830,15 @@ export function deleteCuttingListIfAllowed(db, cuttingListId) {
     .prepare(`SELECT id, status, production_registered, production_register_ref FROM cutting_lists WHERE id = ?`)
     .get(cid);
   if (!row) return { ok: false, error: 'Cutting list not found.' };
-  const hasProduction =
-    Number(row.production_registered) > 0 ||
-    String(row.status || '').trim().toLowerCase() === 'finished' ||
-    Boolean(String(row.production_register_ref || '').trim());
-  if (hasProduction) {
-    return { ok: false, error: 'Cannot delete a cutting list that already has production activity.' };
+  // Cancelled-not-produced keeps production_registered for audit; still allow delete (cleanup).
+  if (!isCuttingListCancelledNotProduced(db, row)) {
+    const hasProduction =
+      Number(row.production_registered) > 0 ||
+      String(row.status || '').trim().toLowerCase() === 'finished' ||
+      Boolean(String(row.production_register_ref || '').trim());
+    if (hasProduction) {
+      return { ok: false, error: 'Cannot delete a cutting list that already has production activity.' };
+    }
   }
   db.transaction(() => {
     db.prepare(`DELETE FROM production_jobs WHERE cutting_list_id = ?`).run(cid);
@@ -12126,7 +12192,7 @@ export function unconfirmSalesReceiptFinanceClearance(db, receiptId, actor = nul
     ok: true,
     receiptId: id,
     clearedSplitConfirmCount: confirmedSplitIds.length,
-    reversedRefundCreditApplications,
+    reversedRefundCreditApplications: reversedCreditApplications,
   };
 }
 

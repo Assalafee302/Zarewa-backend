@@ -733,14 +733,24 @@ const OPERATIONAL_TOPICS = [
     action: 'use the production register',
     title: 'Production register',
     answer:
-      'Cancel = customer changed mind, not produced. Return to waiting = send back so Sales can edit the quotation. Return to planned = recall a started run (wrong coils).',
+      'Cancel = customer changed mind, not produced — afterwards Admin/MD/Branch Manager can delete the cutting list from Sales. Return to waiting = send back so Sales can edit the quotation. Return to planned = recall a started run (wrong coils). Admin only: force-recall a completed duplicate job to restore stone/coil supply and delete the cutting list.',
     steps: [
       'Open the production register.',
       'Use Cancel only when the order will not be produced.',
+      'After cancel, delete the cutting list from Sales if it should not stay on the desk.',
       'Use Return to waiting when Sales must edit the quotation, then re-register.',
+      'Admin: force-recall (admin-force-recall) when a completed stone-coated job was entered twice and must be removed.',
     ],
     links: [{ label: 'Operations', to: '/operations' }],
-    extraKeywords: ['register', 'production log', 'return to waiting', 'cancel not produced'],
+    extraKeywords: [
+      'register',
+      'production log',
+      'return to waiting',
+      'cancel not produced',
+      'force recall',
+      'delete cutting list',
+      'duplicate production',
+    ],
   },
   {
     module: 'operations',

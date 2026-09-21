@@ -63,7 +63,7 @@ export const PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL = `'completed', 'cancelled', 
 
 /**
  * Sales must not change quotation lines while the job is on the register or cancelled-not-produced.
- * Return-to-waiting clears this.
+ * Return-to-waiting clears this. Admin/MD may bypass the register lock in updateQuotation.
  * @param {string} [jobStatus]
  */
 export function quotationLineEditBlockedByProductionStatus(jobStatus) {

@@ -104,13 +104,36 @@ describe.skipIf(!mysqlOk).sequential('production register cancel vs return-to-wa
     expect(requeue.status).toBe(400);
   });
 
-  it('return-to-waiting unlocks the cutting list and quotation for Sales, then allows re-register', async () => {
-    const { cuttingListId, jobID } = await registerPlannedJob();
+  it('admin may edit quotation while still on the production register', async () => {
+    await registerPlannedJob();
     const qBefore = await agent.get(`/api/quotations/${encodeURIComponent('QT-2026-005')}`);
     expect(qBefore.status).toBe(200);
-    const blockedWhileRegistered = await agent.patch(`/api/quotations/${encodeURIComponent('QT-2026-005')}`).send({
+    const qPatch = await agent.patch(`/api/quotations/${encodeURIComponent('QT-2026-005')}`).send({
       lines: qBefore.body.quotation?.quotationLines,
+      materialTypeId: qBefore.body.quotation?.materialTypeId,
+      materialGauge: qBefore.body.quotation?.materialGauge,
+      materialColor: qBefore.body.quotation?.materialColor,
+      materialDesign: qBefore.body.quotation?.materialDesign,
     });
+    expect(qPatch.status).toBe(200);
+  });
+
+  it('return-to-waiting unlocks the cutting list and quotation for Sales, then allows re-register', async () => {
+    const { cuttingListId, jobID } = await registerPlannedJob();
+
+    const salesAgent = request.agent(app);
+    await loginAs(salesAgent, 'sales.staff', 'Sales@123');
+    const qBefore = await salesAgent.get(`/api/quotations/${encodeURIComponent('QT-2026-005')}`);
+    expect(qBefore.status).toBe(200);
+    const blockedWhileRegistered = await salesAgent
+      .patch(`/api/quotations/${encodeURIComponent('QT-2026-005')}`)
+      .send({
+        lines: qBefore.body.quotation?.quotationLines,
+        materialTypeId: qBefore.body.quotation?.materialTypeId,
+        materialGauge: qBefore.body.quotation?.materialGauge,
+        materialColor: qBefore.body.quotation?.materialColor,
+        materialDesign: qBefore.body.quotation?.materialDesign,
+      });
     expect(blockedWhileRegistered.status).toBe(409);
     expect(blockedWhileRegistered.body.code).toBe('PRODUCTION_RETURN_TO_WAITING_REQUIRED');
 
@@ -129,10 +152,10 @@ describe.skipIf(!mysqlOk).sequential('production register cancel vs return-to-wa
     });
     expect(clPatch.status).toBe(200);
 
-    const q = await agent.get(`/api/quotations/${encodeURIComponent('QT-2026-005')}`);
+    const q = await salesAgent.get(`/api/quotations/${encodeURIComponent('QT-2026-005')}`);
     expect(q.status).toBe(200);
     const lines = q.body.quotation?.quotationLines;
-    const qPatch = await agent.patch(`/api/quotations/${encodeURIComponent('QT-2026-005')}`).send({
+    const qPatch = await salesAgent.patch(`/api/quotations/${encodeURIComponent('QT-2026-005')}`).send({
       lines,
       materialTypeId: q.body.quotation?.materialTypeId,
       materialGauge: q.body.quotation?.materialGauge,
@@ -150,5 +173,28 @@ describe.skipIf(!mysqlOk).sequential('production register cancel vs return-to-wa
     });
     expect(requeue.status).toBe(201);
     expect(requeue.body.productionJob?.status).toBe('Planned');
+  });
+
+  it('cancelled-not-produced allows deleting the cutting list; active register does not', async () => {
+    const { cuttingListId, jobID } = await registerPlannedJob();
+
+    const blocked = await agent.delete(`/api/cutting-lists/${encodeURIComponent(cuttingListId)}`);
+    expect(blocked.status).toBe(400);
+    expect(String(blocked.body.error || '')).toMatch(/production activity/i);
+
+    const cancel = await agent.post(`/api/production-jobs/${encodeURIComponent(jobID)}/cancel`).send({
+      reason: 'Customer changed mind — delete the cutting list after cancel.',
+    });
+    expect(cancel.status).toBe(200);
+    expect(cancel.body.outcome).toBe('cancelled_not_produced');
+
+    const deleted = await agent.delete(`/api/cutting-lists/${encodeURIComponent(cuttingListId)}`);
+    expect(deleted.status).toBe(200);
+    expect(deleted.body.ok).toBe(true);
+
+    const gone = db.prepare(`SELECT id FROM cutting_lists WHERE id = ?`).get(cuttingListId);
+    expect(gone).toBeFalsy();
+    const jobGone = db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(jobID);
+    expect(jobGone).toBeFalsy();
   });
 });

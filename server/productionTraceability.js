@@ -1,4 +1,5 @@
-import { actorId, actorName, userMayEditCoilLotMasterData } from './auth.js';
+import { actorId, actorName, normalizeRoleKey, userMayEditCoilLotMasterData } from './auth.js';
+import { postBalancedJournalTx } from './glOps.js';
 import {
   COIL_KG_EVENT,
   coilBookReconcileWouldRestoreKg,
@@ -2790,6 +2791,294 @@ export function returnProductionJobToWaiting(db, jobID, payload = {}, opts = {})
       });
     })();
     return { ok: true, jobID: jobId, outcome: 'returned_to_waiting' };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+function tableExistsLocal(db, name) {
+  try {
+    return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(name));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reverse inventory effects of a completed production job (stone flatsheet / metres, accessories, FG, coils).
+ * Leaves stock_movements history; posts restoring movements. Does not delete the job row.
+ */
+function reverseCompletedProductionInventoryTx(db, job, atISO, actor) {
+  const jobId = job.job_id;
+  const stockBranch = jobBranchId(job);
+  const quotationRef = String(job.quotation_ref ?? '').trim();
+
+  if (tableExistsLocal(db, 'production_job_stone_flatsheet_usage')) {
+    const sfRows = db
+      .prepare(
+        `SELECT inventory_product_id AS inventoryProductId,
+                supplied_m2 AS suppliedM2,
+                deduction_m2 AS deductionM2,
+                name AS name
+         FROM production_job_stone_flatsheet_usage WHERE job_id = ?`
+      )
+      .all(jobId);
+    for (const row of sfRows) {
+      const pid = String(row.inventoryProductId || '').trim();
+      const restore = safeNumber(row.suppliedM2) + safeNumber(row.deductionM2);
+      if (pid && restore > 1e-9) {
+        adjustProductStockTx(db, pid, restore, stockBranch);
+        appendStockMovementTx(db, {
+          atISO,
+          type: 'STONE_FLATSHEET_ISSUE_ADJUSTMENT',
+          ref: jobId,
+          productID: pid,
+          qty: restore,
+          branchId: stockBranch,
+          detail: `Admin force-recall restore · ${String(row.name || '').trim()} · ${jobId} · ${quotationRef}`,
+          dateISO: atISO.slice(0, 10),
+        });
+      }
+    }
+    db.prepare(`DELETE FROM production_job_stone_flatsheet_usage WHERE job_id = ?`).run(jobId);
+  }
+
+  if (tableExistsLocal(db, 'production_job_accessory_usage')) {
+    const accRows = db
+      .prepare(
+        `SELECT inventory_product_id AS inventoryProductId, supplied_qty AS suppliedQty, name
+         FROM production_job_accessory_usage WHERE job_id = ?`
+      )
+      .all(jobId);
+    for (const row of accRows) {
+      const pid = String(row.inventoryProductId || '').trim();
+      const qty = safeNumber(row.suppliedQty);
+      if (pid && qty > 1e-9) {
+        adjustProductStockTx(db, pid, qty, stockBranch);
+        appendStockMovementTx(db, {
+          atISO,
+          type: 'ACCESSORY_ISSUE_ADJUSTMENT',
+          ref: jobId,
+          productID: pid,
+          qty,
+          branchId: stockBranch,
+          detail: `Admin force-recall restore · ${String(row.name || '').trim()} · ${jobId} · ${quotationRef}`,
+          dateISO: atISO.slice(0, 10),
+        });
+      }
+    }
+    db.prepare(`DELETE FROM production_job_accessory_usage WHERE job_id = ?`).run(jobId);
+  }
+
+  const stoneConsumed = netStoneMetresConsumedForJob(db, jobId);
+  if (Math.abs(stoneConsumed) > 1e-9) {
+    const qRow = quotationRef ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationRef) : null;
+    const stonePid = resolveStoneRawProductIdForQuotation(db, qRow, stockBranch);
+    if (!stonePid) {
+      throw new Error(
+        'Could not resolve stone-coated stock SKU to restore metres. Fix quotation design/colour/gauge or correct stone metres first.'
+      );
+    }
+    adjustProductStockTx(db, stonePid, stoneConsumed, stockBranch);
+    appendStockMovementTx(db, {
+      atISO,
+      type: 'STONE_CONSUMPTION',
+      ref: jobId,
+      productID: stonePid,
+      qty: stoneConsumed,
+      branchId: stockBranch,
+      detail: `Admin force-recall restore ${stoneConsumed.toFixed(2)} m stone · ${jobId}`,
+      dateISO: atISO.slice(0, 10),
+    });
+  }
+
+  const productId = String(job.product_id ?? '').trim();
+  const fgMetres = jobEffectiveOutputMetres(db, jobId);
+  if (productId && Math.abs(fgMetres) > 1e-9) {
+    const prodRow = getProductRowForWorkspace(db, productId, stockBranch);
+    if (!prodRow) throw new Error(`Finished-goods product ${productId} not found.`);
+    const current = Number(prodRow.stock_level) || 0;
+    const next = current - fgMetres;
+    if (next < -0.0001) {
+      throw new Error(
+        `Admin recall would send ${productId} finished-goods stock negative (${next.toFixed(2)}). Adjust FG stock or investigate inventory first.`
+      );
+    }
+    adjustProductStockTx(db, productId, -fgMetres, stockBranch);
+    appendStockMovementTx(db, {
+      atISO,
+      type: 'PRODUCTION_FG_ADJUSTMENT',
+      ref: jobId,
+      productID: productId,
+      qty: -fgMetres,
+      branchId: stockBranch,
+      detail: `Admin force-recall remove FG ${fgMetres.toFixed(3)} m · ${jobId}`,
+      dateISO: atISO.slice(0, 10),
+    });
+  }
+  if (tableExistsLocal(db, 'production_completion_adjustments')) {
+    db.prepare(`DELETE FROM production_completion_adjustments WHERE job_id = ?`).run(jobId);
+  }
+
+  const coilRows = listJobCoilsForJob(db, jobId);
+  for (const row of coilRows) {
+    if (String(row.allocation_status ?? '') === 'Completed') {
+      undoSingleCompletedCoilLineTx(db, row, atISO, jobId, stockBranch, actor);
+    }
+  }
+  releaseProductionJobCoilReservationsTx(db, jobId);
+}
+
+/**
+ * Post reversing journals for production recognition / COGS posted at completion (idempotent per job).
+ */
+function reverseProductionRecognitionGlForJobTx(db, job, atISO, actor) {
+  const jobId = String(job.job_id || '').trim();
+  if (!jobId || !tableExistsLocal(db, 'gl_journal_entries')) return { ok: true, reversed: [] };
+
+  let journals = [];
+  try {
+    journals = db
+      .prepare(
+        `SELECT id, entry_date_iso AS entryDateIso, source_kind AS sourceKind, branch_id AS branchId
+         FROM gl_journal_entries
+         WHERE source_id = ?
+           AND source_kind IN ('PRODUCTION_RECOGNITION_GL', 'PRODUCTION_COGS_GL')`
+      )
+      .all(jobId);
+  } catch {
+    return { ok: true, reversed: [] };
+  }
+  if (!journals.length) return { ok: true, reversed: [] };
+
+  const reversed = [];
+  const entryDate = String(atISO || nowIso()).slice(0, 10);
+  const uid = actor?.id != null ? String(actor.id) : null;
+  for (const je of journals) {
+    const recallKind = `${String(je.sourceKind || '').trim()}_RECALL`;
+    const lines = db
+      .prepare(
+        `SELECT a.code AS accountCode, l.debit_ngn AS debitNgn, l.credit_ngn AS creditNgn, l.memo AS memo
+         FROM gl_journal_lines l
+         INNER JOIN gl_accounts a ON a.id = l.account_id
+         WHERE l.journal_id = ?`
+      )
+      .all(je.id);
+    if (!lines.length) continue;
+    const revLines = lines.map((l) => {
+      const d = Math.round(Number(l.debitNgn) || 0);
+      const c = Math.round(Number(l.creditNgn) || 0);
+      if (d > 0) return { accountCode: l.accountCode, creditNgn: d, memo: l.memo || jobId };
+      return { accountCode: l.accountCode, debitNgn: c, memo: l.memo || jobId };
+    });
+    const posted = postBalancedJournalTx(db, {
+      entryDateISO: entryDate,
+      memo: `Admin force-recall reverse ${je.sourceKind} ${jobId}`,
+      sourceKind: recallKind,
+      sourceId: jobId,
+      branchId: je.branchId ?? job.branch_id ?? null,
+      createdByUserId: uid,
+      lines: revLines,
+    });
+    if (!posted.ok && !posted.duplicate && !posted.skipped) {
+      return { ok: false, error: posted.error || 'Could not reverse production GL.' };
+    }
+    reversed.push({ sourceKind: je.sourceKind, journalId: posted.journalId || null, duplicate: Boolean(posted.duplicate) });
+  }
+  return { ok: true, reversed };
+}
+
+/**
+ * Administrator wrong-entry cleanup: reverse completed supply (stone flatsheet / metres, accessories,
+ * coils, FG), reverse production GL when present, then delete the production job and its cutting list.
+ * Planned/Running jobs are unwound (reservations cleared) then deleted the same way.
+ * Admin role only — not available to shop-floor recall buttons.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} jobID
+ * @param {{ reason?: string, note?: string }} [payload]
+ * @param {{ actor?: object }} [opts]
+ */
+export function adminForceRecallAndDeleteCuttingList(db, jobID, payload = {}, opts = {}) {
+  const actor = opts.actor || {};
+  if (normalizeRoleKey(actor.roleKey ?? actor.role_key) !== 'admin') {
+    return { ok: false, error: 'Only an administrator can force-recall a job and delete its cutting list.', code: 'ADMIN_ONLY' };
+  }
+  const jobId = String(jobID ?? '').trim();
+  if (!jobId) return { ok: false, error: 'Job ID required.' };
+  const job = productionJobRow(db, jobId);
+  if (!job) return { ok: false, error: 'Production job not found.' };
+  const st = String(job.status ?? 'Planned');
+  if (isReturnedToWaitingStatus(st)) {
+    return {
+      ok: false,
+      error: 'This job was already returned to waiting. Delete the cutting list from Sales if it is still unused, or register a new job.',
+    };
+  }
+  if (isCancelledNotProducedStatus(st)) {
+    return {
+      ok: false,
+      error: 'This job is already cancelled (not produced). Remove the cutting list separately if it has no other production activity.',
+    };
+  }
+  const reason = String(payload.reason ?? payload.note ?? '').trim();
+  if (reason.length < 12) {
+    return { ok: false, error: 'Enter a detailed reason (at least 12 characters) for the audit trail.' };
+  }
+  const cuttingListId = job.cutting_list_id ? String(job.cutting_list_id).trim() : '';
+  if (!cuttingListId) {
+    return { ok: false, error: 'This job has no cutting list to delete.' };
+  }
+  const atISO = nowIso();
+  const refIso = job.completed_at_iso || job.start_date_iso || job.created_at_iso || atISO;
+  try {
+    assertPeriodOpen(db, refIso, 'Admin force-recall date');
+    assertPeriodOpen(db, atISO, 'Admin force-recall date');
+    let glReverse = { ok: true, reversed: [] };
+    db.transaction(() => {
+      if (isCompletedProductionJobStatus(st)) {
+        reverseCompletedProductionInventoryTx(db, job, atISO, actor);
+        glReverse = reverseProductionRecognitionGlForJobTx(db, job, atISO, actor);
+        if (!glReverse.ok) throw new Error(glReverse.error || 'GL reverse failed.');
+      } else if (st === 'Planned' || st === 'Running') {
+        if (st === 'Running') {
+          db.prepare(
+            `UPDATE production_job_coils
+             SET closing_weight_kg = 0, consumed_weight_kg = 0, meters_produced = 0,
+                 actual_conversion_kg_per_m = NULL, allocation_status = 'Allocated'
+             WHERE job_id = ?`
+          ).run(jobId);
+        }
+        releaseProductionJobCoilReservationsTx(db, jobId);
+      } else {
+        throw new Error(`Cannot force-recall a job in status "${st}".`);
+      }
+      appendAuditLog(db, {
+        actor,
+        action: 'production.admin_force_recall_delete',
+        entityKind: 'production_job',
+        entityId: jobId,
+        note: reason.length > 240 ? `${reason.slice(0, 237)}…` : reason,
+        details: {
+          cuttingListId,
+          priorStatus: st,
+          quotationRef: job.quotation_ref ?? null,
+          glReversed: glReverse.reversed || [],
+          outcome: 'force_recalled_and_cutting_list_deleted',
+        },
+      });
+      db.prepare(`DELETE FROM production_jobs WHERE job_id = ?`).run(jobId);
+      db.prepare(`DELETE FROM cutting_lists WHERE id = ?`).run(cuttingListId);
+    })();
+    notifyRefundIntegrityDriftIfNeeded(db, job.quotation_ref, actor, 'production.admin_force_recall', jobId);
+    return {
+      ok: true,
+      jobID: jobId,
+      cuttingListId,
+      priorStatus: st,
+      outcome: 'force_recalled_and_cutting_list_deleted',
+      glReversed: glReverse.reversed || [],
+    };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

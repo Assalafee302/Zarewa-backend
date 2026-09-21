@@ -461,6 +461,7 @@ import {
   applyCompletedProductionStoneFlatsheetCorrections,
   applyCompletedProductionStoneMetresCorrections,
   applyProductionCompletionAdjustment,
+  adminForceRecallAndDeleteCuttingList,
   cancelProductionJob,
   completeProductionJob,
   listProductionJobCoilsForJob,
@@ -7712,6 +7713,29 @@ export function registerHttpApi(app, db) {
       const r = returnProductionJobToWaiting(db, req.params.jobId, req.body || {}, { actor: req.user });
       if (!r.ok) return res.status(400).json(r);
       res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  /**
+   * Admin only: reverse completed/open production supply and delete the job + cutting list
+   * (wrong-entry / duplicate stone-coated supply cleanup). Not a shop-floor recall.
+   */
+  app.post('/api/production-jobs/:jobId/admin-force-recall', requireAuth, (req, res) => {
+    try {
+      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
+        return res.status(403).json({ ok: false, error: 'Admin only.' });
+      }
+      const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
+      if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+      const r = adminForceRecallAndDeleteCuttingList(db, req.params.jobId, req.body || {}, { actor: req.user });
+      if (!r.ok) {
+        const status = r.code === 'ADMIN_ONLY' ? 403 : 400;
+        return res.status(status).json(r);
+      }
+      res.status(200).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

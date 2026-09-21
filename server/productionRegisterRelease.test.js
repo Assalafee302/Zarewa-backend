@@ -174,4 +174,27 @@ describe.skipIf(!mysqlOk).sequential('production register cancel vs return-to-wa
     expect(requeue.status).toBe(201);
     expect(requeue.body.productionJob?.status).toBe('Planned');
   });
+
+  it('cancelled-not-produced allows deleting the cutting list; active register does not', async () => {
+    const { cuttingListId, jobID } = await registerPlannedJob();
+
+    const blocked = await agent.delete(`/api/cutting-lists/${encodeURIComponent(cuttingListId)}`);
+    expect(blocked.status).toBe(400);
+    expect(String(blocked.body.error || '')).toMatch(/production activity/i);
+
+    const cancel = await agent.post(`/api/production-jobs/${encodeURIComponent(jobID)}/cancel`).send({
+      reason: 'Customer changed mind — delete the cutting list after cancel.',
+    });
+    expect(cancel.status).toBe(200);
+    expect(cancel.body.outcome).toBe('cancelled_not_produced');
+
+    const deleted = await agent.delete(`/api/cutting-lists/${encodeURIComponent(cuttingListId)}`);
+    expect(deleted.status).toBe(200);
+    expect(deleted.body.ok).toBe(true);
+
+    const gone = db.prepare(`SELECT id FROM cutting_lists WHERE id = ?`).get(cuttingListId);
+    expect(gone).toBeFalsy();
+    const jobGone = db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(jobID);
+    expect(jobGone).toBeFalsy();
+  });
 });

@@ -171,6 +171,7 @@ export const FINANCE_DESK_PERMISSION_KEYS = [
  * Does NOT include production.release (hold clear / manager conversion sign-off).
  * Wrong-entry recall: cancel Planned/Running via production.manage; return Running→Planned
  * via production.manage / operations.manage (same as LiveProductionMonitor).
+ * Completed / duplicate supply: admin-only POST .../admin-force-recall (restores stock, deletes cutting list).
  * Post-complete qty corrections use operations.manage (same as the production monitor UI).
  * Does NOT include material_incidents.approve (BM write-offs / BM stock-register fields).
  */

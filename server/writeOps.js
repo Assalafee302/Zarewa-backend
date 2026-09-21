@@ -200,6 +200,11 @@ import {
   repairRefundPayoutStateTx,
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
+import {
+  overpayPayoutSettledErrorPayload,
+  quotationOverpayResidualExcludingRefund,
+  releaseSourceQuoteOverpayCreditsForPayout,
+} from './sales/refundPayReleaseOverpayCredit.js';
 import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, actorIsRefundUnclearedHoldAdminOverride, refundTillPayableNgn, assertPaymentRequestPayerNotApprover } from './refundHandlers.js';
 import { expensePaymentMethodFromAccountTypes } from '../shared/lib/expensePaymentMethod.js';
 import { isPaymentRequestApprovedForPayout } from '../shared/lib/paymentRequestStatus.js';
@@ -9428,7 +9433,41 @@ export function payRefundEntry(db, refundId, payload) {
     {},
     normalizeRefundReasonCategoriesForApi
   );
+  /** Credit applies undone so this overpayment residual can fund till/bank pay. */
+  let releasedOverpayCredits = [];
   if (qrefPay) {
+    const overpayOnThis = roundMoney(sumRefundCalculationLinesByCategoryNgn(payoutLines).Overpayment);
+    const isOverpayPayout =
+      overpayOnThis > 0 ||
+      (Array.isArray(payoutCategories) &&
+        payoutCategories.some((c) => String(c || '').toLowerCase().includes('overpay')));
+    if (isOverpayPayout) {
+      let residual = quotationOverpayResidualExcludingRefund(db, qrefPay, refundId);
+      if (payoutAmountNgn > residual) {
+        // Cashier insisted on till/bank: undo Confirm-payment credit that ate this overpay first.
+        const released = releaseSourceQuoteOverpayCreditsForPayout(db, {
+          sourceQuotationRef: qrefPay,
+          excludeRefundId: refundId,
+          needResidualNgn: payoutAmountNgn,
+          payingRefundId: refundId,
+          actor: payload.actor,
+          dateISO: defaultPaidDay,
+          note:
+            String(payload.paymentNote ?? payload.note ?? '').trim() ||
+            `Released confirmations so ${refundId} can pay from till/bank`,
+        });
+        if (!released.ok) return released;
+        releasedOverpayCredits = released.reversed || [];
+        residual = roundMoney(released.residualNgn);
+        if (payoutAmountNgn > residual) {
+          return {
+            ...overpayPayoutSettledErrorPayload(db, qrefPay, residual, payoutAmountNgn),
+            releasedOverpayCredits,
+          };
+        }
+      }
+    }
+
     const approvedForGuard = roundMoney(row.approved_amount_ngn || row.amount_ngn);
     const payoutGuard = validateRefundFinancialGuards(db, {
       quotationRef: qrefPay,
@@ -9440,40 +9479,36 @@ export function payRefundEntry(db, refundId, payload) {
       hasPermission: hasPerm,
       phase: 'pay',
     });
-    if (!payoutGuard.ok) return payoutGuard;
+    if (!payoutGuard.ok) {
+      return releasedOverpayCredits.length
+        ? { ...payoutGuard, releasedOverpayCredits }
+        : payoutGuard;
+    }
 
-    const overpayOnThis = roundMoney(sumRefundCalculationLinesByCategoryNgn(payoutLines).Overpayment);
-    const isOverpayPayout =
-      overpayOnThis > 0 ||
-      (Array.isArray(payoutCategories) &&
-        payoutCategories.some((c) => String(c || '').toLowerCase().includes('overpay')));
     if (isOverpayPayout) {
-      const others = db
-        .prepare(
-          `SELECT * FROM customer_refunds
-           WHERE quotation_ref = ?
-             AND refund_id != ?
-             AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
-        )
-        .all(qrefPay, refundId);
-      const residual = quotationOverpaymentResidualNgn({
-        cashInNgn: quotationCashInNgn(db, qrefPay),
-        quoteTotalNgn: roundMoney(db.prepare(`SELECT total_ngn FROM quotations WHERE id = ?`).get(qrefPay)?.total_ngn),
-        overpaymentAlreadyRefundedNgn: overpaymentAlreadyRefundedNgn(others),
-        creditAppliedOutNgn: quotationUnlinkedOverpayCreditOutNgn(db, qrefPay),
-      });
-      if (payoutAmountNgn > residual) {
+      const residualAfter = quotationOverpayResidualExcludingRefund(db, qrefPay, refundId);
+      if (payoutAmountNgn > residualAfter) {
         return {
-          ok: false,
-          code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',
-          error:
-            residual <= 0
-              ? 'Overpayment on this quotation is already fully refunded. Paying this would double-pay the customer.'
-              : `Only ₦${residual.toLocaleString('en-NG')} overpayment remains after prior refunds on this quotation.`,
+          ...overpayPayoutSettledErrorPayload(db, qrefPay, residualAfter, payoutAmountNgn),
+          releasedOverpayCredits,
         };
       }
     }
   }
+
+  const creditReleaseNote =
+    releasedOverpayCredits.length > 0
+      ? `Undid ₦${releasedOverpayCredits
+          .reduce((s, a) => s + roundMoney(a.amountNgn), 0)
+          .toLocaleString('en-NG')} confirm-payment credit on ${[
+          ...new Set(
+            releasedOverpayCredits
+              .map((a) => String(a.targetQuotationRef || '').trim())
+              .filter(Boolean)
+          ),
+        ].join(', ') || 'linked quotation'} so till/bank could pay.`
+      : '';
+  const paymentNoteWithCreditRelease = [paymentNote, creditReleaseNote].filter(Boolean).join(' ').trim();
 
   try {
     for (const day of new Set(paymentLines.map((line) => payoutLinePostedDay(line, defaultPaidDay)))) {
@@ -9530,7 +9565,7 @@ export function payRefundEntry(db, refundId, payload) {
           sourceKind: 'REFUND',
           sourceId: refundId,
           reference: payload.reference || refundId,
-          note: paymentNote || fresh.reason || 'Customer refund',
+          note: paymentNoteWithCreditRelease || fresh.reason || 'Customer refund',
           createdBy: paidBy,
           workspaceBranchId: payload.workspaceBranchId,
           workspaceViewAll: Boolean(payload.workspaceViewAll),
@@ -9550,7 +9585,7 @@ export function payRefundEntry(db, refundId, payload) {
             ? `Admin exemption: paid while payee has unconfirmed receipts (₦${heldNetNgn.toLocaleString('en-NG')} pending).`
             : `Manager override: paid while payee has unconfirmed receipts (₦${heldNetNgn.toLocaleString('en-NG')} pending).`
           : '';
-      const existingNote = paymentNote || fresh.payment_note || '';
+      const existingNote = paymentNoteWithCreditRelease || fresh.payment_note || '';
       const storedPaymentNote = /(admin exemption|manager override):.*unconfirm/i.test(existingNote)
         ? existingNote
         : [existingNote, unclearedOverrideBit].filter(Boolean).join(' ').trim() || null;
@@ -9576,7 +9611,7 @@ export function payRefundEntry(db, refundId, payload) {
         action: 'refund.pay',
         entityKind: 'refund',
         entityId: refundId,
-        note: paymentNote || fresh.reason || 'Customer refund payout recorded',
+        note: paymentNoteWithCreditRelease || fresh.reason || 'Customer refund payout recorded',
         details: {
           payoutAmountNgn,
           approvedAmountNgn: approvedFresh,
@@ -9584,8 +9619,19 @@ export function payRefundEntry(db, refundId, payload) {
           treasuryAccountIds: movements.map((movement) => movement.treasuryAccountId),
           unclearedHoldOverride: Boolean(adminMayPayUncleared && heldNetNgn > 0),
           heldNetNgn: adminMayPayUncleared && heldNetNgn > 0 ? heldNetNgn : undefined,
+          releasedOverpayCreditApplicationIds: releasedOverpayCredits.map((a) => a.applicationId),
         },
       });
+      if (releasedOverpayCredits.length > 0) {
+        appendAuditLog(db, {
+          actor: payload.actor,
+          action: 'refund.pay.release_overpay_credit',
+          entityKind: 'refund',
+          entityId: refundId,
+          note: creditReleaseNote,
+          details: { releasedOverpayCredits },
+        });
+      }
       if (adminMayPayUncleared && heldNetNgn > 0) {
         appendAuditLog(db, {
           actor: payload.actor,
@@ -9716,6 +9762,7 @@ export function payRefundEntry(db, refundId, payload) {
       refundPayoutGlWarning: result.refundGlPolicy?.needsRevenueReview
         ? result.refundGlPolicy.note
         : null,
+      releasedOverpayCredits: releasedOverpayCredits.length ? releasedOverpayCredits : undefined,
     };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

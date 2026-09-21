@@ -1232,6 +1232,43 @@ export function listRefundCreditApplications(db, customerId = '', branchScope = 
 }
 
 /**
+ * Active (non-reversed) refund-credit applications whose overpayment came from this quotation —
+ * including leftover overpay (empty refund_id) used on Confirm payment, and refund-fund applies.
+ * Paying an overpayment refund from till/bank may need to reverse these first so residual reopens.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} sourceQuotationRef
+ */
+export function listActiveRefundCreditApplicationsBySourceQuotation(db, sourceQuotationRef) {
+  const qref = String(sourceQuotationRef || '').trim();
+  if (!qref) return [];
+  let rows;
+  try {
+    rows = db
+      .prepare(
+        `SELECT * FROM refund_credit_applications
+         WHERE source_quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) != ?
+         ORDER BY created_at_iso DESC, application_id DESC`
+      )
+      .all(qref, REFUND_CREDIT_REVERSED_STATUS.toLowerCase());
+  } catch {
+    return [];
+  }
+  return rows.map((row) => ({
+    applicationId: row.application_id,
+    customerID: row.customer_id,
+    targetQuotationRef: row.target_quotation_ref,
+    sourceQuotationRef: row.source_quotation_ref,
+    refundId: row.refund_id || null,
+    kind: row.kind,
+    amountNgn: roundMoney(row.amount_ngn),
+    status: row.status || REFUND_CREDIT_CONFIRMATION_STATUS,
+    createdAtISO: row.created_at_iso,
+    sourceReceiptId: row.source_receipt_id || null,
+  }));
+}
+
+/**
  * Active (non-reversed) refund-credit applications created by confirming a specific receipt —
  * so reversing that receipt can offer to undo the credit it applied in the same action, and so
  * anyone reviewing the receipt can see exactly what it did to which refund.

@@ -12057,6 +12057,11 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     allSplitsConfirmed: finalizedNow,
     refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
     refundCreditLeftoverNgn: creditResult?.leftoverCreditNgn ?? null,
+    refundCreditRemainingSources: Array.isArray(creditResult?.remainingSources)
+      ? creditResult.remainingSources
+      : Array.isArray(creditResult?.sources)
+        ? creditResult.sources
+        : [],
     refundCreditSkipped: Boolean(creditResult?.skipped),
     refundCreditSkipReason: creditResult?.skipped ? creditResult.error : undefined,
   };

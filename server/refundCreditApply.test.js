@@ -225,6 +225,9 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
     });
     expect(applied.ok).toBe(true);
     expect(applied.appliedNgn).toBe(30_000);
+    expect(applied.leftoverCreditNgn).toBe(10_000);
+    expect(applied.remainingSources?.find((s) => s.refundId === 'RF-OVER-1')?.availableNgn).toBe(10_000);
+    expect(applied.applications?.[0]?.leftoverOnSourceNgn).toBe(10_000);
 
     const rf = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = 'RF-OVER-1'`).get();
     expect(rf.status).toBe('Pending');
@@ -716,6 +719,8 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
     });
     expect(applied.ok).toBe(true);
     expect(applied.appliedNgn).toBe(40_000);
+    expect(applied.leftoverCreditNgn).toBe(10_000);
+    expect(applied.remainingSources?.find((s) => s.id === 'overpay:QT-ECON-SRC')?.availableNgn).toBe(10_000);
 
     const listedAfter = listEligibleRefundCredits(db, 'CUS-ECON', 'QT-ECON-DST');
     const leftover = listedAfter.sources.find((s) => s.id === 'overpay:QT-ECON-SRC');

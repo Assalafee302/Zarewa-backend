@@ -571,7 +571,20 @@ function nextApplicationId() {
  *   dateISO?: string,
  *   actor?: object,
  *   branchId?: string,
+ *   alreadyInTransaction?: boolean,
  * }} payload
+ * @returns {{
+ *   ok: boolean,
+ *   appliedNgn?: number,
+ *   leftoverCreditNgn?: number,
+ *   totalAvailableNgn?: number,
+ *   remainingSources?: object[],
+ *   sources?: object[],
+ *   applications?: object[],
+ *   error?: string,
+ *   code?: string,
+ *   [key: string]: unknown,
+ * }}
  */
 export function applyRefundCreditToQuotation(db, payload) {
   const cid = String(payload?.customerID || '').trim();
@@ -817,6 +830,16 @@ export function applyRefundCreditToQuotation(db, payload) {
         if (row.sourceQuotationRef) syncQuotationPaidFromLedger(db, row.sourceQuotationRef);
       }
 
+      // Re-read open balances after stamp/ledger so leftover is live, not the pre-apply plan.
+      for (const row of appliedRows) {
+        if (row.kind === 'refund' && row.refundId) {
+          const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(row.refundId);
+          row.leftoverOnSourceNgn = fresh ? refundCreditOpenAmountFromStoredRefund(fresh) : 0;
+        } else if (row.kind === 'overpay' && row.sourceQuotationRef) {
+          row.leftoverOnSourceNgn = overpayCreditRemainingOnQuotationDb(db, cid, row.sourceQuotationRef);
+        }
+      }
+
       const qAfter = db.prepare(`SELECT total_ngn, paid_ngn, payment_status FROM quotations WHERE id = ?`).get(target);
       return {
         appliedNgn: appliedTotal,
@@ -828,9 +851,36 @@ export function applyRefundCreditToQuotation(db, payload) {
     };
     const result = payload.alreadyInTransaction ? runApply() : db.transaction(runApply)();
 
+    // Full eligible re-list so Confirm payment can show what is still left for the next receipt.
+    let leftoverCreditNgn = plan.leftoverCreditNgn;
+    let remainingSources = [];
+    let remainingExtraSources = [];
+    try {
+      const remaining = listEligibleRefundCredits(db, cid, target, { branchId: payload.branchId });
+      if (remaining?.ok) {
+        leftoverCreditNgn = roundMoney(remaining.totalAvailableNgn);
+        remainingSources = Array.isArray(remaining.sources) ? remaining.sources : [];
+        remainingExtraSources = Array.isArray(remaining.extraSources) ? remaining.extraSources : [];
+      } else {
+        leftoverCreditNgn = roundMoney(
+          (result.applications || []).reduce((s, a) => s + roundMoney(a.leftoverOnSourceNgn), 0)
+        );
+      }
+    } catch {
+      leftoverCreditNgn = roundMoney(
+        (result.applications || []).reduce((s, a) => s + roundMoney(a.leftoverOnSourceNgn), 0)
+      );
+    }
+
     return {
       ok: true,
       ...result,
+      leftoverCreditNgn,
+      totalAvailableNgn: leftoverCreditNgn,
+      remainingSources,
+      sources: remainingSources,
+      extraSources: remainingExtraSources,
+      extraAvailableNgn: remainingExtraSources.reduce((s, x) => s + roundMoney(x.availableNgn), 0),
       status: REFUND_CREDIT_CONFIRMATION_STATUS,
       customerID: cid,
       targetQuotationRef: target,

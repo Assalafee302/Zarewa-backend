@@ -350,20 +350,33 @@ export function overpayPayoutSettledErrorPayload(
     sourceQuotationRef,
     excludeRefundId
   );
+  const qref = String(sourceQuotationRef || '').trim();
+  const cashInNgn = qref ? quotationCashInNgn(db, qref) : 0;
+  const quoteTotalNgn = qref
+    ? roundMoney(db.prepare(`SELECT total_ngn FROM quotations WHERE id = ?`).get(qref)?.total_ngn)
+    : 0;
+  const excessNgn = Math.max(0, cashInNgn - quoteTotalNgn);
   return {
     ok: false,
     code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',
     error:
-      residual <= 0
-        ? 'Overpayment on this quotation is already fully refunded. Paying this would double-pay the customer.'
-        : `Only ₦${residual.toLocaleString('en-NG')} overpayment remains after prior refunds on this quotation.`,
+      excessNgn > 0 && payout > excessNgn
+        ? `This quotation only has ₦${excessNgn.toLocaleString('en-NG')} cash above the quote total (cash in ₦${cashInNgn.toLocaleString('en-NG')} − quote ₦${quoteTotalNgn.toLocaleString('en-NG')}). Cannot pay ₦${payout.toLocaleString('en-NG')} as overpayment.`
+        : residual <= 0
+          ? 'Overpayment on this quotation is already fully refunded. Paying this would double-pay the customer.'
+          : `Only ₦${residual.toLocaleString('en-NG')} overpayment remains after prior refunds on this quotation.`,
     overpaymentResidualNgn: residual,
+    overpaymentExcessNgn: excessNgn,
+    cashInNgn,
+    quoteTotalNgn,
     payoutAmountNgn: payout,
     releasableCreditApplications: apps,
     cancelableConflictingRefunds: conflicting,
     hint:
       apps.length > 0 || conflicting.length > 0
         ? 'Retry pay — the system will undo confirm-payment credit and cancel other unpaid overpayment refunds on this quotation first, then post till/bank.'
-        : 'Another refund on this quotation already paid out this overpayment. Cancel this approved refund if the customer was already paid another way.',
+        : excessNgn > 0 && payout > excessNgn
+          ? 'Reduce the payout to the true overpayment, or cancel this refund if the customer was already paid outside the ERP.'
+          : 'Another refund on this quotation already paid out this overpayment. Cancel this approved refund if the customer was already paid another way.',
   };
 }

@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   isReceiptCleared,
   isReceiptPendingClearance,
+  lastDayOfYearMonth,
   liquidityClearanceSplit,
   pendingClearanceTotalNgn,
   receiptEffectiveCashNgn,
+  resolveBulkUnconfirmDateRange,
 } from './receiptClearance.js';
 
 describe('receiptClearance', () => {
@@ -13,6 +15,16 @@ describe('receiptClearance', () => {
     expect(isReceiptPendingClearance({ status: 'Posted' })).toBe(true);
     expect(isReceiptCleared({ status: 'Confirmed' })).toBe(true);
     expect(isReceiptPendingClearance({ status: 'Confirmed' })).toBe(false);
+  });
+
+  it('resolves yearMonth and rejects long spans for bulk unconfirm', () => {
+    expect(lastDayOfYearMonth('2026-02')).toBe('2026-02-28');
+    expect(resolveBulkUnconfirmDateRange({ yearMonth: '2026-02' })).toMatchObject({
+      ok: true,
+      dateFrom: '2026-02-01',
+      dateTo: '2026-02-28',
+    });
+    expect(resolveBulkUnconfirmDateRange({ dateFrom: '2026-01-01', dateTo: '2026-05-01' }).ok).toBe(false);
   });
 
   it('sums pending clearance only', () => {

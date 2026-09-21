@@ -4,9 +4,93 @@ export const RECEIPT_AMOUNT_CONFIRM_THRESHOLD_NGN = 100_000;
 /** Typed confirmation for bulk reset of finance clearance on sales receipts. */
 export const RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE = 'RESET RECEIPT CLEARANCE';
 
+/** Typed confirmation for bulk unconfirm of confirmed receipts in a date period. */
+export const RECEIPT_BULK_UNCONFIRM_CONFIRM_PHRASE = 'UNCONFIRM PERIOD RECEIPTS';
+
+/** Max inclusive span (days) for bulk unconfirm dateFrom..dateTo. */
+export const RECEIPT_BULK_UNCONFIRM_MAX_SPAN_DAYS = 93;
+
 export const RECEIPT_STATUS_PENDING_CLEARANCE = 'Pending clearance';
 export const RECEIPT_STATUS_CLEARED = 'Cleared';
 export const RECEIPT_STATUS_REVERSED = 'Reversed';
+
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const YEAR_MONTH_RE = /^\d{4}-\d{2}$/;
+
+/**
+ * Last calendar day of a YYYY-MM month as YYYY-MM-DD.
+ * @param {string} yearMonth
+ */
+export function lastDayOfYearMonth(yearMonth) {
+  const ym = String(yearMonth || '').trim();
+  if (!YEAR_MONTH_RE.test(ym)) return '';
+  const [y, m] = ym.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${ym}-${String(last).padStart(2, '0')}`;
+}
+
+/**
+ * Resolve bulk-unconfirm period from yearMonth or dateFrom/dateTo.
+ * @param {{ dateFrom?: string, dateTo?: string, yearMonth?: string }} options
+ * @returns {{ ok: true, dateFrom: string, dateTo: string, yearMonth?: string } | { ok: false, code: string, error: string }}
+ */
+export function resolveBulkUnconfirmDateRange(options = {}) {
+  const yearMonth = String(options.yearMonth || '').trim();
+  let dateFrom = String(options.dateFrom || '').trim().slice(0, 10);
+  let dateTo = String(options.dateTo || '').trim().slice(0, 10);
+
+  if (yearMonth) {
+    if (!YEAR_MONTH_RE.test(yearMonth)) {
+      return {
+        ok: false,
+        code: 'INVALID_YEAR_MONTH',
+        error: 'Month must be YYYY-MM (for example 2026-05).',
+      };
+    }
+    dateFrom = `${yearMonth}-01`;
+    dateTo = lastDayOfYearMonth(yearMonth);
+  }
+
+  if (!ISO_DAY_RE.test(dateFrom) || !ISO_DAY_RE.test(dateTo)) {
+    return {
+      ok: false,
+      code: 'DATE_RANGE_REQUIRED',
+      error: 'Provide yearMonth (YYYY-MM) or dateFrom and dateTo (YYYY-MM-DD).',
+    };
+  }
+  if (dateFrom > dateTo) {
+    return {
+      ok: false,
+      code: 'INVALID_DATE_RANGE',
+      error: 'dateFrom must be on or before dateTo.',
+    };
+  }
+
+  const fromMs = Date.parse(`${dateFrom}T00:00:00.000Z`);
+  const toMs = Date.parse(`${dateTo}T00:00:00.000Z`);
+  const spanDays = Math.round((toMs - fromMs) / 86_400_000) + 1;
+  if (!Number.isFinite(spanDays) || spanDays < 1) {
+    return {
+      ok: false,
+      code: 'INVALID_DATE_RANGE',
+      error: 'Invalid date range.',
+    };
+  }
+  if (spanDays > RECEIPT_BULK_UNCONFIRM_MAX_SPAN_DAYS) {
+    return {
+      ok: false,
+      code: 'DATE_RANGE_TOO_LONG',
+      error: `Date range cannot exceed ${RECEIPT_BULK_UNCONFIRM_MAX_SPAN_DAYS} days. Unconfirm one month at a time.`,
+    };
+  }
+
+  return {
+    ok: true,
+    dateFrom,
+    dateTo,
+    ...(yearMonth ? { yearMonth } : {}),
+  };
+}
 
 function normStatus(status) {
   return String(status || '')

@@ -18,7 +18,10 @@ import { refundTillPayableNgn } from '../refundHandlers.js';
 import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../../shared/lib/refundUnclearedPayoutHold.js';
 import { listActiveRefundCreditApplicationsBySourceQuotation, refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
 import { refundCreditSettledNgn } from './refundCreditLedger.js';
-import { quotationOverpayResidualExcludingRefund } from './refundPayReleaseOverpayCredit.js';
+import {
+  listCancelableConflictingOverpayRefunds,
+  quotationOverpayResidualExcludingRefund,
+} from './refundPayReleaseOverpayCredit.js';
 
 export const REFUND_STATUS_PARTIALLY_PAID = 'Partially paid';
 
@@ -144,11 +147,11 @@ export function buildRefundSituationBrief(s = {}) {
     const residual = roundMoney(s.overpaymentResidualNgn);
     whatHappened.push(
       residual <= 0
-        ? 'Overpayment on this quotation was already used to confirm another receipt (residual ₦0).'
-        : `Only ${fmtNgn(residual)} overpayment residual remains — the rest was used to confirm another receipt.`
+        ? 'Overpayment on this quotation was already held by confirm-payment credit or another unpaid overpayment refund (residual ₦0).'
+        : `Only ${fmtNgn(residual)} overpayment residual remains — the rest is held by confirm-payment credit or another unpaid overpayment refund.`
     );
     howToResolve.push(
-      `Pay ${fmtNgn(tillPayableNgn)} from till/bank — the system will undo those confirmations first, then post payout. The other quotation may show unpaid again.`
+      `Pay ${fmtNgn(tillPayableNgn)} from till/bank — the system will undo those confirmations and cancel conflicting unpaid overpayment refunds first, then post payout.`
     );
   }
 
@@ -507,9 +510,10 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     });
   }
 
-  /** When confirm-payment credit ate overpay residual, till pay will auto-undo those applies. */
+  /** When confirm-payment credit or other unpaid overpay refunds ate residual, till pay will free them. */
   let overpaymentResidualNgn = null;
   let releasableOverpayCreditApplications = [];
+  let cancelableConflictingOverpayRefunds = [];
   const qrefSettle = String(row.quotation_ref || row.quotationRef || '').trim();
   const looksOverpaySettle =
     /overpay/i.test(String(row.reason_category || row.reasonCategory || '')) ||
@@ -521,17 +525,32 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
         db,
         qrefSettle
       );
+      cancelableConflictingOverpayRefunds = listCancelableConflictingOverpayRefunds(
+        db,
+        qrefSettle,
+        refundId
+      );
       if (
         tillPayableNgn > overpaymentResidualNgn &&
-        releasableOverpayCreditApplications.length > 0
+        (releasableOverpayCreditApplications.length > 0 ||
+          cancelableConflictingOverpayRefunds.length > 0)
       ) {
+        const creditNgn = releasableOverpayCreditApplications.reduce(
+          (s, a) => s + roundMoney(a.amountNgn),
+          0
+        );
+        const conflictIds = cancelableConflictingOverpayRefunds.map((r) => r.refundId).join(', ');
         payoutBlockers.push({
           code: 'REFUND_OVERPAYMENT_CREDIT_WILL_RELEASE',
-          message: `Overpayment residual on this quotation is ₦${overpaymentResidualNgn.toLocaleString('en-NG')} because ₦${releasableOverpayCreditApplications
-            .reduce((s, a) => s + roundMoney(a.amountNgn), 0)
-            .toLocaleString('en-NG')} was used to confirm another receipt.`,
+          message:
+            releasableOverpayCreditApplications.length > 0 &&
+            cancelableConflictingOverpayRefunds.length > 0
+              ? `Overpayment residual is ₦${overpaymentResidualNgn.toLocaleString('en-NG')} — ₦${creditNgn.toLocaleString('en-NG')} confirm-payment credit and unpaid refund(s) ${conflictIds} still hold this cash.`
+              : releasableOverpayCreditApplications.length > 0
+                ? `Overpayment residual on this quotation is ₦${overpaymentResidualNgn.toLocaleString('en-NG')} because ₦${creditNgn.toLocaleString('en-NG')} was used to confirm another receipt.`
+                : `Overpayment residual is ₦${overpaymentResidualNgn.toLocaleString('en-NG')} because unpaid overpayment refund(s) ${conflictIds} still reserve this cash.`,
           action:
-            'Pay from till/bank anyway — the system will undo those confirmations first, then post this payout. The other quotation may show unpaid again.',
+            'Pay from till/bank anyway — the system will undo confirmations and cancel those unpaid overpayment refunds first, then post this payout.',
         });
       } else if (tillPayableNgn > overpaymentResidualNgn) {
         payoutBlockers.push({
@@ -541,12 +560,13 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
               ? 'Overpayment on this quotation is already fully covered by other refunds.'
               : `Only ₦${overpaymentResidualNgn.toLocaleString('en-NG')} overpayment remains after other refunds.`,
           action:
-            'Cancel this approved refund, or cancel/reverse the other overpayment refunds on this quotation first.',
+            'Cancel this approved refund, or reverse the other paid overpayment refunds on this quotation first.',
         });
       }
     } catch {
       overpaymentResidualNgn = null;
       releasableOverpayCreditApplications = [];
+      cancelableConflictingOverpayRefunds = [];
     }
   }
 
@@ -567,15 +587,21 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   }
   if (
     tillPayableNgn > 0 &&
-    releasableOverpayCreditApplications.length > 0 &&
     overpaymentResidualNgn != null &&
-    tillPayableNgn > overpaymentResidualNgn
+    tillPayableNgn > overpaymentResidualNgn &&
+    (releasableOverpayCreditApplications.length > 0 ||
+      cancelableConflictingOverpayRefunds.length > 0)
   ) {
     nextActions.push({
       code: 'pay_till_release_overpay_credit',
-      label: 'Pay till/bank (undo confirm-payment credit first)',
+      label:
+        cancelableConflictingOverpayRefunds.length > 0 &&
+        releasableOverpayCreditApplications.length === 0
+          ? 'Pay till/bank (cancel conflicting unpaid overpay refunds first)'
+          : 'Pay till/bank (undo confirm-payment credit first)',
       amountNgn: tillPayableNgn,
       releasableCreditApplications: releasableOverpayCreditApplications,
+      cancelableConflictingRefunds: cancelableConflictingOverpayRefunds,
     });
   } else if (tillPayableNgn > 0) {
     nextActions.push({
@@ -637,7 +663,8 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       payeeSettledNgn <= 0 &&
       walletWithdrawnNgn <= 0,
     willReleaseOverpayCreditOnPay:
-      releasableOverpayCreditApplications.length > 0 &&
+      (releasableOverpayCreditApplications.length > 0 ||
+        cancelableConflictingOverpayRefunds.length > 0) &&
       overpaymentResidualNgn != null &&
       tillPayableNgn > overpaymentResidualNgn,
     overpaymentResidualNgn,
@@ -675,6 +702,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     tillPayableNgn,
     overpaymentResidualNgn,
     releasableOverpayCreditApplications,
+    cancelableConflictingOverpayRefunds,
     status: lifecycleStatus,
     publicLabel,
     payoutBlockers,

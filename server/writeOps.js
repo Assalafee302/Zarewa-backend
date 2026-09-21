@@ -9431,8 +9431,9 @@ export function payRefundEntry(db, refundId, payload) {
     {},
     normalizeRefundReasonCategoriesForApi
   );
-  /** Credit applies undone so this overpayment residual can fund till/bank pay. */
+  /** Credit applies / conflicting unpaid overpay refunds cleared so residual can fund till/bank. */
   let releasedOverpayCredits = [];
+  let cancelledConflictingOverpayRefunds = [];
   if (qrefPay) {
     const overpayOnThis = roundMoney(sumRefundCalculationLinesByCategoryNgn(payoutLines).Overpayment);
     const isOverpayPayout =
@@ -9442,7 +9443,7 @@ export function payRefundEntry(db, refundId, payload) {
     if (isOverpayPayout) {
       let residual = quotationOverpayResidualExcludingRefund(db, qrefPay, refundId);
       if (payoutAmountNgn > residual) {
-        // Cashier insisted on till/bank: undo Confirm-payment credit that ate this overpay first.
+        // Cashier insisted on till/bank: free residual (undo confirm credit + cancel unpaid conflicts).
         const released = releaseSourceQuoteOverpayCreditsForPayout(db, {
           sourceQuotationRef: qrefPay,
           excludeRefundId: refundId,
@@ -9456,11 +9457,13 @@ export function payRefundEntry(db, refundId, payload) {
         });
         if (!released.ok) return released;
         releasedOverpayCredits = released.reversed || [];
+        cancelledConflictingOverpayRefunds = released.cancelledRefunds || [];
         residual = roundMoney(released.residualNgn);
         if (payoutAmountNgn > residual) {
           return {
-            ...overpayPayoutSettledErrorPayload(db, qrefPay, residual, payoutAmountNgn),
+            ...overpayPayoutSettledErrorPayload(db, qrefPay, residual, payoutAmountNgn, refundId),
             releasedOverpayCredits,
+            cancelledConflictingOverpayRefunds,
           };
         }
       }
@@ -9478,8 +9481,8 @@ export function payRefundEntry(db, refundId, payload) {
       phase: 'pay',
     });
     if (!payoutGuard.ok) {
-      return releasedOverpayCredits.length
-        ? { ...payoutGuard, releasedOverpayCredits }
+      return releasedOverpayCredits.length || cancelledConflictingOverpayRefunds.length
+        ? { ...payoutGuard, releasedOverpayCredits, cancelledConflictingOverpayRefunds }
         : payoutGuard;
     }
 
@@ -9487,8 +9490,9 @@ export function payRefundEntry(db, refundId, payload) {
       const residualAfter = quotationOverpayResidualExcludingRefund(db, qrefPay, refundId);
       if (payoutAmountNgn > residualAfter) {
         return {
-          ...overpayPayoutSettledErrorPayload(db, qrefPay, residualAfter, payoutAmountNgn),
+          ...overpayPayoutSettledErrorPayload(db, qrefPay, residualAfter, payoutAmountNgn, refundId),
           releasedOverpayCredits,
+          cancelledConflictingOverpayRefunds,
         };
       }
     }
@@ -9506,7 +9510,16 @@ export function payRefundEntry(db, refundId, payload) {
           ),
         ].join(', ') || 'linked quotation'} so till/bank could pay.`
       : '';
-  const paymentNoteWithCreditRelease = [paymentNote, creditReleaseNote].filter(Boolean).join(' ').trim();
+  const conflictCancelNote =
+    cancelledConflictingOverpayRefunds.length > 0
+      ? `Cancelled unpaid overpayment refund(s) ${cancelledConflictingOverpayRefunds
+          .map((r) => r.refundId)
+          .join(', ')} so this payout could post.`
+      : '';
+  const paymentNoteWithCreditRelease = [paymentNote, creditReleaseNote, conflictCancelNote]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
 
   try {
     for (const day of new Set(paymentLines.map((line) => payoutLinePostedDay(line, defaultPaidDay)))) {
@@ -9618,6 +9631,9 @@ export function payRefundEntry(db, refundId, payload) {
           unclearedHoldOverride: Boolean(adminMayPayUncleared && heldNetNgn > 0),
           heldNetNgn: adminMayPayUncleared && heldNetNgn > 0 ? heldNetNgn : undefined,
           releasedOverpayCreditApplicationIds: releasedOverpayCredits.map((a) => a.applicationId),
+          cancelledConflictingOverpayRefundIds: cancelledConflictingOverpayRefunds.map(
+            (r) => r.refundId
+          ),
         },
       });
       if (releasedOverpayCredits.length > 0) {
@@ -9632,6 +9648,16 @@ export function payRefundEntry(db, refundId, payload) {
             whyItCameBack:
               'Target quotation(s) may show unpaid again because confirm-payment credit was released so this overpayment refund could leave till/bank. Re-confirm bank/cash on those quotations if still due.',
           },
+        });
+      }
+      if (cancelledConflictingOverpayRefunds.length > 0) {
+        appendAuditLog(db, {
+          actor: payload.actor,
+          action: 'refund.pay.cancel_conflicting_overpay',
+          entityKind: 'refund',
+          entityId: refundId,
+          note: conflictCancelNote,
+          details: { cancelledConflictingOverpayRefunds },
         });
       }
       if (adminMayPayUncleared && heldNetNgn > 0) {
@@ -9765,6 +9791,9 @@ export function payRefundEntry(db, refundId, payload) {
         ? result.refundGlPolicy.note
         : null,
       releasedOverpayCredits: releasedOverpayCredits.length ? releasedOverpayCredits : undefined,
+      cancelledConflictingOverpayRefunds: cancelledConflictingOverpayRefunds.length
+        ? cancelledConflictingOverpayRefunds
+        : undefined,
     };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

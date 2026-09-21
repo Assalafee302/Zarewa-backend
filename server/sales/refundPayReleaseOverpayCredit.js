@@ -1,10 +1,10 @@
 /**
  * When till/bank payout of an overpayment refund is blocked because that quote's overpayment
- * was already used to confirm another receipt (refund credit apply), reverse those applies
- * so residual reopens and the bank payout can post.
+ * was already used elsewhere, free residual so the bank payout can post:
+ * 1) reverse Confirm-payment credit applications from the source quotation
+ * 2) cancel other unpaid Pending/Approved overpayment refunds that still reserve the same cash
  *
- * Does not cancel other refunds — only reverses active refund_credit_applications from the
- * source quotation. If other refunds still consume residual after reverse, pay stays blocked.
+ * Does not cancel refunds that already paid till/wallet/credit to a payee.
  */
 import {
   listActiveRefundCreditApplicationsBySourceQuotation,
@@ -12,12 +12,62 @@ import {
 } from '../refundCreditApplyOps.js';
 import {
   overpaymentAlreadyRefundedNgn,
+  overpaymentReservedOnRefund,
   quotationOverpaymentResidualNgn,
 } from '../../shared/lib/refundQuotationMoney.js';
-import { quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn } from '../controlOps.js';
+import {
+  appendAuditLog,
+  quotationCashInNgn,
+  quotationUnlinkedOverpayCreditOutNgn,
+} from '../controlOps.js';
+import { voidPartnerWalletCreditsForRefundTx } from '../finance/partnerWalletCredit.js';
+import { voidCompanyRetentionForRefundTx } from '../finance/refundCompanyRetentionLedger.js';
 
 function roundMoney(v) {
   return Math.round(Number(v) || 0);
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} row
+ */
+function refundPayeeSettledNgn(db, row) {
+  const refundId = String(row?.refund_id || '').trim();
+  if (!refundId) return 0;
+  let treasury = 0;
+  try {
+    const t = db
+      .prepare(
+        `SELECT COALESCE(SUM(
+           CASE
+             WHEN type = 'REFUND_PAYOUT' THEN ABS(amount_ngn)
+             WHEN type = 'REFUND_PAYOUT_REVERSAL_IN' THEN -ABS(amount_ngn)
+             ELSE 0
+           END
+         ), 0) AS s
+         FROM treasury_movements
+         WHERE source_kind = 'REFUND' AND source_id = ?`
+      )
+      .get(refundId);
+    treasury = roundMoney(t?.s);
+  } catch {
+    treasury = 0;
+  }
+  let walletWithdrawn = 0;
+  try {
+    const w = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s
+         FROM partner_wallet_withdrawal_allocations
+         WHERE refund_id = ?`
+      )
+      .get(refundId);
+    walletWithdrawn = roundMoney(w?.s);
+  } catch {
+    walletWithdrawn = 0;
+  }
+  const creditApplied = roundMoney(row.credit_applied_ngn);
+  return Math.max(0, treasury + walletWithdrawn + creditApplied);
 }
 
 /**
@@ -48,8 +98,113 @@ export function quotationOverpayResidualExcludingRefund(db, quotationRef, exclud
 }
 
 /**
- * Reverse active credit applications from this source quote until residual covers needNgn
- * (or all apps are reversed). Newest applications first.
+ * Other unpaid overpayment refunds that still reserve cash on this quote (block till pay).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ * @param {string} excludeRefundId
+ */
+export function listCancelableConflictingOverpayRefunds(db, quotationRef, excludeRefundId) {
+  const qref = String(quotationRef || '').trim();
+  const exclude = String(excludeRefundId || '').trim();
+  if (!qref) return [];
+  const rows = db
+    .prepare(
+      `SELECT * FROM customer_refunds
+       WHERE quotation_ref = ?
+         AND refund_id != ?
+         AND TRIM(COALESCE(LOWER(status), '')) IN ('pending', 'approved')`
+    )
+    .all(qref, exclude || '');
+  const out = [];
+  for (const row of rows) {
+    const reserved = overpaymentReservedOnRefund(row);
+    if (reserved <= 0) continue;
+    if (refundPayeeSettledNgn(db, row) > 0) continue;
+    out.push({
+      refundId: String(row.refund_id || '').trim(),
+      status: String(row.status || '').trim(),
+      reservedOverpayNgn: reserved,
+      amountNgn: roundMoney(row.approved_amount_ngn || row.amount_ngn),
+    });
+  }
+  return out.sort((a, b) => b.reservedOverpayNgn - a.reservedOverpayNgn);
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} row
+ * @param {{ actor?: object, note?: string, payingRefundId?: string }} opts
+ */
+function cancelUnpaidOverpayRefundForPayout(db, row, opts = {}) {
+  const refundId = String(row?.refund_id || '').trim();
+  const status = String(row?.status || '').trim();
+  if (!refundId) return { ok: false, error: 'Refund id required.' };
+  if (status !== 'Approved' && status !== 'Pending') {
+    return { ok: false, error: `Refund ${refundId} is ${status || 'unknown'} — cannot auto-cancel.` };
+  }
+  const settled = refundPayeeSettledNgn(db, row);
+  if (settled > 0) {
+    return {
+      ok: false,
+      error: `Refund ${refundId} already has payee money out and cannot be auto-cancelled.`,
+      code: 'REFUND_ALREADY_SETTLED',
+    };
+  }
+  const payingRefundId = String(opts.payingRefundId || '').trim();
+  const note =
+    String(opts.note || '').trim() ||
+    (payingRefundId
+      ? `Auto-cancelled so ${payingRefundId} can pay from till/bank`
+      : 'Auto-cancelled for overpayment till/bank payout');
+
+  const voided = voidPartnerWalletCreditsForRefundTx(db, refundId);
+  if (!voided.ok) {
+    return { ok: false, error: voided.error || `Could not void partner wallet for ${refundId}.` };
+  }
+  if (voided.skipped) {
+    const retentionVoid = voidCompanyRetentionForRefundTx(db, refundId);
+    if (!retentionVoid.ok) {
+      return {
+        ok: false,
+        error: retentionVoid.error || `Could not void company retention for ${refundId}.`,
+      };
+    }
+  }
+
+  db.prepare(
+    `UPDATE customer_refunds
+     SET status = 'Cancelled',
+         manager_comments = ?,
+         paid_amount_ngn = 0,
+         paid_at_iso = '',
+         paid_by = '',
+         payment_note = ''
+     WHERE refund_id = ?`
+  ).run(note, refundId);
+
+  appendAuditLog(db, {
+    actor: opts.actor,
+    action: 'refund.cancel_for_overpay_payout',
+    entityKind: 'refund',
+    entityId: refundId,
+    note,
+    details: {
+      previousStatus: status,
+      payingRefundId: payingRefundId || null,
+      reservedOverpayNgn: overpaymentReservedOnRefund(row),
+    },
+  });
+
+  return {
+    ok: true,
+    refundId,
+    previousStatus: status,
+    reservedOverpayNgn: overpaymentReservedOnRefund(row),
+  };
+}
+
+/**
+ * Reverse confirm-payment credit and cancel conflicting unpaid overpay refunds until residual covers need.
  *
  * @param {import('better-sqlite3').Database} db
  * @param {{
@@ -70,22 +225,17 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
     return { ok: false, error: 'sourceQuotationRef is required.' };
   }
   if (needResidualNgn <= 0) {
-    return { ok: true, reversed: [], residualNgn: quotationOverpayResidualExcludingRefund(db, sourceQuotationRef, excludeRefundId) };
+    return {
+      ok: true,
+      reversed: [],
+      cancelledRefunds: [],
+      residualNgn: quotationOverpayResidualExcludingRefund(db, sourceQuotationRef, excludeRefundId),
+    };
   }
 
   let residual = quotationOverpayResidualExcludingRefund(db, sourceQuotationRef, excludeRefundId);
   if (residual >= needResidualNgn) {
-    return { ok: true, reversed: [], residualNgn: residual };
-  }
-
-  const apps = listActiveRefundCreditApplicationsBySourceQuotation(db, sourceQuotationRef);
-  if (!apps.length) {
-    return {
-      ok: true,
-      reversed: [],
-      residualNgn: residual,
-      shortfallNgn: Math.max(0, needResidualNgn - residual),
-    };
+    return { ok: true, reversed: [], cancelledRefunds: [], residualNgn: residual };
   }
 
   const payingRefundId = String(opts.payingRefundId || excludeRefundId || '').trim();
@@ -96,7 +246,9 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
       : 'Auto-released for overpayment refund till/bank payout');
   const dateISO = String(opts.dateISO || '').trim().slice(0, 10) || undefined;
   const reversed = [];
+  const cancelledRefunds = [];
 
+  const apps = listActiveRefundCreditApplicationsBySourceQuotation(db, sourceQuotationRef);
   for (const app of apps) {
     residual = quotationOverpayResidualExcludingRefund(db, sourceQuotationRef, excludeRefundId);
     if (residual >= needResidualNgn) break;
@@ -116,6 +268,7 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
         error: rev.error || `Could not reverse credit apply ${app.applicationId}.`,
         code: rev.code || 'REFUND_CREDIT_REVERSE_FAILED',
         reversed,
+        cancelledRefunds,
       };
     }
     if (rev.ok) {
@@ -132,9 +285,43 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
   }
 
   residual = quotationOverpayResidualExcludingRefund(db, sourceQuotationRef, excludeRefundId);
+  if (residual < needResidualNgn) {
+    const conflicting = listCancelableConflictingOverpayRefunds(db, sourceQuotationRef, excludeRefundId);
+    for (const conflict of conflicting) {
+      residual = quotationOverpayResidualExcludingRefund(db, sourceQuotationRef, excludeRefundId);
+      if (residual >= needResidualNgn) break;
+
+      const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(conflict.refundId);
+      if (!row) continue;
+      const cancelled = cancelUnpaidOverpayRefundForPayout(db, row, {
+        actor: opts.actor,
+        payingRefundId,
+        note:
+          String(opts.note || '').trim() ||
+          `Auto-cancelled unpaid overpayment refund so ${payingRefundId || 'till/bank payout'} can post`,
+      });
+      if (!cancelled.ok) {
+        return {
+          ok: false,
+          error: cancelled.error || `Could not cancel conflicting refund ${conflict.refundId}.`,
+          code: cancelled.code || 'REFUND_CONFLICT_CANCEL_FAILED',
+          reversed,
+          cancelledRefunds,
+        };
+      }
+      cancelledRefunds.push({
+        refundId: cancelled.refundId,
+        previousStatus: cancelled.previousStatus,
+        reservedOverpayNgn: conflict.reservedOverpayNgn,
+      });
+    }
+  }
+
+  residual = quotationOverpayResidualExcludingRefund(db, sourceQuotationRef, excludeRefundId);
   return {
     ok: true,
     reversed,
+    cancelledRefunds,
     residualNgn: residual,
     shortfallNgn: Math.max(0, needResidualNgn - residual),
   };
@@ -146,11 +333,23 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
  * @param {string} sourceQuotationRef
  * @param {number} residualNgn
  * @param {number} payoutAmountNgn
+ * @param {string} [excludeRefundId]
  */
-export function overpayPayoutSettledErrorPayload(db, sourceQuotationRef, residualNgn, payoutAmountNgn) {
+export function overpayPayoutSettledErrorPayload(
+  db,
+  sourceQuotationRef,
+  residualNgn,
+  payoutAmountNgn,
+  excludeRefundId = ''
+) {
   const residual = roundMoney(residualNgn);
   const payout = roundMoney(payoutAmountNgn);
   const apps = listActiveRefundCreditApplicationsBySourceQuotation(db, sourceQuotationRef);
+  const conflicting = listCancelableConflictingOverpayRefunds(
+    db,
+    sourceQuotationRef,
+    excludeRefundId
+  );
   return {
     ok: false,
     code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',
@@ -161,9 +360,10 @@ export function overpayPayoutSettledErrorPayload(db, sourceQuotationRef, residua
     overpaymentResidualNgn: residual,
     payoutAmountNgn: payout,
     releasableCreditApplications: apps,
+    cancelableConflictingRefunds: conflicting,
     hint:
-      apps.length > 0
-        ? 'Overpayment was used to confirm another receipt. Retry pay — the system will undo those confirmations first, then post till/bank.'
-        : 'Cancel conflicting overpayment refunds on this quotation, or cancel this approved refund if the customer was already paid another way.',
+      apps.length > 0 || conflicting.length > 0
+        ? 'Retry pay — the system will undo confirm-payment credit and cancel other unpaid overpayment refunds on this quotation first, then post till/bank.'
+        : 'Another refund on this quotation already paid out this overpayment. Cancel this approved refund if the customer was already paid another way.',
   };
 }

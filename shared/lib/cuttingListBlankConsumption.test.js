@@ -194,6 +194,29 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.clFlatsheetM).toBe(gutterBlank);
   });
 
+  it('soft-allows stone quote when quotation coil need exceeds flatsheet cutting list (under-quote)', () => {
+    const lines = {
+      products: [
+        { name: 'Roofing Sheet', qty: 80 },
+        { name: 'Gutter', qty: 12, girthMm: 400 },
+      ],
+    };
+    const gutterBlank = finishedTrimMetresToBlankMetres(12, 400);
+    const assessment = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 80, lengthM: 1 },
+        { lineType: 'Flatsheet', sheets: 1, lengthM: Math.max(0.1, gutterBlank / 2) },
+        { lineType: 'StoneFlatsheet', sheets: 4, lengthM: 2 },
+      ],
+      stoneMeterQuote: true,
+    });
+    expect(assessment.ok).toBe(true);
+    expect(assessment.code).toBe('cutting_list_quotation_metre_under');
+    expect(assessment.trimBlankProductionBlocked).toBe(true);
+    expect(assessment.signedDeltaM).toBeLessThan(0);
+  });
+
   it('stoneMeterQuote flag still aligns coil when linesJson omits materialTypeId', () => {
     const lines = {
       products: [{ name: 'Gutter', qty: 12, girthMm: 400 }],

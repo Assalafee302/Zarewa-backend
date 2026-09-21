@@ -69,6 +69,32 @@ const NON_OVERRIDABLE_ALIGNMENT_BLOCK_CODES = new Set([
   'multi_category_overlap_same_request',
 ]);
 
+/**
+ * Hard blocks that branch managers may approve through with notification only
+ * (no free-text override note). Sales submit still blocked unless a note is provided.
+ */
+export const BM_NOTIFY_ONLY_ALIGNMENT_BLOCK_CODES = new Set([
+  'cutting_list_quotation_metre_mismatch',
+]);
+
+/**
+ * Downgrade metre-mismatch blocks to info for BM / MD / admin so the UI notifies but allows approve.
+ * @param {Array<{ code?: string, submitAction?: string, severity?: string }>} issues
+ * @param {{ roleKey?: string, role?: string, role_key?: string } | null | undefined} actor
+ */
+export function softenBmNotifyOnlyAlignmentIssues(issues, actor) {
+  if (!actorMayOverrideProductionAlignmentBlock(actor)) return issues || [];
+  return (issues || []).map((i) =>
+    BM_NOTIFY_ONLY_ALIGNMENT_BLOCK_CODES.has(String(i.code || '').trim())
+      ? {
+          ...i,
+          submitAction: 'info',
+          severity: i.severity === 'error' ? 'warning' : i.severity,
+        }
+      : i
+  );
+}
+
 function parseReasonCategories(raw) {
   if (raw == null || raw === '') return [];
   try {
@@ -458,8 +484,11 @@ export function validateRefundProductionAlignmentAtSubmit(db, quotationRef, sele
   const ackSet = new Set((acknowledgedCodes || []).map((c) => String(c).trim()).filter(Boolean));
   const override = String(overrideNote || '').trim();
   const mayOverride = actorMayOverrideProductionAlignmentBlock(actor);
-  const issues = enrichProductionAlignmentIssuesForSubmit(
-    refundProductionAlignmentWarnings(db, quotationRef, selectedCategories, { excludeRefundId })
+  const issues = softenBmNotifyOnlyAlignmentIssues(
+    enrichProductionAlignmentIssuesForSubmit(
+      refundProductionAlignmentWarnings(db, quotationRef, selectedCategories, { excludeRefundId })
+    ),
+    actor
   );
 
   const blocks = issues.filter((i) => i.submitAction === 'block');

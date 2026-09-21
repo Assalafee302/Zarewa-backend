@@ -9794,7 +9794,7 @@ export function registerHttpApi(app, db) {
         const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
         if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
       }
-      const r = previewRefundRequest(db, req.body || {});
+      const r = previewRefundRequest(db, { ...(req.body || {}), actor: req.user });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);

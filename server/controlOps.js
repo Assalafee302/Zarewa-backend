@@ -174,12 +174,14 @@ import {
   assertRefundApproverNotRequester,
 } from './refundHandlers.js';
 import {
+  BM_NOTIFY_ONLY_ALIGNMENT_BLOCK_CODES,
   enrichProductionAlignmentIssuesForSubmit,
   mergeProductionAlignmentAckJson,
   parseStoredProductionAlignmentAck,
   refundProductionAlignmentWarnings,
   resolveRefundReasonCategoriesForDecision,
   resolveRefundAlignmentCategories,
+  softenBmNotifyOnlyAlignmentIssues,
   suggestRefundCategoriesFromProduction,
   validateRefundProductionAlignmentAtSubmit,
 } from './refundProductionAlignment.js';
@@ -474,6 +476,8 @@ export function validateRefundProductionAlignmentAtPayout(db, quotationRef, reas
     if (action === 'acknowledge') return !ackSet.has(code);
     if (action !== 'block') return false;
     if (code === 'multi_category_overlap' || code === 'multi_category_overlap_same_request') return true;
+    // BM may approve metre mismatch with notify-only (no override note); do not re-block payout.
+    if (BM_NOTIFY_ONLY_ALIGNMENT_BLOCK_CODES.has(code)) return false;
     return !overrideOk;
   });
   if (!fatal.length) return { ok: true, issues };
@@ -5395,10 +5399,13 @@ export function previewRefundRequest(db, payload) {
 
   const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);
   const alignmentCategories = resolveRefundAlignmentCategories(payload.reasonCategory, suggestedLines);
-  const alignmentIssues = enrichProductionAlignmentIssuesForSubmit(
-    refundProductionAlignmentWarnings(db, quotationRef, alignmentCategories, {
-      excludeRefundId: String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null,
-    })
+  const alignmentIssues = softenBmNotifyOnlyAlignmentIssues(
+    enrichProductionAlignmentIssuesForSubmit(
+      refundProductionAlignmentWarnings(db, quotationRef, alignmentCategories, {
+        excludeRefundId: String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null,
+      })
+    ),
+    payload.actor
   );
   for (const issue of alignmentIssues) {
     if (issue.message && !warnings.includes(issue.message)) {

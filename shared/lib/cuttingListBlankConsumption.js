@@ -388,9 +388,13 @@ export function assessCuttingListQuotationConsumption({
       };
     }
     if (coilGapM > trimBlankHardToleranceM + 1e-6) {
+      // Quote / coil need above flatsheet CL — same as under-quote coil lists: notify only.
+      // Production still gated via trimBlankProductionBlocked; refunds must not hard-block BM approval.
+      const underMsg = `Flatsheet section (${clFlatsheetM.toFixed(2)} m) is ${coilGapM.toFixed(2)} m short of coil need for this stone quote (${expectedTotalM.toFixed(2)} m gutter/normal flatsheet). Under-quote lists are allowed; leftover may be unproduced.`;
+      warnings.push(underMsg);
       return {
-        ok: false,
-        code: 'cutting_list_quotation_metre_mismatch',
+        ok: true,
+        code: 'cutting_list_quotation_metre_under',
         warnings,
         quotedSheetPoolM,
         quotedTrimBlankM,
@@ -400,7 +404,8 @@ export function assessCuttingListQuotationConsumption({
         trimBlankGapM: coilGapM,
         trimBlankProductionBlocked: true,
         deltaMetres: coilGapM,
-        message: `Flatsheet section (${clFlatsheetM.toFixed(2)} m) is short of coil need for this stone quote (${expectedTotalM.toFixed(2)} m gutter/normal flatsheet). Add metres under Flatsheet (stone flatsheet sheet counts may be extra).`,
+        signedDeltaM: roundCuttingListMetres2(-coilGapM),
+        message: underMsg,
       };
     }
     return {

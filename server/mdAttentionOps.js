@@ -75,7 +75,7 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       atIso: q.date_iso,
       branchId: q.branch_id || '',
       reasons: [
-        'Below-floor pricing after payment — branch manager approval required',
+        'Below-floor pricing after payment — branch manager or MD approval required',
         paid > 0 ? `Paid ₦${Math.round(paid).toLocaleString('en-NG')}` : null,
       ].filter(Boolean),
       reviewAction: 'approve_price_exception',

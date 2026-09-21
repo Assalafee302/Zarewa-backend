@@ -6138,6 +6138,41 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  /** Undo mistaken finance confirmation — back to Pending clearance (receipt stays posted). */
+  app.post(
+    '/api/sales-receipts/:receiptId/unconfirm',
+    requirePermission(['finance.pay', 'finance.post']),
+    (req, res) => {
+      try {
+        const rid = String(req.params.receiptId || '');
+        const rg = assertSalesReceiptIdInWorkspace(db, req, rid);
+        if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
+        const r = write.unconfirmSalesReceiptFinanceClearance(db, rid, req.user, req.body || {});
+        if (!r.ok) return res.status(400).json(r);
+        const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
+        /** @type {Record<string, unknown[]>} */
+        const bags = { receipts: receipt ? [receipt] : [] };
+        const qRef = String(receipt?.quotationRef || '').trim();
+        if (qRef) {
+          const quotation = getQuotation(db, qRef);
+          if (quotation) bags.quotations = [quotation];
+        }
+        const refunds = [];
+        for (const app of r.reversedRefundCreditApplications || []) {
+          const refundId = String(app?.refundId || '').trim();
+          if (!refundId) continue;
+          const row = getCustomerRefundDetail(db, refundId, { heal: true });
+          if (row) refunds.push(row);
+        }
+        if (refunds.length) bags.refunds = refunds;
+        return res.json(withWriteDelta({ ...r }, bags));
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   app.patch(
     '/api/treasury/movements/:movementId/ledger-receipt-correction',
     requirePermission(['finance.pay', 'finance.post']),

@@ -11720,6 +11720,17 @@ function markTreasuryMovementFinanceConfirmedDb(db, movementId, actor, atIso) {
   ).run(atIso, uid, mid);
 }
 
+function clearTreasuryMovementFinanceConfirmedDb(db, movementId) {
+  const mid = String(movementId || '').trim();
+  if (!mid) return;
+  db.prepare(
+    `UPDATE treasury_movements
+     SET finance_confirmed_at_iso = NULL,
+         finance_confirmed_by_user_id = NULL
+     WHERE id = ?`
+  ).run(mid);
+}
+
 /**
  * Finance: record amount actually received in bank, optional delivery clearance, optional batched
  * payment-line corrections, and mark reconciliation finalized (second edit needs manager token).
@@ -11980,6 +11991,134 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     refundCreditLeftoverNgn: creditResult?.leftoverCreditNgn ?? null,
     refundCreditSkipped: Boolean(creditResult?.skipped),
     refundCreditSkipReason: creditResult?.skipped ? creditResult.error : undefined,
+  };
+}
+
+/**
+ * Undo finance confirmation on one sales receipt (mistaken confirm).
+ * Puts the receipt back to Pending clearance, clears per-split confirm flags, and reverses
+ * any refund-fund / confirm-payment credit that was applied when this receipt was confirmed.
+ * Treasury IN / ledger RECEIPT rows stay posted — use reverse receipt to void the payment itself.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} receiptId
+ * @param {object | null} actor
+ * @param {{ reason?: string, note?: string }} [options]
+ */
+export function unconfirmSalesReceiptFinanceClearance(db, receiptId, actor = null, options = {}) {
+  const id = String(receiptId || '').trim();
+  if (!id) return { ok: false, error: 'Receipt id required.' };
+
+  const reason = String(options.reason || options.note || '').trim();
+  if (reason.length < 3) {
+    return {
+      ok: false,
+      code: 'REASON_REQUIRED',
+      error: 'Enter a short reason (at least 3 characters) for unconfirming this payment.',
+    };
+  }
+
+  const row = db.prepare(`SELECT * FROM sales_receipts WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Receipt not found.' };
+  if (String(row.status || '').toLowerCase() === 'reversed') {
+    return { ok: false, error: 'Reversed receipts cannot be unconfirmed.' };
+  }
+
+  const finalized =
+    row.finance_reconciliation_saved_at_iso != null &&
+    String(row.finance_reconciliation_saved_at_iso).trim() !== '';
+  const splitRows = listReceiptTreasurySplitMovementsDb(db, id);
+  const confirmedSplitIds = splitRows
+    .filter(
+      (s) => s.finance_confirmed_at_iso != null && String(s.finance_confirmed_at_iso).trim() !== ''
+    )
+    .map((s) => String(s.id));
+  const bankConfirmed =
+    row.bank_confirmed_at_iso != null && String(row.bank_confirmed_at_iso).trim() !== '';
+
+  if (!finalized && confirmedSplitIds.length === 0 && !bankConfirmed) {
+    return {
+      ok: false,
+      code: 'NOT_CONFIRMED',
+      error: 'This receipt is not confirmed yet — nothing to unconfirm.',
+    };
+  }
+
+  const linkedCreditApplications = listActiveRefundCreditApplicationsBySourceReceipt(db, id);
+  const reversedCreditApplications = [];
+  const dateISO = new Date().toISOString().slice(0, 10);
+
+  try {
+    db.transaction(() => {
+      for (const app of linkedCreditApplications) {
+        const rev = reverseRefundCreditApplication(db, app.applicationId, {
+          actor,
+          note: `Auto-reversed when unconfirming receipt ${id} — ${reason}`,
+          dateISO,
+          alreadyInTransaction: true,
+        });
+        if (!rev.ok && rev.code !== 'ALREADY_REVERSED') {
+          throw Object.assign(
+            new Error(
+              `Could not reverse refund credit ${app.applicationId} while unconfirming: ${rev.error}`
+            ),
+            { code: rev.code || 'CREDIT_REVERSE_FAILED' }
+          );
+        }
+        if (rev.ok) reversedCreditApplications.push(rev);
+      }
+
+      for (const mid of confirmedSplitIds) {
+        clearTreasuryMovementFinanceConfirmedDb(db, mid);
+      }
+
+      db.prepare(
+        `UPDATE sales_receipts SET
+          status = 'Pending clearance',
+          finance_reconciliation_saved_at_iso = NULL,
+          finance_reconciliation_saved_by_user_id = NULL,
+          finance_delivery_cleared_at_iso = NULL,
+          finance_delivery_cleared_by_user_id = NULL,
+          bank_confirmed_at_iso = NULL,
+          bank_confirmed_by_user_id = NULL,
+          bank_received_amount_ngn = NULL
+         WHERE id = ?`
+      ).run(id);
+
+      const qref = String(row.quotation_ref || '').trim();
+      if (qref) syncQuotationPaidFromReceipts(db, qref);
+    })();
+  } catch (e) {
+    return {
+      ok: false,
+      error: String(e.message || e),
+      ...(e?.code ? { code: e.code } : {}),
+    };
+  }
+
+  appendAuditLog(db, {
+    actor,
+    action: 'receipt.finance_unconfirm',
+    entityKind: 'sales_receipt',
+    entityId: id,
+    note: reason,
+    details: {
+      wasFinalized: finalized,
+      clearedSplitConfirmCount: confirmedSplitIds.length,
+      reversedRefundCreditCount: reversedCreditApplications.length,
+      reversedRefundCreditApplications: reversedCreditApplications.map((r) => ({
+        applicationId: r.applicationId,
+        amountNgn: r.amountNgn,
+        refundId: r.refundId,
+      })),
+      quotationRef: String(row.quotation_ref || '').trim() || null,
+    },
+  });
+
+  return {
+    ok: true,
+    receiptId: id,
+    clearedSplitConfirmCount: confirmedSplitIds.length,
+    reversedRefundCreditApplications,
   };
 }
 

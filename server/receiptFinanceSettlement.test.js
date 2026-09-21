@@ -5,6 +5,7 @@ import {
   patchSalesReceiptFinanceSettlement,
   reapplyFinanceReconciledReceiptAmountsForBranchScope,
   syncQuotationPaidFromReceipts,
+  unconfirmSalesReceiptFinanceClearance,
 } from './writeOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import { previewRefundRequest, quotationMeetsRefundEligibility } from './controlOps.js';
@@ -77,6 +78,46 @@ describe('receipt finance settlement aligns paid amount', () => {
     const cash = quotationPaymentCashBreakdown(db, 'QT-146');
     expect(cash.receiptCashNgn).toBe(620_000);
     expect(cash.cashInNgn).toBe(620_000);
+  });
+
+  it('unconfirm returns a cleared receipt to Pending clearance', () => {
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      { bankReceivedAmountNgn: 415350 },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(true);
+
+    const un = unconfirmSalesReceiptFinanceClearance(
+      db,
+      'LE-261',
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' },
+      { reason: 'Confirmed the wrong receipt by mistake' }
+    );
+    expect(un.ok).toBe(true);
+
+    const rec = db
+      .prepare(
+        `SELECT status, finance_reconciliation_saved_at_iso, bank_confirmed_at_iso, bank_received_amount_ngn,
+                finance_delivery_cleared_at_iso
+         FROM sales_receipts WHERE id = ?`
+      )
+      .get('LE-261');
+    expect(String(rec.status)).toBe('Pending clearance');
+    expect(rec.finance_reconciliation_saved_at_iso).toBeFalsy();
+    expect(rec.bank_confirmed_at_iso).toBeFalsy();
+    expect(rec.bank_received_amount_ngn).toBeNull();
+    expect(rec.finance_delivery_cleared_at_iso).toBeFalsy();
+
+    const again = unconfirmSalesReceiptFinanceClearance(
+      db,
+      'LE-261',
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' },
+      { reason: 'try again' }
+    );
+    expect(again.ok).toBe(false);
+    expect(again.code).toBe('NOT_CONFIRMED');
   });
 
   it('lets finance confirm an unconfirmed receipt even when the quotation is manager-cleared', () => {

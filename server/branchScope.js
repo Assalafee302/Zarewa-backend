@@ -11,6 +11,16 @@ export function userMayPostAcrossBranches(user) {
 }
 
 /**
+ * MD (and other HQ payers) may settle a supplier payable while “all branches” is on.
+ * Cash must still leave a treasury account of the purchase order’s factory.
+ */
+export function userMaySettleSupplierPayableFromHqRollup(user, workspaceViewAll = false) {
+  if (userMayPostAcrossBranches(user)) return true;
+  if (!workspaceViewAll || !user) return false;
+  return userHasPermission(user, 'hq.view_all_branches') && userHasPermission(user, 'finance.pay');
+}
+
+/**
  * Block writes against another branch’s row. View-all alone does not allow cross-branch mutation.
  * @param {object | null | undefined} user
  * @param {string | null | undefined} entityBranchId

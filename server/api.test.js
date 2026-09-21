@@ -473,6 +473,35 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(Array.isArray(pos.body.purchaseOrders)).toBe(true);
   });
 
+  it('POST /api/accounts-payable/AP-PO-*/pay materializes the payable from the purchase order', async () => {
+    const boot = await agent.get('/api/bootstrap');
+    const treasuryAccountId = boot.body.treasuryAccounts[0].id;
+    const branchId = String(boot.body.branchScope || 'BR-KD').trim() || 'BR-KD';
+    const poId = 'PO-PAY-LIVE-1';
+    db.prepare(
+      `INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id, supplier_paid_ngn)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(poId, 'SUP-001', 'Pay Live Supplier', '2026-07-01', 'Approved', branchId, 0);
+    db.prepare(
+      `INSERT INTO purchase_order_lines (po_id, line_key, product_id, product_name, qty_ordered, qty_received, unit_price_ngn)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(poId, 'L1', 'P1', 'Coil', 10, 0, 10000);
+    expect(db.prepare(`SELECT ap_id FROM accounts_payable WHERE ap_id = ?`).get(`AP-PO-${poId}`)).toBeFalsy();
+
+    const pay = await agent.post(`/api/accounts-payable/${encodeURIComponent(`AP-PO-${poId}`)}/pay`).send({
+      amountNgn: 40_000,
+      paymentMethod: 'Bank transfer',
+      treasuryAccountId,
+      reference: 'PO-PAY-LIVE',
+      dateISO: '2026-07-02',
+    });
+    expect(pay.status).toBe(201);
+    expect(pay.body.ok).toBe(true);
+    expect(pay.body.amountApplied).toBe(40_000);
+    const ap = db.prepare(`SELECT paid_ngn FROM accounts_payable WHERE ap_id = ?`).get(`AP-PO-${poId}`);
+    expect(Number(ap?.paid_ngn)).toBe(40_000);
+  });
+
   it('PATCH /api/customers/:id updates customer and linked display names', async () => {
     const patch = await agent.patch('/api/customers/CUS-001').send({
       name: 'Alhaji Musa Updated',

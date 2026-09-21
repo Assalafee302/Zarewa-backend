@@ -5,6 +5,7 @@ import { createApp } from './app.js';
 import { createFixedAsset } from './accountingPhase2Ops.js';
 import { postOpeningPackJournal } from './accountingOpeningPackOps.js';
 import { postDepreciationRun } from './depreciationRunOps.js';
+import { userMaySettleSupplierPayableFromHqRollup } from './branchScope.js';
 
 function mysqlAvailable() {
   try {
@@ -23,6 +24,26 @@ describe('opening pack branch scope (pure)', () => {
     const result = postOpeningPackJournal(null, { branchScope: 'ALL', createdByUserId: 'u-test' });
     expect(result.ok).toBe(false);
     expect(String(result.error || '')).toMatch(/single branch/i);
+  });
+});
+
+describe('userMaySettleSupplierPayableFromHqRollup (pure)', () => {
+  it('allows MD with all-branches and finance.pay', () => {
+    expect(
+      userMaySettleSupplierPayableFromHqRollup(
+        { permissions: ['hq.view_all_branches', 'finance.pay'] },
+        true
+      )
+    ).toBe(true);
+  });
+
+  it('denies MD when all-branches is off', () => {
+    expect(
+      userMaySettleSupplierPayableFromHqRollup(
+        { permissions: ['hq.view_all_branches', 'finance.pay'] },
+        false
+      )
+    ).toBe(false);
   });
 });
 
@@ -120,6 +141,58 @@ describe.skipIf(!mysqlOk)('Finance / sales / accounting branch isolation', () =>
     });
     expect(pay.status).toBe(400);
     expect(String(pay.body.error || '')).toMatch(/branch/i);
+  });
+
+  it('MD pays a synthesized AP-PO payable from all-branches using that factory treasury', async () => {
+    const admin = await loginAdmin();
+    const { branchA, branchB } = await branchIds(admin);
+    const poId = 'PO-HQ-PAY-1';
+    db.prepare(
+      `INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id, supplier_paid_ngn)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(poId, 'SUP-001', 'HQ Pay Supplier', '2026-07-01', 'Approved', branchB, 0);
+    db.prepare(
+      `INSERT INTO purchase_order_lines (po_id, line_key, product_id, product_name, qty_ordered, qty_received, unit_price_ngn)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(poId, 'L1', 'P1', 'Coil', 10, 0, 10000);
+    expect(db.prepare(`SELECT ap_id FROM accounts_payable WHERE ap_id = ?`).get(`AP-PO-${poId}`)).toBeFalsy();
+
+    const md = request.agent(app);
+    const login = await md.post('/api/session/login').send({ username: 'md', password: 'Md@1234567890!' });
+    expect(login.status).toBe(200);
+    await md.patch('/api/session/workspace').send({ currentBranchId: branchA, viewAllBranches: true });
+
+    const snap = await md.get('/api/workspace/procurement-snapshot');
+    expect(snap.status).toBe(200);
+    expect(snap.body.accountsPayable.some((row) => row.apID === `AP-PO-${poId}` && row.outstandingNgn === 100_000)).toBe(
+      true
+    );
+
+    let treasury =
+      (snap.body.treasuryAccounts || []).find((a) => String(a.branchId || '').trim() === branchB) || null;
+    if (!treasury) {
+      db.prepare(
+        `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, branch_id, opening_balance_ngn)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run('HQ Pay Till', 'GTBank', 2_000_000, 'Bank', 'HQ-PAY-1', branchB, 2_000_000);
+      const inserted = db.prepare(`SELECT id FROM treasury_accounts WHERE acc_no = 'HQ-PAY-1'`).get();
+      treasury = { id: inserted.id, branchId: branchB };
+    }
+
+    const pay = await md.post(`/api/accounts-payable/${encodeURIComponent(`AP-PO-${poId}`)}/pay`).send({
+      amountNgn: 40_000,
+      paymentMethod: 'Bank transfer',
+      treasuryAccountId: treasury.id,
+      reference: 'HQ-AP-PO-PAY',
+      dateISO: '2026-07-02',
+    });
+    expect(pay.status).toBe(201);
+    expect(pay.body.ok).toBe(true);
+    expect(pay.body.amountApplied).toBe(40_000);
+    const ap = db.prepare(`SELECT paid_ngn FROM accounts_payable WHERE ap_id = ?`).get(`AP-PO-${poId}`);
+    expect(Number(ap?.paid_ngn)).toBe(40_000);
+    const po = db.prepare(`SELECT supplier_paid_ngn FROM purchase_orders WHERE po_id = ?`).get(poId);
+    expect(Number(po?.supplier_paid_ngn)).toBe(40_000);
   });
 
   it('HTTP rejects opening pack post while all-branches view is on', async () => {

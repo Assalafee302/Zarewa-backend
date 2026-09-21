@@ -182,6 +182,7 @@ import {
   assertTreasuryAccountsBulkForWorkspace,
   resolveBootstrapBranchScope,
   userMayPostAcrossBranches,
+  userMaySettleSupplierPayableFromHqRollup,
 } from './branchScope.js';
 import {
   assertAssociatedStaffIdInWorkspace,
@@ -10398,8 +10399,11 @@ export function registerHttpApi(app, db) {
       if (!ensured.ok) return res.status(400).json({ ok: false, error: ensured.error });
       const apRow = ensured.row;
       if (apRow?.po_ref) {
-        const poGate = assertPurchaseOrderIdInWorkspace(db, req, apRow.po_ref);
-        if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
+        const hqSettle = userMaySettleSupplierPayableFromHqRollup(req.user, req.workspaceViewAll);
+        if (!hqSettle) {
+          const poGate = assertPurchaseOrderIdInWorkspace(db, req, apRow.po_ref);
+          if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
+        }
       }
       const r = write.payAccountsPayable(db, apRow.ap_id, {
         ...(req.body || {}),

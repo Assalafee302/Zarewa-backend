@@ -152,7 +152,12 @@ import {
   userHasPermission,
 } from './auth.js';
 import { DEFAULT_BRANCH_ID, GLOBAL_MASTER_DATA_BRANCH, requireExplicitBranchId } from './branches.js';
-import { assertEntityBranchForWorkspaceWrite, assertTreasuryAccountForWorkspace, userMayPostAcrossBranches } from './branchScope.js';
+import {
+  assertEntityBranchForWorkspaceWrite,
+  assertTreasuryAccountForWorkspace,
+  userMayPostAcrossBranches,
+  userMaySettleSupplierPayableFromHqRollup,
+} from './branchScope.js';
 import {
   mergeSupplierProfilePatch,
   parseSupplierProfileJson,
@@ -9114,17 +9119,20 @@ export function payAccountsPayable(db, apId, payload) {
   const row = ensured.row;
   apId = row.ap_id;
   let poBranchId = null;
+  const hqSettle = userMaySettleSupplierPayableFromHqRollup(payload.actor, payload.workspaceViewAll);
   if (row.po_ref) {
     const po = db.prepare(`SELECT po_id, branch_id FROM purchase_orders WHERE po_id = ?`).get(row.po_ref);
     if (po) {
       poBranchId = String(po.branch_id ?? '').trim() || null;
-      const gate = assertEntityBranchForWorkspaceWrite(
-        payload.actor,
-        po.branch_id,
-        payload.workspaceBranchId,
-        Boolean(payload.workspaceViewAll)
-      );
-      if (!gate.ok) return { ok: false, error: gate.error };
+      if (!hqSettle) {
+        const gate = assertEntityBranchForWorkspaceWrite(
+          payload.actor,
+          po.branch_id,
+          payload.workspaceBranchId,
+          Boolean(payload.workspaceViewAll)
+        );
+        if (!gate.ok) return { ok: false, error: gate.error };
+      }
     }
   }
   const amountNgn = roundMoney(payload.amountNgn);
@@ -9170,8 +9178,8 @@ export function payAccountsPayable(db, apId, payload) {
         sourceId: apId,
         note: payload.paymentMethod || 'Supplier payment',
         createdBy: payload.createdBy ?? 'Finance',
-        workspaceBranchId: payload.workspaceBranchId,
-        workspaceViewAll: payload.workspaceViewAll,
+        workspaceBranchId: hqSettle && poBranchId ? poBranchId : payload.workspaceBranchId,
+        workspaceViewAll: hqSettle ? false : payload.workspaceViewAll,
         actor: payload.actor,
       });
       const glPay = tryPostSupplierPaymentGlTx(db, {

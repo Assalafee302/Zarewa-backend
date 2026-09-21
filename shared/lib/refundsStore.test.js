@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { approvedRefundsAwaitingPayment, isRefundPayable } from './refundsStore.js';
+import {
+  approvedRefundsAwaitingPayment,
+  applyRefundSplitRemainingTillPayable,
+  isRefundPayable,
+  refundOutstandingAmount,
+} from './refundsStore.js';
 
 describe('refundsStore payable filters', () => {
   const payable = {
@@ -68,5 +73,28 @@ describe('refundsStore payable filters', () => {
       settlementSummary: { tillPayableNgn: 5000, cashOutstandingNgn: 5000 },
     };
     expect(isRefundPayable(stale)).toBe(false);
+  });
+
+  it('shrinks staff netPayout to till leftover after credit apply (RF-9636 class)', () => {
+    const splits = [
+      {
+        recipientKind: 'customer',
+        recipientCustomerID: 'CUS-STAFF',
+        amountNgn: 959_380,
+        netPayoutNgn: 959_380,
+      },
+    ];
+    const next = applyRefundSplitRemainingTillPayable(splits, 751_480);
+    expect(next[0].netPayoutNgn).toBe(751_480);
+    expect(next[0].originalNetPayoutNgn).toBe(959_380);
+    expect(
+      refundOutstandingAmount({
+        amountNgn: 959_380,
+        approvedAmountNgn: 959_380,
+        paidAmountNgn: 207_900,
+        creditAppliedNgn: 207_900,
+        settlementSummary: { tillPayableNgn: 751_480, cashOutstandingNgn: 751_480 },
+      })
+    ).toBe(751_480);
   });
 });

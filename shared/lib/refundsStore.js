@@ -55,12 +55,55 @@ export function refundCreditAdjustedOutstandingNgn(r) {
 
 export function refundOutstandingAmount(r) {
   const fromMath = refundCreditAdjustedOutstandingNgn(r);
+  const tillFromSummary = r?.settlementSummary?.tillPayableNgn;
+  if (tillFromSummary != null && Number.isFinite(Number(tillFromSummary))) {
+    return Math.min(fromMath, Math.max(0, Math.round(Number(tillFromSummary) || 0)));
+  }
   const fromSummary = r?.settlementSummary?.cashOutstandingNgn;
   if (fromSummary != null && Number.isFinite(Number(fromSummary))) {
     // Prefer the lower figure: a cached summary can still show the pre-apply till due.
     return Math.min(fromMath, Math.max(0, Math.round(Number(fromSummary) || 0)));
   }
   return fromMath;
+}
+
+/**
+ * Shrink split `netPayoutNgn` so Pay-out desk amounts match till still owed after credit
+ * apply / partial till pay — not the original approved net (RF-KD-26-9636: show ₦751,480
+ * not ₦959,380 after ₦207,900 credit).
+ *
+ * @param {Array<object>|null|undefined} splits
+ * @param {number} tillPayableNgn
+ * @returns {Array<object>}
+ */
+export function applyRefundSplitRemainingTillPayable(splits, tillPayableNgn) {
+  const list = Array.isArray(splits) ? splits : [];
+  if (!list.length) return list;
+  const remaining = Math.max(0, Math.round(Number(tillPayableNgn) || 0));
+  const nets = list.map((s) => {
+    const n = s?.netPayoutNgn;
+    if (n != null && Number.isFinite(Number(n))) return Math.max(0, Math.round(Number(n) || 0));
+    return Math.max(0, Math.round(Number(s?.amountNgn) || 0));
+  });
+  const sum = nets.reduce((a, b) => a + b, 0);
+  if (sum <= 0 || remaining >= sum) return list;
+
+  let allocated = 0;
+  return list.map((s, i) => {
+    const original = nets[i];
+    const isLast = i === list.length - 1;
+    const take = isLast
+      ? Math.max(0, remaining - allocated)
+      : Math.round((original / sum) * remaining);
+    allocated += take;
+    if (take === original) return s;
+    return {
+      ...s,
+      netPayoutNgn: take,
+      originalNetPayoutNgn: original,
+      remainingTillPayableNgn: take,
+    };
+  });
 }
 
 /**

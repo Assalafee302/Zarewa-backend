@@ -22,7 +22,7 @@ import {
   paymentRequestStatusApiFields,
 } from '../shared/lib/paymentRequestStatus.js';
 import { SQL_PENDING_BELOW_FLOOR_EXCEPTION } from '../shared/lib/quotationPriceException.js';
-import { approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
+import { approvedRefundsAwaitingPayment, applyRefundSplitRemainingTillPayable } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
 import { displayNamesByUserIds } from './sales/receiptActorDisplayNames.js';
@@ -3742,6 +3742,15 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     Number(row.credit_applied_ngn) || 0,
     Number(settlementSummary.creditAppliedNgn) || 0
   );
+  const tillPayableNgn = Math.max(0, Math.round(Number(settlementSummary.tillPayableNgn) || 0));
+  // Pay-out UI reads split netPayoutNgn — shrink it to till still owed after credit apply.
+  if (
+    (resolvedStatus === 'Approved' || resolvedStatus === 'Partially paid') &&
+    Array.isArray(splitDistributions) &&
+    splitDistributions.length
+  ) {
+    splitDistributions = applyRefundSplitRemainingTillPayable(splitDistributions, tillPayableNgn);
+  }
   return {
     refundID: row.refund_id,
     customerID: row.customer_id,
@@ -3778,6 +3787,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     heldNetNgn: settlementSummary.heldUnclearedNgn,
     companyCutNgn: settlementSummary.companyCutNgn,
     settlementSummary,
+    outstandingAmountNgn: tillPayableNgn,
     branchId: row.branch_id ?? '',
     creditAppliedNgn,
     creditAppliedToQuotationRef: row.credit_applied_to_quotation_ref ?? '',

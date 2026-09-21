@@ -882,7 +882,7 @@ describe('Refund Security & Substitution Logic', () => {
     expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBeGreaterThanOrEqual(1000);
   });
 
-  it('GET /api/refunds/eligibility-check: below-floor automatic preview → excluded; no manual bypass', async () => {
+  it('GET /api/refunds/eligibility-check: below-floor automatic preview → excluded from fresh list; MD discount still searchable', async () => {
     const linesJson = JSON.stringify({
       products: [{ name: 'Roofing', qty: 10, unitPrice: 5000 }],
       accessories: [],
@@ -906,7 +906,7 @@ describe('Refund Security & Substitution Logic', () => {
 
     const previewRes = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-MAN-ZERO' });
     expect(previewRes.status).toBe(200);
-    // Overpayment below picker floor (₦1,000) → not eligible.
+    // Overpayment below picker floor (₦1,000) → not eligible for fresh auto list.
     expect(previewRes.body.preview.suggestedAmountNgn).toBe(500);
     expect(previewRes.body.preview.suggestedAmountNgn).toBeLessThan(1000);
 
@@ -915,18 +915,22 @@ describe('Refund Security & Substitution Logic', () => {
     expect(res.body.ok).toBe(true);
     expect(res.body.meetsBackendRules).toBe(true);
     expect(res.body.previewOk).toBe(true);
-    expect(res.body.wouldAppearInRefundQuotationDropdown).toBe(false);
     expect(res.body.manualEntryRefundAllowed).toBe(false);
-    expect(String(res.body.blockingReasons || []).join(' ')).toMatch(/below|at least|1,?000/i);
     expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBe(500);
     expect(Array.isArray(res.body.eligibleRefundCategories)).toBe(true);
-    expect(res.body.eligibleRefundCategories.length).toBeGreaterThan(0);
-    expect(res.body.blockingReasons.some((r) => /automatic preview|preview total|below|1,?000/i.test(String(r)))).toBe(
-      true
-    );
+    expect(res.body.eligibleRefundCategories).toContain('MD discount');
+    // Searchable open path for typed MD discount; not on the fresh dropdown.
+    expect(res.body.mdDiscountOpenAllowed).toBe(true);
+    expect(res.body.wouldAppearInRefundQuotationDropdown).toBe(true);
+    expect(res.body.wouldAppearInFreshDropdown).toBe(false);
 
     const rows = getEligibleRefundQuotations(db);
     expect(rows.some((r) => r.id === 'QT-RFS-MAN-ZERO')).toBe(false);
+    const searched = getEligibleRefundQuotations(db, { quotationRef: 'QT-RFS-MAN-ZERO' });
+    expect(searched.some((r) => r.id === 'QT-RFS-MAN-ZERO')).toBe(true);
+    expect(searched.find((r) => r.id === 'QT-RFS-MAN-ZERO')?.eligible_refund_categories).toContain(
+      'MD discount'
+    );
   });
 
   it('GET /api/refunds/eligibility-check: missing quotationRef → 400', async () => {

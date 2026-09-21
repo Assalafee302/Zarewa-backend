@@ -427,6 +427,14 @@ describe('getEligibleRefundQuotations fast list', () => {
       },
     };
     expect(getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 })).toHaveLength(0);
+    const searchedTiny = getEligibleRefundQuotations(db, {
+      candidateLimit: 20,
+      resultLimit: 20,
+      quotationRef: 'QT-TINY-1',
+    });
+    expect(searchedTiny).toHaveLength(1);
+    expect(searchedTiny[0].eligible_refund_categories).toContain('MD discount');
+    expect(searchedTiny[0].suggested_preview_amount_ngn).toBeGreaterThanOrEqual(1_000);
   });
 
   it('lists fully produced quotes when only quoted-above-floor remains after a prior refund', () => {
@@ -521,10 +529,19 @@ describe('getEligibleRefundQuotations fast list', () => {
     };
 
     const rows = getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe('QT-FLOOR-FOLLOW');
-    expect(rows[0].eligible_refund_categories).toContain('Customer commission');
-    expect(rows[0].suggested_preview_amount_ngn).toBe(50_000);
+    expect(rows).toHaveLength(0);
+
+    const searched = getEligibleRefundQuotations(db, {
+      candidateLimit: 20,
+      resultLimit: 20,
+      quotationRef: 'QT-FLOOR-FOLLOW',
+    });
+    expect(searched).toHaveLength(1);
+    expect(searched[0].id).toBe('QT-FLOOR-FOLLOW');
+    expect(searched[0].fresh_refund_opportunity).toBe(false);
+    expect(searched[0].prior_refund_count).toBe(1);
+    expect(searched[0].suggested_preview_amount_ngn).toBeGreaterThanOrEqual(1_000);
+    expect(searched[0].eligible_refund_categories?.length).toBeGreaterThan(0);
   });
 
   it('lists a fully produced quote for MD discount when there is no overpay or floor delta', () => {

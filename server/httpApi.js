@@ -167,7 +167,7 @@ import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProductio
 import { buildGovernancePack, governancePackToCsv } from './governancePackOps.js';
 import { buildFraudIndicatorsReport } from './fraudIndicatorsOps.js';
 import { getProductionJobIntel } from './productionJobIntelOps.js';
-import { buildQuotationLifecycleTimeline } from './quotationLifecycleTimelineOps.js';
+import { buildQuotationLifecycleTimeline, buildQuotationRefundTransactionStages } from './quotationLifecycleTimelineOps.js';
 import {
   buildPendingApprovalsReport,
   buildProductionStatusReport,
@@ -9807,12 +9807,28 @@ export function registerHttpApi(app, db) {
     try {
       // Default 50. The pick list uses cheap overpay / unproduced / cancelled hints — not full preview.
       // Scope to workspace branch so Kaduna never lists Yola (or other) quotations.
+      // Fresh-only by default; pass q / quotationRef (or includeExtra=1) to search follow-up / leftover claims.
       const branchScope = resolveBootstrapBranchScope(req);
       const requestedLimit = Math.floor(Number(req.query.limit) || 50);
       const resultLimit = Math.max(1, Math.min(100, requestedLimit));
       const candidateLimit = Math.min(250, Math.max(resultLimit * 4, 80));
-      const rows = getEligibleRefundQuotations(db, { candidateLimit, resultLimit, branchScope });
-      res.json({ ok: true, branchId: branchScope, quotations: rows });
+      const quotationRef = String(req.query.quotationRef || req.query.q || '').trim();
+      const includeExtra =
+        /^(1|true|yes)$/i.test(String(req.query.includeExtra || '').trim()) || Boolean(quotationRef);
+      const rows = getEligibleRefundQuotations(db, {
+        candidateLimit,
+        resultLimit,
+        branchScope,
+        includeExtra,
+        quotationRef: quotationRef || undefined,
+      });
+      res.json({
+        ok: true,
+        branchId: branchScope,
+        freshOnly: !includeExtra,
+        searchQuotationRef: quotationRef || null,
+        quotations: rows,
+      });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to fetch eligible quotations' });
@@ -9832,9 +9848,9 @@ export function registerHttpApi(app, db) {
       const preview = meets.ok
         ? previewRefundRequest(db, { quotationRef })
         : { ok: false, preview: null, error: meets.error };
-      const categories =
+      let categories =
         preview?.ok && Array.isArray(preview?.preview?.eligibleRefundCategories)
-          ? preview.preview.eligibleRefundCategories
+          ? [...preview.preview.eligibleRefundCategories]
           : [];
       const suggestedPreviewAmountNgn =
         preview?.ok && preview.preview?.suggestedAmountNgn != null
@@ -9860,13 +9876,58 @@ export function registerHttpApi(app, db) {
           `SELECT job_id, status FROM production_jobs WHERE quotation_ref = ? ORDER BY job_id ASC`
         )
         .all(quotationRef);
+      const hasCompletedProduction = productionJobs.some((j) =>
+        /^completed$/i.test(String(j.status || '').trim())
+      );
+      const hasCancelledProduction = productionJobs.some((j) =>
+        /^cancelled$/i.test(String(j.status || '').trim())
+      );
       const refundsOnFile = db
         .prepare(
-          `SELECT refund_id, status, amount_ngn, paid_amount_ngn FROM customer_refunds WHERE quotation_ref = ? ORDER BY requested_at_iso DESC`
+          `SELECT refund_id, status, amount_ngn, paid_amount_ngn, credit_applied_ngn, reason_category FROM customer_refunds WHERE quotation_ref = ? ORDER BY requested_at_iso DESC`
         )
         .all(quotationRef);
+      const activeRefundsOnFile = refundsOnFile.filter(
+        (r) => !/^(rejected|cancelled)$/i.test(String(r.status || '').trim())
+      );
+      let creditAppliedOutNgn = 0;
+      try {
+        const creditOutRow = db
+          .prepare(
+            `SELECT COALESCE(SUM(amount_ngn), 0) AS s
+             FROM refund_credit_applications
+             WHERE source_quotation_ref = ?
+               AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')`
+          )
+          .get(quotationRef);
+        creditAppliedOutNgn = Math.round(Number(creditOutRow?.s) || 0);
+      } catch {
+        creditAppliedOutNgn = 0;
+      }
+      const freshRefundOpportunity = activeRefundsOnFile.length === 0 && creditAppliedOutNgn <= 0;
+      // Search-open path: completed production + headroom → always leave room for MD discount.
+      const mdDiscountHardBlocked = activeRefundsOnFile.some((r) => {
+        try {
+          const cats = JSON.parse(r.reason_category || '[]');
+          const list = Array.isArray(cats) ? cats : [r.reason_category];
+          return list.some((c) => String(c || '').trim().toLowerCase() === 'md discount');
+        } catch {
+          return String(r.reason_category || '').toLowerCase().includes('md discount');
+        }
+      });
+      if (
+        meets.ok &&
+        remainingNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
+        hasCompletedProduction &&
+        !hasCancelledProduction &&
+        !mdDiscountHardBlocked &&
+        !categories.some((c) => String(c).toLowerCase() === 'md discount')
+      ) {
+        categories.push('MD discount');
+      }
 
       const blockingReasons = [];
+      const selectorNotes = [];
       if (!meets.ok) {
         blockingReasons.push(meets.error || 'Does not meet refund listing rules.');
         if (/fully covered by existing refund/i.test(String(meets.error || ''))) {
@@ -9901,13 +9962,30 @@ export function registerHttpApi(app, db) {
           `Remaining refundable amount ₦${remainingNgn.toLocaleString('en-NG')} must be at least ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} for the dropdown.`
         );
       }
+      if (meets.ok && !freshRefundOpportunity) {
+        selectorNotes.push(
+          'A refund (or prior claim) is already on file — omitted from the fresh selector. Search still opens leftover / MD discount claims when headroom remains.'
+        );
+      }
+      if (meets.ok && mdDiscountEligible) {
+        selectorNotes.push(
+          'MD discount is available on this quotation — enter ₦ per metre (or total) with a reason note for MD/CEO approval.'
+        );
+      }
       const wouldAppearInPicklist =
         meets.ok &&
         categories.length > 0 &&
         remainingNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
         isOrderFullySettledForPicker === true &&
         (suggestedPreviewAmountNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN || mdDiscountEligible);
-      /** Below-floor automatic previews are not eligible — do not allow paste/manual bypass. */
+      const wouldAppearInFreshDropdown =
+        wouldAppearInPicklist &&
+        freshRefundOpportunity &&
+        suggestedPreviewAmountNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN;
+      /**
+       * Keep false: do not re-enable paste/manual bypass for below-floor automatic claims.
+       * Search-open for typed MD discount uses mdDiscountOpenAllowed instead.
+       */
       const manualEntryRefundAllowed = false;
       if (
         meets.ok &&
@@ -9920,6 +9998,30 @@ export function registerHttpApi(app, db) {
           `Automatic refund preview total is ₦${suggestedPreviewAmountNgn.toLocaleString('en-NG')} — refunds below ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} are not accepted.`
         );
       }
+      // Soft note when auto preview is tiny but MD discount still opens via search.
+      if (
+        meets.ok &&
+        mdDiscountEligible &&
+        suggestedPreviewAmountNgn > 0 &&
+        suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN
+      ) {
+        selectorNotes.push(
+          `Automatic preview is only ₦${suggestedPreviewAmountNgn.toLocaleString('en-NG')} (below the ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} fresh-list floor). Search still opens this quotation for an MD discount request.`
+        );
+        // Drop hard "automatic preview total" blocks when MD discount is the open path.
+        for (let i = blockingReasons.length - 1; i >= 0; i -= 1) {
+          if (/automatic refund preview total/i.test(String(blockingReasons[i]))) {
+            blockingReasons.splice(i, 1);
+          }
+        }
+      }
+      const transactionStages = buildQuotationRefundTransactionStages(db, quotationRef, {
+        meetsBackendRules: meets.ok,
+        wouldAppearInFreshDropdown,
+        wouldAppearInRefundQuotationDropdown: wouldAppearInPicklist,
+        blockingReasons,
+        remainingRefundableNgn: meets.ok ? meets.remainingNgn : null,
+      });
       res.json({
         ok: true,
         quotationRef,
@@ -9935,11 +10037,24 @@ export function registerHttpApi(app, db) {
             }
           : { error: meets.error, refundsBlocked: Boolean(meets.refundsBlocked) },
         eligibleRefundCategories: categories,
+        freshRefundOpportunity,
+        wouldAppearInFreshDropdown,
         wouldAppearInRefundQuotationDropdown: wouldAppearInPicklist,
+        mdDiscountOpenAllowed: Boolean(mdDiscountEligible && wouldAppearInPicklist),
         manualEntryRefundAllowed,
         blockingReasons,
+        selectorNotes,
         previewOk: Boolean(preview?.ok),
         previewError: preview?.ok ? null : preview?.error || null,
+        transactionStages: transactionStages.ok
+          ? {
+              currentStage: transactionStages.currentStage,
+              stages: transactionStages.stages,
+              priorRefundCount: transactionStages.priorRefundCount,
+              creditAppliedOutNgn: transactionStages.creditAppliedOutNgn,
+              freshRefundOpportunity: transactionStages.freshRefundOpportunity,
+            }
+          : null,
         diagnostics: {
           quotationId: qRow?.id ?? null,
           quotationStatus: qRow?.status ?? null,
@@ -9960,6 +10075,7 @@ export function registerHttpApi(app, db) {
             status: r.status,
             amountNgn: r.amount_ngn,
             paidOutNgn: r.paid_amount_ngn,
+            creditAppliedNgn: r.credit_applied_ngn,
           })),
           refundsBlockedAtISO: qRow?.refunds_blocked_at_iso ?? null,
           refundsBlockedReason: qRow?.refunds_blocked_reason ?? null,

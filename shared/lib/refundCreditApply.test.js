@@ -17,6 +17,7 @@ import {
   refundOverpayFinishedPayout,
   refundFundRemainingHowToUse,
   refundFundUsageBreakdown,
+  refundCreditIsFreshSource,
   refundSplitHasMultiplePayees,
   refundSplitPayeeKeys,
   refundCreditPayeeIsQuoteCustomerOnly,
@@ -344,6 +345,8 @@ describe('refundCreditApply pure helpers', () => {
         availableNgn: 0,
       }).leftNgn
     ).toBe(0);
+    expect(refundCreditIsFreshSource({ creditAppliedNgn: 0 })).toBe(true);
+    expect(refundCreditIsFreshSource({ credit_applied_ngn: 23_030 })).toBe(false);
   });
 
   it('plans cashier receipt offset against refund fund', () => {

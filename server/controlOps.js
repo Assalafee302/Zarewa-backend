@@ -5931,6 +5931,8 @@ function refundPickerListHint(db, row, jobs, {
   priorRefunds = [],
   materialDelivered = false,
   creditAppliedOutNgn = 0,
+  /** Search / includeExtra: keep MD discount selectable even when other auto-claims are tiny or present. */
+  allowMdDiscountRoom = false,
 }) {
   const remaining = roundMoney(remainingNgn);
   if (remaining < MIN_REFUND_QUOTATION_REMAINING_NGN) return null;
@@ -6041,11 +6043,10 @@ function refundPickerListHint(db, row, jobs, {
   const hasCompletedProduction = closedJobs.some(
     (j) => String(j.status || '').trim().toLowerCase() === 'completed'
   );
-  if (
-    !claimParts.length &&
-    hasCompletedProduction &&
-    !hardBlocked.has('MD discount')
-  ) {
+  const mdDiscountAllowed =
+    hasCompletedProduction && !hardBlocked.has('MD discount') && remaining >= MIN_REFUND_QUOTATION_REMAINING_NGN;
+
+  if (!claimParts.length && mdDiscountAllowed) {
     claimParts.push({
       category: 'MD discount',
       amountNgn: remaining,
@@ -6053,15 +6054,28 @@ function refundPickerListHint(db, row, jobs, {
   }
 
   if (!claimParts.length) return null;
-  const suggestedPreviewAmountNgn = Math.min(
+  let suggestedPreviewAmountNgn = Math.min(
     remaining,
     claimParts.reduce((s, p) => s + roundMoney(p.amountNgn), 0)
   );
-  // Tiny residuals (e.g. ₦260 overpay + ₦580 unproduced) must not clutter the picker.
-  if (suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) return null;
+  // Tiny automatic residuals must not clutter the default picker — on search / includeExtra,
+  // fall back to MD discount so Sales can still open a typed ₦/m request.
+  if (suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) {
+    if (!(allowMdDiscountRoom && mdDiscountAllowed)) return null;
+    return {
+      categories: ['MD discount'],
+      suggestedPreviewAmountNgn: remaining,
+    };
+  }
+
+  const categories = claimParts.map((p) => p.category);
+  // Search / includeExtra: keep MD discount on the form even when overpay/commission also apply.
+  if (allowMdDiscountRoom && mdDiscountAllowed && !categories.includes('MD discount')) {
+    categories.push('MD discount');
+  }
 
   return {
-    categories: claimParts.map((p) => p.category),
+    categories,
     suggestedPreviewAmountNgn,
   };
 }
@@ -6098,10 +6112,14 @@ function closedProductionJobsByQuotationRef(db, quoteIds) {
  * Quotes with only exhausted / delivered-blocked claims are omitted.
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
  *
+ * **Fresh vs extra:** the default selector only lists quotations with **no** prior active refund and no
+ * overpay credit already applied out (`freshRefundOpportunity`). Follow-up / leftover claims stay
+ * reachable via search (`quotationRef` / `q`) or `includeExtra: true`.
+ *
  * Listing path batches cash-in and closed production jobs for SQL candidates and never scans
  * an unbounded quotation table — candidate pool is hard-capped even when limits are omitted.
  * Workspace branch scopes the pick list (Kaduna must not see Yola quotes); `'ALL'` is HQ rollup only.
- * @param {{ candidateLimit?: number; resultLimit?: number; branchScope?: 'ALL' | string }} [opts]
+ * @param {{ candidateLimit?: number; resultLimit?: number; branchScope?: 'ALL' | string; includeExtra?: boolean; quotationRef?: string; q?: string }} [opts]
  */
 export function getEligibleRefundQuotations(db, opts = {}) {
   const candidateLimit = Math.max(0, Math.min(250, Math.floor(Number(opts.candidateLimit) || 0)));
@@ -6109,12 +6127,23 @@ export function getEligibleRefundQuotations(db, opts = {}) {
   // Always bound the candidate scan — unlimited used to walk every paid closed quote and was very slow.
   const effectiveCandidateLimit = candidateLimit > 0 ? candidateLimit : 250;
   const branchScope = String(opts.branchScope ?? 'ALL').trim() || 'ALL';
+  const searchRef = String(opts.quotationRef || opts.q || '')
+    .trim()
+    .toUpperCase();
+  const includeExtra = Boolean(opts.includeExtra) || Boolean(searchRef);
   const branchArgs = [];
   let branchSql = '';
   // quotations.branch_id is core — always filter when workspace is a single branch.
   if (branchScope !== 'ALL') {
     branchSql = ` AND trim(IFNULL(q.branch_id, '')) = ?`;
     branchArgs.push(branchScope);
+  }
+  let searchSql = '';
+  const searchArgs = [];
+  if (searchRef) {
+    // Exact id or prefix so Sales can look up a follow-up / leftover claim by quote number.
+    searchSql = ` AND (UPPER(TRIM(q.id)) = ? OR UPPER(TRIM(q.id)) LIKE ?)`;
+    searchArgs.push(searchRef, `${searchRef}%`);
   }
   const sql = `
     SELECT q.id, q.customer_id, q.customer_name, q.date_iso, q.total_ngn, q.paid_ngn, q.status,
@@ -6145,10 +6174,11 @@ export function getEligibleRefundQuotations(db, opts = {}) {
         OR TRIM(COALESCE(q.status, '')) = 'Void'
       )
       ${branchSql}
+      ${searchSql}
     ORDER BY q.date_iso DESC
     LIMIT ${effectiveCandidateLimit}
   `;
-  const rows = db.prepare(sql).all(...branchArgs);
+  const rows = db.prepare(sql).all(...branchArgs, ...searchArgs);
 
   const freezeByBranch = loadAllBranchRefundLocks(db);
   const receiptDatesByRef =
@@ -6214,6 +6244,11 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     const remainingNgn = quotationRefundHardCapNgn({ cashInNgn, totalRefundedNgn });
     if (remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
 
+    const priorRefunds = priorRefundsByRef.get(row.id) || [];
+    const freshRefundOpportunity = priorRefunds.length === 0 && creditAppliedOutNgn <= 0;
+    // Default dropdown = fresh refund opportunities only; search / includeExtra keeps leftovers.
+    if (!includeExtra && !freshRefundOpportunity) continue;
+
     const quoteTotalNgn = roundMoney(row.total_ngn);
     const receiptsCover = quotationReceiptsCoverQuoteTotal({
       quoteTotalNgn,
@@ -6227,9 +6262,10 @@ export function getEligibleRefundQuotations(db, opts = {}) {
       remainingNgn,
       cashInNgn,
       quoteTotalNgn,
-      priorRefunds: priorRefundsByRef.get(row.id) || [],
+      priorRefunds,
       materialDelivered: deliveredIds.has(String(row.id || '').trim()),
       creditAppliedOutNgn,
+      allowMdDiscountRoom: includeExtra,
     });
     if (!hint) continue;
     const pickRow = {
@@ -6238,6 +6274,8 @@ export function getEligibleRefundQuotations(db, opts = {}) {
       suggested_preview_amount_ngn: hint.suggestedPreviewAmountNgn,
       cash_in_ngn: cashInNgn,
       remaining_ngn: remainingNgn,
+      fresh_refund_opportunity: freshRefundOpportunity,
+      prior_refund_count: priorRefunds.length,
     };
     if (!quotationMeetsRefundPickerFloor(pickRow)) continue;
     out.push(pickRow);

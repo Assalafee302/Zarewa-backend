@@ -238,6 +238,11 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
 
     const leftoverOverpay = overpayCreditRemainingOnQuotationDb(db, 'CUS-RC', 'QT-RF-SRC');
     expect(leftoverOverpay).toBe(10_000);
+
+    const listedAfter = listEligibleRefundCredits(db, 'CUS-RC', 'QT-RF-DST');
+    expect(listedAfter.sources.some((s) => s.refundId === 'RF-OVER-1')).toBe(false);
+    const leftoverRefund = listedAfter.extraSources?.find((s) => s.refundId === 'RF-OVER-1');
+    expect(leftoverRefund?.availableNgn).toBe(10_000);
   });
 
   it('reverses a mistaken apply and restores the refund and target quote', () => {
@@ -702,8 +707,10 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
     expect(applied.appliedNgn).toBe(40_000);
 
     const listedAfter = listEligibleRefundCredits(db, 'CUS-ECON', 'QT-ECON-DST');
-    const leftover = listedAfter.sources.find((s) => s.id === 'overpay:QT-ECON-SRC');
+    expect(listedAfter.sources.find((s) => s.id === 'overpay:QT-ECON-SRC')).toBeUndefined();
+    const leftover = listedAfter.extraSources?.find((s) => s.id === 'overpay:QT-ECON-SRC');
     expect(leftover?.availableNgn ?? 0).toBe(10_000);
+    expect(listedAfter.extraAvailableNgn).toBe(10_000);
   });
 
   it('does not list leftover overpay after the refund was till-paid (QT-1173 / RF-9456)', () => {

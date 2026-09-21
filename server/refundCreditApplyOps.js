@@ -517,7 +517,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     listedExtraSources = [];
     for (const s of [...sources, ...extraSources]) {
       if (s.sameQuotation) {
-        if (s.fresh !== false && refundCreditIsFreshSource(s)) listedSources.push(s);
+        if (refundCreditIsFreshSource(s)) listedSources.push(s);
         else listedExtraSources.push(s);
         continue;
       }

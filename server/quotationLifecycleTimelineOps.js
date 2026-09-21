@@ -161,3 +161,199 @@ export function buildQuotationLifecycleTimeline(db, quotationId) {
     events,
   };
 }
+
+function stageDone(done, label, detail = null) {
+  return { key: label, label, status: done ? 'done' : 'pending', detail };
+}
+
+function stageBlocked(label, detail) {
+  return { key: label, label, status: 'blocked', detail: detail || null };
+}
+
+function stageCurrent(label, detail = null) {
+  return { key: label, label, status: 'current', detail };
+}
+
+/**
+ * Compact transaction-stage checklist for Sales refund search (“why isn’t this quote in the list?”).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationId
+ * @param {{
+ *   meetsBackendRules?: boolean,
+ *   wouldAppearInFreshDropdown?: boolean,
+ *   wouldAppearInRefundQuotationDropdown?: boolean,
+ *   blockingReasons?: string[],
+ *   remainingRefundableNgn?: number | null,
+ * }} [opts]
+ */
+export function buildQuotationRefundTransactionStages(db, quotationId, opts = {}) {
+  const id = String(quotationId || '').trim();
+  if (!id) return { ok: false, error: 'quotationId is required.' };
+  const quote = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(id);
+  if (!quote) return { ok: false, error: 'Quotation not found.' };
+
+  const paidNgn = Math.round(Number(quote.paid_ngn) || 0);
+  const totalNgn = Math.round(Number(quote.total_ngn) || 0);
+  let receipts = [];
+  try {
+    receipts = db
+      .prepare(
+        `SELECT id, status, amount_ngn, finance_reconciliation_saved_at_iso
+         FROM sales_receipts WHERE quotation_ref = ? ORDER BY date_iso ASC`
+      )
+      .all(id);
+  } catch {
+    receipts = [];
+  }
+  const cleared = receipts.filter(
+    (r) =>
+      String(r.finance_reconciliation_saved_at_iso || '').trim() ||
+      /cleared|confirmed/i.test(String(r.status || ''))
+  );
+  let cutting = null;
+  try {
+    cutting = db
+      .prepare(`SELECT id, status FROM cutting_lists WHERE quotation_ref = ? ORDER BY date_iso DESC LIMIT 1`)
+      .get(id);
+  } catch {
+    cutting = null;
+  }
+  const jobs = db
+    .prepare(
+      `SELECT job_id,
+              CASE WHEN TRIM(COALESCE(status, '')) = '' THEN 'Planned' ELSE TRIM(status) END AS st
+       FROM production_jobs WHERE quotation_ref = ? ORDER BY job_id ASC`
+    )
+    .all(id);
+  const openJob = jobs.find((j) => !/^(completed|cancelled)$/i.test(String(j.st || '')));
+  const closedDone = jobs.some((j) => /^(completed|cancelled)$/i.test(String(j.st || '')));
+  const refunds = db
+    .prepare(
+      `SELECT refund_id, status, amount_ngn, credit_applied_ngn, paid_amount_ngn
+       FROM customer_refunds
+       WHERE quotation_ref = ?
+         AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
+       ORDER BY requested_at_iso DESC`
+    )
+    .all(id);
+  const activeRefunds = refunds;
+  let creditOutNgn = 0;
+  try {
+    const creditAppliedOut = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s
+         FROM refund_credit_applications
+         WHERE source_quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')`
+      )
+      .get(id);
+    creditOutNgn = Math.round(Number(creditAppliedOut?.s) || 0);
+  } catch {
+    creditOutNgn = 0;
+  }
+
+  /** @type {Array<{ key: string, label: string, status: string, detail: string | null }>} */
+  const stages = [];
+  stages.push(stageDone(true, 'Quotation created', quote.status || null));
+
+  if (paidNgn > 0 || receipts.length) {
+    const payDetail = `Paid ₦${paidNgn.toLocaleString('en-NG')}${
+      totalNgn > 0 ? ` of ₦${totalNgn.toLocaleString('en-NG')}` : ''
+    }; ${receipts.length} receipt(s)${cleared.length ? `, ${cleared.length} cleared` : ''}`;
+    stages.push(stageDone(true, 'Customer payment', payDetail));
+  } else {
+    stages.push(stageBlocked('Customer payment', 'No payment recorded — refund picker requires cash on the quote.'));
+  }
+
+  if (cutting) {
+    stages.push(stageDone(true, 'Cutting list', `${cutting.id} (${cutting.status || 'Draft'})`));
+  } else {
+    stages.push(stageDone(false, 'Cutting list', 'No cutting list yet (optional for some refund paths).'));
+  }
+
+  if (openJob) {
+    stages.push(
+      stageBlocked(
+        'Production',
+        `Job ${openJob.job_id} is still ${openJob.st} — finish or cancel before a refund request.`
+      )
+    );
+  } else if (closedDone || String(quote.status || '').trim().toLowerCase() === 'void') {
+    stages.push(
+      stageDone(
+        true,
+        'Production closed',
+        String(quote.status || '').trim().toLowerCase() === 'void'
+          ? 'Void quotation'
+          : jobs.map((j) => `${j.job_id}:${j.st}`).join(', ')
+      )
+    );
+  } else {
+    stages.push(
+      stageBlocked(
+        'Production closed',
+        'No completed/cancelled production job (and not Void) — refund requests are not allowed yet.'
+      )
+    );
+  }
+
+  if (activeRefunds.length) {
+    const summary = activeRefunds
+      .slice(0, 3)
+      .map((r) => {
+        const credit = Math.round(Number(r.credit_applied_ngn) || 0);
+        const creditBit = credit > 0 ? `, ₦${credit.toLocaleString('en-NG')} applied as fund` : '';
+        return `${r.refund_id} ${r.status} ₦${Math.round(Number(r.amount_ngn) || 0).toLocaleString('en-NG')}${creditBit}`;
+      })
+      .join('; ');
+    stages.push(
+      stageCurrent(
+        'Prior refunds on file',
+        `${activeRefunds.length} active refund(s): ${summary}. Not shown in the fresh selector — search this quotation id for any leftover claim.`
+      )
+    );
+  } else if (creditOutNgn > 0) {
+    stages.push(
+      stageCurrent(
+        'Refund fund already applied out',
+        `₦${creditOutNgn.toLocaleString('en-NG')} overpay credit already applied to another receipt. Search this quotation for leftover headroom.`
+      )
+    );
+  } else {
+    stages.push(stageDone(false, 'Prior refunds on file', 'No active refund yet — eligible for the fresh selector when other rules pass.'));
+  }
+
+  const freshOk = opts.wouldAppearInFreshDropdown === true;
+  const anyOk = opts.wouldAppearInRefundQuotationDropdown === true;
+  if (freshOk) {
+    stages.push(stageDone(true, 'Refund picker', 'Appears in the fresh refund quotation selector.'));
+  } else if (anyOk) {
+    stages.push(
+      stageCurrent(
+        'Refund picker',
+        'Has a possible extra / follow-up refund — search by quotation id (not in the default fresh list).'
+      )
+    );
+  } else if (opts.meetsBackendRules === false || (Array.isArray(opts.blockingReasons) && opts.blockingReasons.length)) {
+    const why = (opts.blockingReasons || []).filter(Boolean).join(' · ') || 'Does not meet refund listing rules.';
+    stages.push(stageBlocked('Refund picker', why));
+  } else {
+    stages.push(stageBlocked('Refund picker', 'Not currently listed for a new refund request.'));
+  }
+
+  const current =
+    [...stages].reverse().find((s) => s.status === 'blocked' || s.status === 'current') ||
+    stages[stages.length - 1];
+
+  return {
+    ok: true,
+    quotationId: id,
+    currentStage: current
+      ? { key: current.key, label: current.label, status: current.status, detail: current.detail }
+      : null,
+    stages,
+    priorRefundCount: activeRefunds.length,
+    creditAppliedOutNgn: creditOutNgn,
+    freshRefundOpportunity: activeRefunds.length === 0 && creditOutNgn <= 0,
+  };
+}

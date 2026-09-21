@@ -3018,7 +3018,8 @@ export function adminForceRecallAndDeleteCuttingList(db, jobID, payload = {}, op
   if (isCancelledNotProducedStatus(st)) {
     return {
       ok: false,
-      error: 'This job is already cancelled (not produced). Remove the cutting list separately if it has no other production activity.',
+      error:
+        'This job is already cancelled (not produced). Delete the cutting list from Sales (Admin / MD / Branch Manager) — cancelled lists can be removed.',
     };
   }
   const reason = String(payload.reason ?? payload.note ?? '').trim();

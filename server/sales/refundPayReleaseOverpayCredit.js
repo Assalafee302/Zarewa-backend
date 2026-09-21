@@ -252,7 +252,9 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
   const reversed = [];
   const cancelledRefunds = [];
 
-  const apps = listActiveRefundCreditApplicationsBySourceQuotation(db, sourceQuotationRef);
+  const apps = listActiveRefundCreditApplicationsBySourceQuotation(db, sourceQuotationRef).filter(
+    (app) => String(app.refundId || app.refund_id || '').trim() !== payingRefundId
+  );
   for (const app of apps) {
     residual = quotationOverpayResidualExcludingRefund(db, sourceQuotationRef, excludeRefundId);
     if (residual >= needResidualNgn) break;

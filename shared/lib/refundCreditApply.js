@@ -480,9 +480,12 @@ export function refundFundUsageBreakdown({
   const requestedNgn = Math.max(0, Math.round(Number(amountNgn) || 0));
   const usedOnReceiptNgn = Math.max(0, Math.round(Number(creditAppliedNgn) || 0));
   const paidOutNgn = Math.max(0, Math.round(Number(paidAmountNgn) || 0));
+  // paid_amount often already includes credit apply (stamp bumps both). Count only cash
+  // beyond credit so leftover copy does not double-subtract.
+  const cashPaidBeyondCreditNgn = Math.max(0, paidOutNgn - usedOnReceiptNgn);
   const leftNgn =
     availableNgn == null || availableNgn === ''
-      ? Math.max(0, requestedNgn - usedOnReceiptNgn - paidOutNgn)
+      ? Math.max(0, requestedNgn - usedOnReceiptNgn - cashPaidBeyondCreditNgn)
       : Math.max(0, Math.round(Number(availableNgn) || 0));
   const appliedToQuote = String(creditAppliedToQuotationRef || '').trim();
   return {

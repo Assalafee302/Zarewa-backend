@@ -175,7 +175,9 @@ function stampRefundCreditOnRowTx(db, fresh, amt, { target, actor, atIso }) {
 function consumeFalseOpenRefundsOnOverpayApplyTx(db, { quotationRef, amountNgn, target, actor, atIso }) {
   const qid = String(quotationRef || '').trim();
   let left = roundMoney(amountNgn);
-  if (!qid || left <= 0) return;
+  /** @type {string[]} */
+  const stampedRefundIds = [];
+  if (!qid || left <= 0) return stampedRefundIds;
   const rows = db
     .prepare(
       `SELECT * FROM customer_refunds
@@ -204,8 +206,10 @@ function consumeFalseOpenRefundsOnOverpayApplyTx(db, { quotationRef, amountNgn, 
     const take = Math.min(left, Math.max(creditOpen, cashOut));
     if (take <= 0) continue;
     stampRefundCreditOnRowTx(db, row, take, { target, actor, atIso });
+    stampedRefundIds.push(String(row.refund_id || '').trim());
     left -= take;
   }
+  return stampedRefundIds.filter(Boolean);
 }
 
 function refundUsageFields(shape, open, destsByRefund) {
@@ -799,6 +803,7 @@ export function applyRefundCreditToQuotation(db, payload) {
           allowManagerClearedQuotationRefs: allowManagerClearedQuotes,
         });
 
+        let stampedFromOverpay = [];
         if (src.kind === 'refund' && src.refundId) {
           const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(src.refundId);
           if (!fresh) throw new Error(`Refund ${src.refundId} not found.`);
@@ -810,7 +815,7 @@ export function applyRefundCreditToQuotation(db, payload) {
           if (amt > open) throw new Error(`Refund ${src.refundId} open balance is only ₦${open.toLocaleString('en-NG')}.`);
           stampRefundCreditOnRowTx(db, fresh, amt, { target, actor, atIso });
         } else if (src.kind === 'overpay' && sourceQ) {
-          consumeFalseOpenRefundsOnOverpayApplyTx(db, {
+          stampedFromOverpay = consumeFalseOpenRefundsOnOverpayApplyTx(db, {
             quotationRef: sourceQ,
             amountNgn: amt,
             target,
@@ -818,6 +823,12 @@ export function applyRefundCreditToQuotation(db, payload) {
             atIso,
           });
         }
+
+        // Link leftover-overpay applications to the stamped refund when exactly one was
+        // consumed — keeps credit ledger and till due aligned (avoids "applications ₦0" mismatch).
+        const linkedRefundId =
+          src.refundId ||
+          (stampedFromOverpay.length === 1 ? stampedFromOverpay[0] : null);
 
         db.prepare(
           `INSERT INTO refund_credit_applications (
@@ -830,7 +841,7 @@ export function applyRefundCreditToQuotation(db, payload) {
           cid,
           target,
           sourceQ || null,
-          src.refundId || null,
+          linkedRefundId,
           src.kind,
           amt,
           REFUND_CREDIT_CONFIRMATION_STATUS,

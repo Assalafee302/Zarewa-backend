@@ -550,7 +550,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       releasableOverpayCreditApplications = listActiveRefundCreditApplicationsBySourceQuotation(
         db,
         qrefSettle
-      );
+      ).filter((a) => String(a.refundId || a.refund_id || '').trim() !== refundId);
       cancelableConflictingOverpayRefunds = listCancelableConflictingOverpayRefunds(
         db,
         qrefSettle,

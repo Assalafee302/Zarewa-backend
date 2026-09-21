@@ -31,6 +31,12 @@ describe('refundQuotationMoney', () => {
     ).toBe(47_450);
   });
 
+  it('partial till payout after credit apply only needs residual for the leftover cash', () => {
+    expect(
+      overpayResidualNeededForPayoutNgn({ overpayLineNgn: 959_380, payoutAmountNgn: 751_480 })
+    ).toBe(751_480);
+  });
+
   it('blocks when quotation total is more than receipts', () => {
     expect(
       quotationReceiptsCoverQuoteTotal({

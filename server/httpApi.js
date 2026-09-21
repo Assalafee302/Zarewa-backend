@@ -10016,6 +10016,8 @@ export function registerHttpApi(app, db) {
       // cash payout — the cashier screen needs the same figure to warn/block consistently instead
       // of a live "Pay" button that the server then rejects.
       const creditAppliedOutNgn = quotationUnlinkedOverpayCreditOutNgn(db, quotationRef);
+      const releasableOverpayCreditApplications =
+        refundCreditApplyOps.listActiveRefundCreditApplicationsBySourceQuotation(db, quotationRef);
       const economicFloor = buildRefundEconomicFloorSummary(db, quote, productionJobs, {
         cashInNgn: cashBreakdown.cashInNgn,
         priorRefundedNgn,
@@ -10038,6 +10040,7 @@ export function registerHttpApi(app, db) {
         staleRefundWarnings,
         excludeRefundId,
         creditAppliedOutNgn,
+        releasableOverpayCreditApplications,
       });
     } catch (e) {
       console.error(e);

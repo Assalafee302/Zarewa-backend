@@ -59,6 +59,8 @@ const SUBMIT_ACTION_BY_CODE = {
   /** Produced above quote or above cutting list — hard verify */
   produced_exceeds_quotation: 'block',
   produced_exceeds_cutting_list: 'block',
+  /** Produced above under-quote CL but still within quotation — notify only */
+  produced_above_underquote_cutting_list: 'info',
   /** CL above produced — confirm unfinished metres (ack; normal with unproduced) */
   cutting_list_exceeds_produced: 'acknowledge',
 };
@@ -341,7 +343,9 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
             ? 'Trim blank note'
             : code === 'trim_blank_cl_missing'
               ? 'Trim blank missing on cutting list'
-              : code === 'cutting_list_quotation_metre_under' || code === 'cutting_list_missing_for_quotation'
+              : code === 'cutting_list_quotation_metre_under' ||
+                  code === 'cutting_list_missing_for_quotation' ||
+                  code === 'produced_above_underquote_cutting_list'
                 ? 'Cutting list below quotation'
                 : 'Cutting list vs quotation',
         message: clIssue.message,
@@ -368,7 +372,19 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
 
     const clAssessment = assessQuotationCuttingListConsumptionForRef(db, quotationRef);
     const cuttingListM = Number(clAssessment?.cuttingListTotalM) || 0;
-    if (cuttingListM > 0.001 && producedM > cuttingListM + METRE_TOL) {
+    const expectedClM =
+      Number(clAssessment?.expectedTotalM) > 0.001
+        ? Number(clAssessment.expectedTotalM)
+        : quotedRoofingM;
+    // Partial / under-quote cutting lists are normal for unproduced refunds. Produced metres
+    // between CL and quote must not hard-block — the ceiling is produced_exceeds_quotation.
+    const cuttingListUnderQuote =
+      expectedClM > 0.001 && cuttingListM > 0.001 && cuttingListM < expectedClM - METRE_TOL;
+    if (
+      cuttingListM > 0.001 &&
+      producedM > cuttingListM + METRE_TOL &&
+      !cuttingListUnderQuote
+    ) {
       issues.push({
         code: 'produced_exceeds_cutting_list',
         severity: 'error',
@@ -376,6 +392,18 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
         message: `Produced output (${producedM.toFixed(2)} m) exceeds cutting list total (${cuttingListM.toFixed(2)} m) by ${(
           producedM - cuttingListM
         ).toFixed(2)} m. Verify production records before refund.`,
+      });
+    } else if (
+      cuttingListUnderQuote &&
+      cuttingListM > 0.001 &&
+      producedM > cuttingListM + METRE_TOL &&
+      producedM <= expectedClM + METRE_TOL
+    ) {
+      issues.push({
+        code: 'produced_above_underquote_cutting_list',
+        severity: 'info',
+        title: 'Cutting list below quotation',
+        message: `Cutting list (${cuttingListM.toFixed(2)} m) is below quoted consumption (${expectedClM.toFixed(2)} m); produced ${producedM.toFixed(2)} m is within the quotation. Under-quote lists are allowed for unproduced leftovers.`,
       });
     }
     if (

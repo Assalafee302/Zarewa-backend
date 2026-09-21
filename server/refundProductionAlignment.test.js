@@ -386,6 +386,40 @@ describe('refundProductionAlignment', () => {
     expect(ok.issues.some((i) => i.code === 'cutting_list_quotation_metre_under')).toBe(true);
   });
 
+  it('does not block BM approve when CL is under quote but production sits between CL and quote', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q-CL-UNDER-PROD',
+      lines_json: JSON.stringify({
+        products: [{ name: 'Roofing Sheet', qty: '100' }],
+      }),
+    });
+    db.data.cutting_lists.push({ id: 'CL-UP', quotation_ref: 'Q-CL-UNDER-PROD' });
+    db.data.cutting_list_lines.push({
+      cutting_list_id: 'CL-UP',
+      sheets: 35,
+      length_m: 2,
+      total_m: 70,
+      line_type: 'Roof',
+    });
+    db.data.production_jobs.push({
+      job_id: 'J-UP',
+      quotation_ref: 'Q-CL-UNDER-PROD',
+      status: 'Completed',
+      planned_meters: 100,
+      actual_meters: 85,
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q-CL-UNDER-PROD', ['Unproduced meterage']);
+    expect(issues.some((i) => i.code === 'produced_exceeds_cutting_list')).toBe(false);
+    expect(issues.some((i) => i.code === 'produced_above_underquote_cutting_list')).toBe(true);
+
+    const ok = validateRefundProductionAlignmentAtSubmit(db, 'Q-CL-UNDER-PROD', ['Unproduced meterage'], {
+      actor: { roleKey: 'sales_manager' },
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.issues.some((i) => i.submitAction === 'block')).toBe(false);
+  });
+
   it('does not block BM approval when stone quote coil need exceeds flatsheet cutting list', () => {
     const db = memDb();
     db.data.quotations.push({

@@ -138,6 +138,7 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
   const totalAlreadyHardBlocked = !assessment.ok && hardMismatchCodes.has(code);
   const cuttingListUnderQuote =
     code === 'cutting_list_quotation_metre_under' ||
+    code === 'cutting_list_missing_for_quotation' ||
     (Number(assessment.signedDeltaM) < -1e-6 && !totalAlreadyHardBlocked);
 
   if (!assessment.ok && assessment.message && hardMismatchCodes.has(code)) {

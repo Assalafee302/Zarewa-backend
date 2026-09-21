@@ -104,6 +104,31 @@ describe('cuttingListQuotationConsumptionOps', () => {
     );
   });
 
+  it('does not hard-block trim blank when CL is within tolerance but still below quote', () => {
+    const db = memDb({
+      quote: {
+        id: 'Q1',
+        lines_json: JSON.stringify({
+          products: [
+            { name: 'Roofing Sheet', qty: 100 },
+            { name: 'Ridge Cap', qty: 3, girthMm: 400 },
+          ],
+        }),
+      },
+      cuttingLists: [
+        {
+          id: 'CL1',
+          quotation_ref: 'Q1',
+          // Expected coil ≈ 101 m; 100.7 is within sheet tolerance but still short.
+          lines: [{ sheets: 1, length_m: 100.7, total_m: 100.7, line_type: 'Roof' }],
+        },
+      ],
+    });
+    const issues = refundCuttingListQuotationMetreIssues(db, 'Q1');
+    expect(issues.some((i) => i.code === 'trim_blank_cl_missing')).toBe(false);
+    expect(issues.some((i) => i.severity === 'error')).toBe(false);
+  });
+
   it('does not duplicate trim blank soft warning when under-quote already noted', () => {
     const db = memDb({
       quote: {

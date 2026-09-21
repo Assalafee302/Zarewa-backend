@@ -186,13 +186,11 @@ import {
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
-import { isQuotationActiveRefundLockError, planCashierRefundOffset, allocateRefundCreditAcrossSources } from '../shared/lib/refundCreditApply.js';
+import { isQuotationActiveRefundLockError } from '../shared/lib/refundCreditApply.js';
 import {
   applyRefundCreditToQuotation,
   reverseRefundCreditApplication,
   listActiveRefundCreditApplicationsBySourceReceipt,
-  listEligibleRefundCredits,
-  orderConfirmCreditSourcesForAutoOffset,
 } from './refundCreditApplyOps.js';
 import {
   assertRefundMoneyOutWithinApproved,
@@ -11899,55 +11897,11 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
   const creditPayload = payload?.refundCreditApply && typeof payload.refundCreditApply === 'object'
     ? payload.refundCreditApply
     : null;
-  let creditApplyNgn = roundMoney(creditPayload?.amountNgn);
-  let creditSourceIds = Array.isArray(creditPayload?.sourceIds)
+  const creditApplyNgn = roundMoney(creditPayload?.amountNgn);
+  const creditSourceIds = Array.isArray(creditPayload?.sourceIds)
     ? creditPayload.sourceIds.map((s) => String(s || '').trim()).filter(Boolean)
     : null;
-  let applyingRefundFund = creditApplyNgn > 0;
-  /** @type {{ offsetNgn: number, cashToConfirmNgn: number, sourceIds: string[] } | null} */
-  let autoOverpayOffset = null;
-
-  // When Sales already posted the receipt, quote due is often ₦0 — cashiers still type the
-  // bank amount. If the same customer has leftover overpay (including cash held only by a
-  // staff-payee overpayment refund), divert that ₦ to credit automatically so Moniepoint is
-  // not overstated and the hanging refund shrinks instead of being paid twice.
-  if (!applyingRefundFund && !finalized) {
-    const cid = String(row.customer_id || '').trim();
-    const qref = String(row.quotation_ref || '').trim();
-    const receiptCashForOffset =
-      nextBankReceived != null && nextBankReceived > 0
-        ? nextBankReceived
-        : roundMoney(row.amount_ngn);
-    if (cid && qref && receiptCashForOffset > 0) {
-      const listed = listEligibleRefundCredits(db, cid, qref, { branchId: row.branch_id });
-      if (listed?.ok && listed.totalAvailableNgn > 0) {
-        const plan = planCashierRefundOffset({
-          receiptCashNgn: receiptCashForOffset,
-          availableNgn: listed.totalAvailableNgn,
-        });
-        if (plan.offsetNgn > 0) {
-          const selectable = orderConfirmCreditSourcesForAutoOffset(
-            db,
-            cid,
-            Array.isArray(listed.sources) ? listed.sources : []
-          );
-          const { allocations } = allocateRefundCreditAcrossSources(selectable, plan.offsetNgn);
-          const ids = allocations.map((a) => String(a.id || '').trim()).filter(Boolean);
-          if (ids.length) {
-            creditApplyNgn = plan.offsetNgn;
-            creditSourceIds = ids;
-            applyingRefundFund = true;
-            nextBankReceived = plan.cashToConfirmNgn;
-            autoOverpayOffset = {
-              offsetNgn: plan.offsetNgn,
-              cashToConfirmNgn: plan.cashToConfirmNgn,
-              sourceIds: ids,
-            };
-          }
-        }
-      }
-    }
-  }
+  const applyingRefundFund = creditApplyNgn > 0;
 
   const bankAmtResolved = nextBankReceived != null && nextBankReceived > 0;
   if (!finalized && !bankAmtResolved && !applyingRefundFund) {
@@ -12131,8 +12085,6 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
       paymentLineCorrectionCount: corrections.length,
       refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
       partialSplitConfirm: usesSplitConfirm && !finalizedNow,
-      autoOverpayOffsetNgn: autoOverpayOffset?.offsetNgn || 0,
-      autoOverpayOffsetSourceIds: autoOverpayOffset?.sourceIds || [],
     },
   });
   return {
@@ -12148,7 +12100,6 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
         : [],
     refundCreditSkipped: Boolean(creditResult?.skipped),
     refundCreditSkipReason: creditResult?.skipped ? creditResult.error : undefined,
-    autoOverpayOffset,
   };
 }
 

@@ -2,10 +2,12 @@
  * Heal receipts that were finance-confirmed as new bank/cash while the same customer still
  * had leftover overpayment (often held only by a staff-payee overpayment refund).
  *
- * Re-runs unconfirm + confirm so {@link patchSalesReceiptFinanceSettlement} auto-offsets
- * overpay credit and stamps open overpayment refunds (shrinks till payout).
+ * Opt-in repair only — Confirm payment never auto-diverts. Cashier must tick the overpay /
+ * refund fund on the confirm screen when that ₦ should cover the receipt.
+ *
+ * Re-runs unconfirm + confirm with an explicit refundCreditApply payload.
  */
-import { planCashierRefundOffset } from '../../shared/lib/refundCreditApply.js';
+import { planCashierRefundOffset, allocateRefundCreditAcrossSources } from '../../shared/lib/refundCreditApply.js';
 import {
   listEligibleRefundCredits,
   orderConfirmCreditSourcesForAutoOffset,
@@ -138,18 +140,33 @@ export function healReceiptOverpayConfirmTx(db, receiptId, actor = null, opts = 
   }
 
   const un = unconfirmSalesReceiptFinanceClearance(db, id, actor, {
-    reason: `Auto-heal: divert ₦${candidate.offsetNgn.toLocaleString('en-NG')} overpay credit instead of bank cash`,
+    reason: `Heal (explicit): divert ₦${candidate.offsetNgn.toLocaleString('en-NG')} overpay credit instead of bank cash`,
   });
   if (!un.ok && un.code !== 'NOT_CONFIRMED') {
     return { ok: false, error: un.error || 'Unconfirm failed.', unconfirm: un };
+  }
+
+  const ordered = orderConfirmCreditSourcesForAutoOffset(
+    db,
+    candidate.customerId,
+    candidate.sources || []
+  );
+  const { allocations } = allocateRefundCreditAcrossSources(ordered, candidate.offsetNgn);
+  const sourceIds = allocations.map((a) => String(a.id || '').trim()).filter(Boolean);
+  if (!sourceIds.length) {
+    return { ok: false, error: 'No credit source ids to apply for heal.', candidate };
   }
 
   const settled = patchSalesReceiptFinanceSettlement(
     db,
     id,
     {
-      bankReceivedAmountNgn: candidate.bankReceivedAmountNgn,
+      bankReceivedAmountNgn: candidate.cashToConfirmNgn,
       clearForDelivery: candidate.clearForDelivery,
+      refundCreditApply: {
+        amountNgn: candidate.offsetNgn,
+        sourceIds,
+      },
     },
     actor
   );
@@ -164,7 +181,7 @@ export function healReceiptOverpayConfirmTx(db, receiptId, actor = null, opts = 
     unconfirm: un,
     settled,
     refundCreditAppliedNgn: settled.refundCreditAppliedNgn || 0,
-    autoOverpayOffset: settled.autoOverpayOffset || null,
+    explicitCreditSourceIds: sourceIds,
   };
 }
 

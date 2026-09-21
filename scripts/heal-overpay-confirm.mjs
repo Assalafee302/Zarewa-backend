@@ -1,5 +1,6 @@
 /**
- * Heal live + scan similar bank-confirmed receipts that should have used overpay credit.
+ * Opt-in heal for past mistaken bank confirms that should have used overpay credit.
+ * Confirm payment itself never auto-diverts — cashier must tick the fund.
  *
  *   node scripts/heal-overpay-confirm.mjs --dry-run
  *   node scripts/heal-overpay-confirm.mjs --apply
@@ -51,7 +52,6 @@ const {
   healReceiptOverpayConfirmTx,
   healReceiptsNeedingOverpayConfirm,
 } = await import('../server/sales/receiptOverpayConfirmHeal.js');
-const { patchSalesReceiptFinanceSettlement } = await import('../server/writeOps.js');
 
 const { db, label } = openConfiguredMysql({ migrate: false });
 
@@ -79,35 +79,21 @@ function resolveActor() {
 
 const actor = resolveActor();
 
-function roundMoney(n) {
-  return Math.round(Number(n) || 0);
-}
-
 try {
-  console.log(JSON.stringify({ mode: dryRun ? 'dry-run' : 'apply', db: label(), receiptId: receiptId || null, actor: { id: actor.id, name: actor.name } }));
+  console.log(
+    JSON.stringify({
+      mode: dryRun ? 'dry-run' : 'apply',
+      db: label(),
+      receiptId: receiptId || null,
+      actor: { id: actor.id, name: actor.name },
+      note: 'Confirm payment does not auto-divert; this script applies explicit credit only when --apply.',
+    })
+  );
 
   if (receiptId) {
-    const row = db.prepare(`SELECT status, bank_received_amount_ngn, finance_reconciliation_saved_at_iso, finance_delivery_cleared_at_iso, amount_ngn FROM sales_receipts WHERE id = ?`).get(receiptId);
-    // If a prior heal unconfirmed but failed audit/settle, finish settle only.
-    const pending =
-      row &&
-      String(row.status || '').toLowerCase().includes('pending') &&
-      !(row.finance_reconciliation_saved_at_iso && String(row.finance_reconciliation_saved_at_iso).trim());
-    if (!dryRun && pending) {
-      const settled = patchSalesReceiptFinanceSettlement(
-        db,
-        receiptId,
-        {
-          bankReceivedAmountNgn: roundMoney(row.amount_ngn) || roundMoney(row.bank_received_amount_ngn) || 0,
-          clearForDelivery: true,
-        },
-        actor
-      );
-      console.log(JSON.stringify({ ok: settled.ok, resumedPendingSettle: true, settled }, null, 2));
-      if (!settled.ok) process.exit(1);
-    } else if (dryRun) {
+    if (dryRun) {
       const [c] = listReceiptsNeedingOverpayConfirmHeal(db, { receiptIds: [receiptId] });
-      console.log(JSON.stringify({ ok: true, dryRun: true, candidate: c || null, receipt: row }, null, 2));
+      console.log(JSON.stringify({ ok: true, dryRun: true, candidate: c || null }, null, 2));
     } else {
       const r = healReceiptOverpayConfirmTx(db, receiptId, actor, { dryRun: false });
       console.log(JSON.stringify(r, null, 2));
@@ -116,7 +102,7 @@ try {
   } else {
     const r = healReceiptsNeedingOverpayConfirm(db, actor, {
       dryRun,
-      limit: 200,
+      limit: 50,
     });
     console.log(JSON.stringify(r, null, 2));
     if (!r.ok) process.exit(1);

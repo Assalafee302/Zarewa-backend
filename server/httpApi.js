@@ -35,6 +35,7 @@ import { buildPurchaseReport } from '../shared/lib/purchaseReportCore.js';
 import {
   arAsAtReportRows,
   receiptsRegisterReportRows,
+  refundCreditApplyReportRows,
   revenueProductionReportRows,
   salesBridgeReportRows,
 } from '../shared/lib/standardReportsSales.js';
@@ -4968,8 +4969,33 @@ export function registerHttpApi(app, db) {
       const ledger = listLedgerEntries(db, branchScope);
       const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
       const tm = listTreasuryMovements(db, branchScope, treasuryHistoryListOpts());
-      const rows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate);
-      res.json({ ok: true, startDate, endDate, branchScope, rows });
+      const creditApps = refundCreditApplyOps.listRefundCreditApplications(
+        db,
+        '',
+        branchScope === 'ALL' ? 'ALL' : branchScope,
+        financeHistoryListOpts()
+      );
+      const rows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate, creditApps);
+      const creditApplyRows = refundCreditApplyReportRows(creditApps, startDate, endDate);
+      res.json({
+        ok: true,
+        startDate,
+        endDate,
+        branchScope,
+        rows,
+        creditApplyRows,
+        summary: {
+          receiptRows: rows.length,
+          refundCreditReceiptRows: rows.filter((r) => Number(r.refundCreditAppliedNgn) > 0).length,
+          refundCreditAppliedTotalNgn: Math.round(
+            rows.reduce((s, r) => s + (Number(r.refundCreditAppliedNgn) || 0), 0)
+          ),
+          creditApplyRows: creditApplyRows.length,
+          creditApplyTotalNgn: Math.round(
+            creditApplyRows.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0)
+          ),
+        },
+      });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build receipts register.' });
@@ -5056,7 +5082,13 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const refunds = listRefunds(db, branchScope);
-      const pack = refundsPackReport(refunds, startDate, endDate);
+      const creditApps = refundCreditApplyOps.listRefundCreditApplications(
+        db,
+        '',
+        branchScope === 'ALL' ? 'ALL' : branchScope,
+        financeHistoryListOpts()
+      );
+      const pack = refundsPackReport(refunds, startDate, endDate, creditApps);
       res.json({ ok: true, startDate, endDate, branchScope, ...pack });
     } catch (e) {
       console.error(e);

@@ -145,9 +145,18 @@ export function expensesPackReport(expenses = [], startDate, endDate, treasuryMo
 }
 
 /**
- * @returns {{ paidInPeriod: object[], pipeline: object[], summary: object }}
+ * @param {object[]} [refunds]
+ * @param {string} [startDate]
+ * @param {string} [endDate]
+ * @param {object[]} [creditApplications] refund_credit_applications for used-fund audit
+ * @returns {{
+ *   paidInPeriod: object[],
+ *   creditAppliedInPeriod: object[],
+ *   pipeline: object[],
+ *   summary: object,
+ * }}
  */
-export function refundsPackReport(refunds = [], startDate, endDate) {
+export function refundsPackReport(refunds = [], startDate, endDate, creditApplications = []) {
   const paidInPeriod = [];
   for (const r of refunds || []) {
     const id = String(r.refundID ?? r.refund_id ?? '').trim();
@@ -173,6 +182,7 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
           ? 'Cash'
           : abbreviateBankName(p.bankName) || String(p.accountName || '').trim() || '—',
         reference: String(p.reference || '').trim() || '—',
+        payoutKind: 'Till/Bank',
       });
     }
     if (linesFromHistory > 0) continue;
@@ -189,11 +199,62 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
           amountNgn: paid,
           bankAccount: '—',
           reference: String(r.paymentNote || '').trim() || '—',
+          payoutKind: 'Till/Bank',
         });
       }
     }
   }
   paidInPeriod.sort((a, b) => a.payoutDateISO.localeCompare(b.payoutDateISO));
+
+  const creditAppliedInPeriod = [];
+  for (const app of creditApplications || []) {
+    const st = String(app.status || '').trim().toLowerCase();
+    if (st === 'reversed' || st === 'cancelled') continue;
+    const iso = toIsoDate(app.createdAtISO || app.created_at_iso);
+    if (!iso) continue;
+    if (startDate && iso < startDate) continue;
+    if (endDate && iso > endDate) continue;
+    const amountNgn = Math.round(Number(app.amountNgn ?? app.amount_ngn) || 0);
+    if (amountNgn <= 0) continue;
+    const refundId = String(app.refundId || app.refund_id || '').trim();
+    const sourceQ = String(app.sourceQuotationRef || app.source_quotation_ref || '').trim();
+    const targetQ = String(app.targetQuotationRef || app.target_quotation_ref || '').trim();
+    const sourceReceiptId = String(app.sourceReceiptId || app.source_receipt_id || '').trim();
+    creditAppliedInPeriod.push({
+      appliedDateISO: iso,
+      refundIdDisplay: displayDocNumber(refundId) || '—',
+      refundIdFull: refundId || '—',
+      customer: String(app.customerName || app.customer || '').trim() || '—',
+      sourceQuotationRefDisplay: displayDocNumber(sourceQ) || '—',
+      sourceQuotationRefFull: sourceQ || '—',
+      targetQuotationRefDisplay: displayDocNumber(targetQ) || '—',
+      targetQuotationRefFull: targetQ || '—',
+      sourceReceiptIdDisplay: sourceReceiptId ? displayDocNumber(sourceReceiptId) || '—' : '—',
+      sourceReceiptIdFull: sourceReceiptId || '—',
+      amountNgn,
+      status: String(app.status || 'Credit confirmation').trim() || 'Credit confirmation',
+      applicationId: String(app.applicationId || app.application_id || '').trim() || '—',
+      usageNote: `₦${amountNgn.toLocaleString('en-NG')} of this refund used on ${
+        displayDocNumber(targetQ) || targetQ || 'another quotation'
+      }`,
+    });
+  }
+  creditAppliedInPeriod.sort(
+    (a, b) =>
+      a.appliedDateISO.localeCompare(b.appliedDateISO) ||
+      String(a.applicationId).localeCompare(String(b.applicationId))
+  );
+
+  const refundCustomerById = new Map();
+  for (const r of refunds || []) {
+    const id = String(r.refundID ?? r.refund_id ?? '').trim();
+    if (id) refundCustomerById.set(id, String(r.customer || '').trim() || '—');
+  }
+  for (const row of creditAppliedInPeriod) {
+    if (row.customer === '—' && row.refundIdFull && refundCustomerById.has(row.refundIdFull)) {
+      row.customer = refundCustomerById.get(row.refundIdFull);
+    }
+  }
 
   const pipeline = [];
   for (const r of refunds || []) {
@@ -203,6 +264,10 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
     const id = String(r.refundID ?? r.refund_id ?? '').trim();
     const approved = refundApprovedAmount(r);
     const paid = Math.round(Number(r.paidAmountNgn) || 0);
+    const creditAppliedNgn = Math.round(Number(r.creditAppliedNgn ?? r.credit_applied_ngn) || 0);
+    const creditTarget = String(
+      r.creditAppliedToQuotationRef ?? r.credit_applied_to_quotation_ref ?? ''
+    ).trim();
     const out = refundOutstandingAmount(r);
     pipeline.push({
       refundIdDisplay: displayDocNumber(id) || '—',
@@ -213,8 +278,17 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
       requestedNgn: Math.round(Number(r.amountNgn) || 0),
       approvedNgn: Math.round(approved),
       paidNgn: paid,
+      creditAppliedNgn,
+      creditAppliedToQuotationRefDisplay: displayDocNumber(creditTarget) || (creditTarget ? creditTarget : '—'),
+      creditAppliedToQuotationRefFull: creditTarget || '—',
       outstandingNgn: Math.round(out),
       requestedAtISO: toIsoDate(r.requestedAtISO) || '',
+      usageNote:
+        creditAppliedNgn > 0
+          ? `₦${creditAppliedNgn.toLocaleString('en-NG')} already used on another quotation${
+              creditTarget ? ` (${displayDocNumber(creditTarget) || creditTarget})` : ''
+            }`
+          : '',
     });
   }
   pipeline.sort((a, b) => (b.outstandingNgn || 0) - (a.outstandingNgn || 0));
@@ -222,9 +296,16 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
   const summary = {
     paidLinesInPeriod: paidInPeriod.length,
     paidTotalNgn: Math.round(paidInPeriod.reduce((s, x) => s + (Number(x.amountNgn) || 0), 0)),
+    creditAppliedLinesInPeriod: creditAppliedInPeriod.length,
+    creditAppliedTotalNgn: Math.round(
+      creditAppliedInPeriod.reduce((s, x) => s + (Number(x.amountNgn) || 0), 0)
+    ),
     pipelineRows: pipeline.length,
     pipelineOutstandingNgn: Math.round(pipeline.reduce((s, x) => s + (Number(x.outstandingNgn) || 0), 0)),
+    pipelineCreditAppliedNgn: Math.round(
+      pipeline.reduce((s, x) => s + (Number(x.creditAppliedNgn) || 0), 0)
+    ),
   };
 
-  return { paidInPeriod, pipeline, summary };
+  return { paidInPeriod, creditAppliedInPeriod, pipeline, summary };
 }

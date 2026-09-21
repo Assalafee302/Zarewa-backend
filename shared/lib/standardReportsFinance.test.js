@@ -153,4 +153,42 @@ describe('refundsPackReport', () => {
     expect(paidInPeriod).toHaveLength(1);
     expect(paidInPeriod[0].amountNgn).toBe(500);
   });
+
+  it('shows credit used on pipeline and creditAppliedInPeriod for audit', () => {
+    const { pipeline, creditAppliedInPeriod, summary } = refundsPackReport(
+      [
+        {
+          refundID: 'RF-CREDIT',
+          customer: 'B',
+          quotationRef: 'QT-SRC',
+          status: 'Approved',
+          amountNgn: 100_000,
+          approvedAmountNgn: 100_000,
+          paidAmountNgn: 0,
+          creditAppliedNgn: 40_000,
+          creditAppliedToQuotationRef: 'QT-2026-DST',
+        },
+      ],
+      '2026-05-01',
+      '2026-05-31',
+      [
+        {
+          applicationId: 'RCA-A',
+          refundId: 'RF-CREDIT',
+          createdAtISO: '2026-05-10T09:00:00.000Z',
+          amountNgn: 40_000,
+          sourceQuotationRef: 'QT-SRC',
+          targetQuotationRef: 'QT-2026-DST',
+          status: 'Credit confirmation',
+        },
+      ]
+    );
+    expect(pipeline).toHaveLength(1);
+    expect(pipeline[0].creditAppliedNgn).toBe(40_000);
+    expect(pipeline[0].usageNote).toMatch(/40,000/);
+    expect(creditAppliedInPeriod).toHaveLength(1);
+    expect(creditAppliedInPeriod[0].amountNgn).toBe(40_000);
+    expect(creditAppliedInPeriod[0].usageNote).toMatch(/used on/);
+    expect(summary.creditAppliedTotalNgn).toBe(40_000);
+  });
 });

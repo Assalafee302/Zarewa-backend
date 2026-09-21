@@ -18,10 +18,6 @@ export function sumRefundCalculationLines(lines) {
   }, 0);
 }
 
-function parseNgnToken(raw) {
-  return roundRefundLineMoney(String(raw || '').replace(/,/g, ''));
-}
-
 /** Parse ₦ token that may include decimals (e.g. 5,805.64). */
 function parseNgnTokenDecimal(raw) {
   const n = Number(String(raw || '').replace(/,/g, ''));

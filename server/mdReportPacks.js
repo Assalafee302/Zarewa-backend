@@ -15,9 +15,11 @@ import {
   listSalesReceipts,
   listTreasuryMovements,
 } from './readModel.js';
-import { receiptsRegisterReportRows } from '../shared/lib/standardReportsSales.js';
-import { expensesPackReport } from '../shared/lib/standardReportsFinance.js';
+import { receiptsRegisterReportRows, refundCreditApplyReportRows } from '../shared/lib/standardReportsSales.js';
+import { expensesPackReport, refundsPackReport } from '../shared/lib/standardReportsFinance.js';
 import { purchasesOrderedRows } from '../shared/lib/standardReportsPurchases.js';
+import { listRefundCreditApplications } from './refundCreditApplyOps.js';
+import { financeHistoryListOpts } from './listQueryOpts.js';
 
 function isoDateOnly(s) {
   return String(s || '').trim().slice(0, 10);
@@ -55,9 +57,17 @@ export function buildExecutiveDailyPack(db, opts = {}) {
   const ledger = listLedgerEntries(db, branchScope);
   const enriched = enrichSalesReceiptRowsWithCashFromLedger(rawReceipts, ledger);
   const tm = listTreasuryMovements(db, branchScope);
-  const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, date, date);
+  const creditApps = listRefundCreditApplications(
+    db,
+    '',
+    branchScope === 'ALL' ? 'ALL' : branchScope,
+    financeHistoryListOpts()
+  );
+  const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, date, date, creditApps);
+  const creditApplyRows = refundCreditApplyReportRows(creditApps, date, date);
 
   const refunds = listRefunds(db, branchScope).filter((r) => inRange(r.requestedAtISO, date, date));
+  const refundsPack = refundsPackReport(listRefunds(db, branchScope), date, date, creditApps);
   const paymentRequests = listPaymentRequests(db, branchScope).filter((p) =>
     inRange(p.requestDate || p.request_date, date, date)
   );
@@ -93,11 +103,20 @@ export function buildExecutiveDailyPack(db, opts = {}) {
       })),
       receiptsCount: receiptRows.length,
       receiptsTotalNgn: receiptRows.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0),
+      refundCreditAppliedTotalNgn: receiptRows.reduce(
+        (s, r) => s + (Number(r.refundCreditAppliedNgn) || 0),
+        0
+      ),
+      creditApplyRowsCount: creditApplyRows.length,
+      creditApplyTotalNgn: creditApplyRows.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0),
       receipts: receiptRows.slice(0, 40),
+      creditApplyRows: creditApplyRows.slice(0, 40),
       flaggedCount: flaggedToday.length,
     },
     operations: {
       refundsRequestedCount: refunds.length,
+      refundCreditAppliedLines: refundsPack.creditAppliedInPeriod?.length || 0,
+      refundCreditAppliedTotalNgn: refundsPack.summary?.creditAppliedTotalNgn || 0,
       paymentRequestsCount: paymentRequests.length,
       productionJobsCompletedCount: jobsCompleted.length,
     },
@@ -125,7 +144,20 @@ export function buildExecutiveWeeklyPack(db, opts = {}) {
   const ledger = listLedgerEntries(db, branchScope);
   const enriched = enrichSalesReceiptRowsWithCashFromLedger(rawReceipts, ledger);
   const tm = listTreasuryMovements(db, branchScope);
-  const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate);
+  const creditApps = listRefundCreditApplications(
+    db,
+    '',
+    branchScope === 'ALL' ? 'ALL' : branchScope,
+    financeHistoryListOpts()
+  );
+  const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate, creditApps);
+  const creditApplyRows = refundCreditApplyReportRows(creditApps, startDate, endDate);
+  const refundsPack = refundsPackReport(
+    listRefunds(db, branchScope),
+    startDate,
+    endDate,
+    creditApps
+  );
 
   const expenses = listExpenses(db, branchScope);
   const expensePack = expensesPackReport(expenses, startDate, endDate, tm);
@@ -159,10 +191,18 @@ export function buildExecutiveWeeklyPack(db, opts = {}) {
       quotationsTotalNgn: quotesInWeek.reduce((s, q) => s + (Number(q.totalNgn || q.total_ngn) || 0), 0),
       receiptsCount: receiptRows.length,
       receiptsTotalNgn: receiptRows.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0),
+      refundCreditAppliedTotalNgn: receiptRows.reduce(
+        (s, r) => s + (Number(r.refundCreditAppliedNgn) || 0),
+        0
+      ),
+      creditApplyRowsCount: creditApplyRows.length,
+      creditApplyTotalNgn: creditApplyRows.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0),
     },
     finance: {
       expensePackRowCount: expensePack.detail.length,
       refundsInWeekCount: refunds.length,
+      refundCreditAppliedLines: refundsPack.creditAppliedInPeriod?.length || 0,
+      refundCreditAppliedTotalNgn: refundsPack.summary?.creditAppliedTotalNgn || 0,
     },
     procurement: {
       purchaseOrdersInWeekCount: Array.isArray(pos) ? pos.length : 0,

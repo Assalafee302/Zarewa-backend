@@ -11,13 +11,99 @@ import {
 } from './liveAnalytics.js';
 import { displayDocNumber } from './reportDisplayFormat.js';
 import { abbreviateBankName } from './bankAbbreviation.js';
+import { REFUND_CREDIT_REVERSED_STATUS } from './refundCreditApply.js';
 
 function toIsoDate(value) {
   return String(value || '').slice(0, 10);
 }
 
+function roundMoney(n) {
+  return Math.round(Number(n) || 0);
+}
+
 function productionJobIsCompleted(job) {
   return String(job?.status || '').trim() === 'Completed';
+}
+
+function isActiveRefundCreditApplication(app) {
+  const st = String(app?.status || '').trim().toLowerCase();
+  if (!st) return true;
+  return st !== REFUND_CREDIT_REVERSED_STATUS.toLowerCase() && st !== 'cancelled';
+}
+
+/**
+ * Index active refund-credit applications by the sales receipt they offset on confirm.
+ * @param {Array<{ sourceReceiptId?: string, amountNgn?: number, refundId?: string, applicationId?: string, status?: string }>} creditApplications
+ * @returns {Map<string, { amountNgn: number, refundIds: string[], applicationIds: string[] }>}
+ */
+export function refundCreditBySourceReceiptId(creditApplications = []) {
+  const m = new Map();
+  for (const app of creditApplications || []) {
+    if (!isActiveRefundCreditApplication(app)) continue;
+    const rid = String(app.sourceReceiptId || app.source_receipt_id || '').trim();
+    if (!rid) continue;
+    const prev = m.get(rid) || { amountNgn: 0, refundIds: [], applicationIds: [] };
+    prev.amountNgn += roundMoney(app.amountNgn ?? app.amount_ngn);
+    const refundId = String(app.refundId || app.refund_id || '').trim();
+    if (refundId && !prev.refundIds.includes(refundId)) prev.refundIds.push(refundId);
+    const appId = String(app.applicationId || app.application_id || '').trim();
+    if (appId && !prev.applicationIds.includes(appId)) prev.applicationIds.push(appId);
+    m.set(rid, prev);
+  }
+  return m;
+}
+
+/**
+ * Standalone refund-fund applies in period (ledger credit with no bank clearance receipt,
+ * or confirm-payment credit lines for the audit sheet).
+ * @param {Array<object>} creditApplications
+ * @param {string} [startDate]
+ * @param {string} [endDate]
+ */
+export function refundCreditApplyReportRows(creditApplications = [], startDate, endDate) {
+  const rows = [];
+  for (const app of creditApplications || []) {
+    if (!isActiveRefundCreditApplication(app)) continue;
+    const iso = toIsoDate(app.createdAtISO || app.created_at_iso);
+    if (!iso) continue;
+    if (startDate && iso < startDate) continue;
+    if (endDate && iso > endDate) continue;
+    const amountNgn = roundMoney(app.amountNgn ?? app.amount_ngn);
+    if (amountNgn <= 0) continue;
+    const refundId = String(app.refundId || app.refund_id || '').trim();
+    const sourceQ = String(app.sourceQuotationRef || app.source_quotation_ref || '').trim();
+    const targetQ = String(app.targetQuotationRef || app.target_quotation_ref || '').trim();
+    const sourceReceiptId = String(app.sourceReceiptId || app.source_receipt_id || '').trim();
+    rows.push({
+      dateISO: iso,
+      customer: String(app.customerName || app.customer || app.createdByName || '').trim() || '—',
+      amountNgn,
+      quotationRefFull: targetQ || '—',
+      quotationRefDisplay: displayDocNumber(targetQ) || '—',
+      sourceQuotationRefFull: sourceQ || '—',
+      sourceQuotationRefDisplay: displayDocNumber(sourceQ) || '—',
+      receiptIdFull: sourceReceiptId || '—',
+      receiptIdDisplay: sourceReceiptId ? displayDocNumber(sourceReceiptId) || '—' : '—',
+      bankPaidTo: 'Refund credit (no bank)',
+      bankReference: String(app.ledgerBankReference || app.ledger_bank_reference || '').trim() || '—',
+      paymentMethod: 'Refund credit',
+      fundSource: 'Refund credit',
+      refundCreditAppliedNgn: amountNgn,
+      refundCreditFromRefundIds: refundId || '—',
+      refundCreditApplicationId: String(app.applicationId || app.application_id || '').trim() || '—',
+      fundNote: refundId
+        ? `₦${amountNgn.toLocaleString('en-NG')} used from refund ${displayDocNumber(refundId) || refundId}`
+        : `₦${amountNgn.toLocaleString('en-NG')} used from refund fund`,
+      ledgerEntryId: '',
+      rowKind: 'refund_credit',
+    });
+  }
+  rows.sort(
+    (a, b) =>
+      a.dateISO.localeCompare(b.dateISO) ||
+      String(a.refundCreditApplicationId).localeCompare(String(b.refundCreditApplicationId))
+  );
+  return rows;
 }
 
 /**
@@ -47,18 +133,21 @@ export function treasuryAccountLabelByLedgerEntryId(treasuryMovements = []) {
 /**
  * @param {Array<{ id?: string, bankReference?: string, paymentMethod?: string }>} ledgerEntries
  * @param {Array<{ sourceKind?: string, sourceId?: string, accountName?: string, accountNo?: string }>} treasuryMovements
+ * @param {Array<object>} [creditApplications] active/reversed refund_credit_applications for fundSource audit
  */
 export function receiptsRegisterReportRows(
   salesReceipts = [],
   ledgerEntries = [],
   treasuryMovements = [],
   startDate,
-  endDate
+  endDate,
+  creditApplications = []
 ) {
   const ledgerMap = new Map(
     (ledgerEntries || []).map((e) => [String(e.id || '').trim(), e]).filter(([k]) => k)
   );
   const tmMap = treasuryAccountLabelByLedgerEntryId(treasuryMovements);
+  const creditByReceipt = refundCreditBySourceReceiptId(creditApplications);
 
   const rows = [];
   for (const r of salesReceipts || []) {
@@ -68,20 +157,55 @@ export function receiptsRegisterReportRows(
     if (endDate && iso > endDate) continue;
     const lid = r.ledgerEntryId != null ? String(r.ledgerEntryId).trim() : '';
     const le = lid ? ledgerMap.get(lid) : null;
-    const bankPaidTo = (lid && tmMap.get(lid)) || le?.paymentMethod || r.method || '—';
+    const cashNgn = receiptEffectiveCashNgn(r);
+    const receiptId = String(r.id || '').trim();
+    const creditInfo = receiptId ? creditByReceipt.get(receiptId) : null;
+    const refundCreditAppliedNgn = roundMoney(creditInfo?.amountNgn);
+    const refundIds = Array.isArray(creditInfo?.refundIds) ? creditInfo.refundIds : [];
+    let fundSource = 'Bank/Cash';
+    if (refundCreditAppliedNgn > 0 && cashNgn > 0) fundSource = 'Mixed';
+    else if (refundCreditAppliedNgn > 0) fundSource = 'Refund credit';
+    const methodRaw = String(r.method || le?.paymentMethod || '').trim();
+    const paymentMethod =
+      fundSource === 'Refund credit'
+        ? 'Refund credit'
+        : fundSource === 'Mixed'
+          ? methodRaw
+            ? `${methodRaw} + Refund credit`
+            : 'Mixed (bank/cash + refund credit)'
+          : methodRaw || '—';
+    const bankPaidToRaw = (lid && tmMap.get(lid)) || le?.paymentMethod || r.method || '—';
+    const bankPaidTo =
+      fundSource === 'Refund credit'
+        ? 'Refund credit (no bank)'
+        : fundSource === 'Mixed'
+          ? `${String(bankPaidToRaw).trim() || '—'} + Refund credit`
+          : String(bankPaidToRaw).trim() || '—';
     const qref = String(r.quotationRef || '').trim();
+    const fundNote =
+      refundCreditAppliedNgn > 0
+        ? `₦${refundCreditAppliedNgn.toLocaleString('en-NG')} from refund${
+            refundIds.length ? ` ${refundIds.map((id) => displayDocNumber(id) || id).join(', ')}` : ''
+          }`
+        : '';
     rows.push({
       dateISO: iso,
       customer: String(r.customer || '').trim() || '—',
-      amountNgn: receiptEffectiveCashNgn(r),
+      amountNgn: cashNgn,
+      refundCreditAppliedNgn,
+      settledAmountNgn: cashNgn + refundCreditAppliedNgn,
       quotationRefFull: qref || '—',
       quotationRefDisplay: displayDocNumber(qref) || '—',
-      receiptIdFull: String(r.id || '').trim() || '—',
+      receiptIdFull: receiptId || '—',
       receiptIdDisplay: displayDocNumber(r.id) || '—',
-      bankPaidTo: String(bankPaidTo).trim() || '—',
+      bankPaidTo,
       bankReference: String(le?.bankReference || r.bankReference || '').trim() || '—',
-      paymentMethod: String(r.method || le?.paymentMethod || '').trim() || '—',
+      paymentMethod,
+      fundSource,
+      refundCreditFromRefundIds: refundIds.length ? refundIds.join(', ') : '',
+      fundNote,
       ledgerEntryId: lid || '',
+      rowKind: 'receipt',
     });
   }
   rows.sort((a, b) => a.dateISO.localeCompare(b.dateISO) || a.receiptIdFull.localeCompare(b.receiptIdFull));

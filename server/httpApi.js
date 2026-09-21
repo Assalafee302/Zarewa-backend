@@ -9905,6 +9905,15 @@ export function registerHttpApi(app, db) {
         creditAppliedOutNgn = 0;
       }
       const freshRefundOpportunity = activeRefundsOnFile.length === 0 && creditAppliedOutNgn <= 0;
+      const FRESH_PICKER_CATS = new Set([
+        'Overpayment',
+        'Unproduced meterage',
+        'Order cancellation',
+        'Customer commission',
+      ]);
+      const hasFreshRefundableClaim = categories.some((c) =>
+        FRESH_PICKER_CATS.has(String(c || '').trim())
+      );
       // Search-open path: completed production + headroom → always leave room for MD discount.
       const mdDiscountHardBlocked = activeRefundsOnFile.some((r) => {
         try {
@@ -9981,6 +9990,7 @@ export function registerHttpApi(app, db) {
       const wouldAppearInFreshDropdown =
         wouldAppearInPicklist &&
         freshRefundOpportunity &&
+        hasFreshRefundableClaim &&
         suggestedPreviewAmountNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN;
       /**
        * Keep false: do not re-enable paste/manual bypass for below-floor automatic claims.

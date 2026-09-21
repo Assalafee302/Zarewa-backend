@@ -6038,15 +6038,15 @@ function refundPickerListHint(db, row, jobs, {
     }
   }
 
-  // After production, Sales may request a typed amount for MD/CEO approval even when
-  // there is no overpay / unproduced / quoted-minus-floor line.
+  // After production, Sales may request a typed MD discount — search / includeExtra only.
+  // Do not put “no automatic refund” completed quotes on the fresh selector.
   const hasCompletedProduction = closedJobs.some(
     (j) => String(j.status || '').trim().toLowerCase() === 'completed'
   );
   const mdDiscountAllowed =
     hasCompletedProduction && !hardBlocked.has('MD discount') && remaining >= MIN_REFUND_QUOTATION_REMAINING_NGN;
 
-  if (!claimParts.length && mdDiscountAllowed) {
+  if (!claimParts.length && mdDiscountAllowed && allowMdDiscountRoom) {
     claimParts.push({
       category: 'MD discount',
       amountNgn: remaining,
@@ -6078,6 +6078,19 @@ function refundPickerListHint(db, row, jobs, {
     categories,
     suggestedPreviewAmountNgn,
   };
+}
+
+/** Concrete auto-claims for the fresh Sales selector (not MD discount / typed concessions alone). */
+const FRESH_REFUND_PICKER_CATEGORIES = new Set([
+  'Overpayment',
+  'Unproduced meterage',
+  'Order cancellation',
+  'Customer commission',
+]);
+
+function hintHasFreshRefundableClaim(categories) {
+  const cats = Array.isArray(categories) ? categories : [];
+  return cats.some((c) => FRESH_REFUND_PICKER_CATEGORIES.has(String(c || '').trim()));
 }
 
 function closedProductionJobsByQuotationRef(db, quoteIds) {
@@ -6112,9 +6125,11 @@ function closedProductionJobsByQuotationRef(db, quoteIds) {
  * Quotes with only exhausted / delivered-blocked claims are omitted.
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
  *
- * **Fresh vs extra:** the default selector only lists quotations with **no** prior active refund and no
- * overpay credit already applied out (`freshRefundOpportunity`). Follow-up / leftover claims stay
- * reachable via search (`quotationRef` / `q`) or `includeExtra: true`.
+ * **Fresh vs extra:** the default selector only lists quotations with **no** prior active refund,
+ * no booked refund total, and no overpay credit already applied out — and only when a **concrete**
+ * auto-claim exists (overpayment, unproduced, order cancellation, customer commission).
+ * MD-discount-only quotes and follow-up / leftover claims stay reachable via search
+ * (`quotationRef` / `q`) or `includeExtra: true`.
  *
  * Listing path batches cash-in and closed production jobs for SQL candidates and never scans
  * an unbounded quotation table — candidate pool is hard-capped even when limits are omitted.
@@ -6245,8 +6260,22 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     if (remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
 
     const priorRefunds = priorRefundsByRef.get(row.id) || [];
-    const freshRefundOpportunity = priorRefunds.length === 0 && creditAppliedOutNgn <= 0;
-    // Default dropdown = fresh refund opportunities only; search / includeExtra keeps leftovers.
+    const openOrAppliedRefund = priorRefunds.some((r) => {
+      const st = String(r.status || '')
+        .trim()
+        .toLowerCase();
+      if (st === 'pending' || st === 'approved' || st === 'partially paid') return true;
+      // Credit already moved onto another receipt (even if row looks Settled/Paid).
+      if (roundMoney(r.credit_applied_ngn) > 0) return true;
+      return false;
+    });
+    const bookedRefundTotal = roundMoney(row.total_refunded);
+    const freshRefundOpportunity =
+      priorRefunds.length === 0 &&
+      creditAppliedOutNgn <= 0 &&
+      bookedRefundTotal <= 0 &&
+      !openOrAppliedRefund;
+    // Default dropdown = fresh refundable claims only (no prior refund / credit apply).
     if (!includeExtra && !freshRefundOpportunity) continue;
 
     const quoteTotalNgn = roundMoney(row.total_ngn);
@@ -6268,9 +6297,15 @@ export function getEligibleRefundQuotations(db, opts = {}) {
       allowMdDiscountRoom: includeExtra,
     });
     if (!hint) continue;
+    // Fresh list: only concrete refundable auto-claims — not MD-discount-only / “no refund” quotes.
+    if (!includeExtra && !hintHasFreshRefundableClaim(hint.categories)) continue;
+    const listCategories = includeExtra
+      ? hint.categories
+      : hint.categories.filter((c) => FRESH_REFUND_PICKER_CATEGORIES.has(String(c || '').trim()));
+    if (!listCategories.length) continue;
     const pickRow = {
       ...row,
-      eligible_refund_categories: hint.categories,
+      eligible_refund_categories: listCategories,
       suggested_preview_amount_ngn: hint.suggestedPreviewAmountNgn,
       cash_in_ngn: cashInNgn,
       remaining_ngn: remainingNgn,

@@ -544,7 +544,7 @@ describe('getEligibleRefundQuotations fast list', () => {
     expect(searched[0].eligible_refund_categories?.length).toBeGreaterThan(0);
   });
 
-  it('lists a fully produced quote for MD discount when there is no overpay or floor delta', () => {
+  it('omits MD-discount-only quotes from the fresh list; search still opens them', () => {
     const quote = {
       id: 'QT-MD-DISC',
       customer_id: 'CUS-MD',
@@ -626,10 +626,17 @@ describe('getEligibleRefundQuotations fast list', () => {
     };
 
     const rows = getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe('QT-MD-DISC');
-    expect(rows[0].eligible_refund_categories).toContain('MD discount');
-    expect(rows[0].suggested_preview_amount_ngn).toBe(450_000);
+    expect(rows).toHaveLength(0);
+
+    const searchedMd = getEligibleRefundQuotations(db, {
+      candidateLimit: 20,
+      resultLimit: 20,
+      quotationRef: 'QT-MD-DISC',
+    });
+    expect(searchedMd).toHaveLength(1);
+    expect(searchedMd[0].id).toBe('QT-MD-DISC');
+    expect(searchedMd[0].eligible_refund_categories).toContain('MD discount');
+    expect(searchedMd[0].suggested_preview_amount_ngn).toBe(450_000);
   });
 
   it('excludes quotations whose total is more than receipts even when paid_ngn looks settled', () => {

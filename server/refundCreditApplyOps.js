@@ -499,6 +499,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
           overpayUsageHowTo ||
           `Use up to ₦${leftover.toLocaleString('en-NG')} from overpayment on ${qid} — no refund request needed. Leftover stays on that job.`,
       };
+      // Never-applied leftover overpay stays in the default selector; already-applied leftover is searchable only.
       if (creditOut <= 0) sources.push(overpayEntry);
       else extraSources.push(overpayEntry);
     }

@@ -30,10 +30,19 @@ function confirmedReceiptWhereSql() {
  * @param {{ dateFrom?: string, dateTo?: string, yearMonth?: string }} options
  */
 export function listConfirmedReceiptIdsForBulkUnconfirm(db, branchScope, options = {}) {
+  const scope = String(branchScope || '').trim();
+  if (!scope || scope === 'ALL') {
+    return {
+      ok: false,
+      code: 'BRANCH_REQUIRED',
+      error: 'Open a specific branch workspace before bulk-unconfirming receipts (not All branches).',
+    };
+  }
+
   const range = resolveBulkUnconfirmDateRange(options);
   if (!range.ok) return range;
 
-  const b = branchWhere(db, 'sales_receipts', branchScope);
+  const b = branchWhere(db, 'sales_receipts', scope);
   const rows = db
     .prepare(
       `SELECT id, date_iso, amount_ngn, status, quotation_ref
@@ -55,7 +64,7 @@ export function listConfirmedReceiptIdsForBulkUnconfirm(db, branchScope, options
     dateFrom: range.dateFrom,
     dateTo: range.dateTo,
     yearMonth: range.yearMonth || null,
-    branchScope: String(branchScope || '').trim() || null,
+    branchScope: scope,
     count: list.length,
     truncated,
     maxCount: MAX_BULK_UNCONFIRM,

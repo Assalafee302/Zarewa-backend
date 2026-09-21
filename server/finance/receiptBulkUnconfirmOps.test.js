@@ -13,6 +13,20 @@ import {
 
 const ACTOR = { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' };
 
+function mysqlAvailable() {
+  // Local Vitest without MySQL: skip DB integration (same gate as other finance ops tests).
+  if (!String(process.env.ZAREWA_MYSQL_PASSWORD || '').trim()) return false;
+  try {
+    const db = createDatabase(':memory:', { seed: false });
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const mysqlOk = mysqlAvailable();
+
 describe('resolveBulkUnconfirmDateRange', () => {
   it('expands yearMonth to calendar month bounds', () => {
     expect(lastDayOfYearMonth('2026-05')).toBe('2026-05-31');
@@ -32,7 +46,7 @@ describe('resolveBulkUnconfirmDateRange', () => {
   });
 });
 
-describe('bulkUnconfirmSalesReceiptsFinanceClearance', () => {
+describe.skipIf(!mysqlOk)('bulkUnconfirmSalesReceiptsFinanceClearance', () => {
   let db;
 
   beforeEach(() => {

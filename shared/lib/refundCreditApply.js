@@ -496,8 +496,8 @@ export function refundFundUsageBreakdown({
 }
 
 /**
- * Default Confirm-payment selector: never-applied refund/overpay fund only.
- * Leftover after a prior credit apply stays searchable ({@link refundFundUsageBreakdown}.hasPartialUse).
+ * Never-applied refund/overpay fund (`creditAppliedNgn === 0`). UI may badge leftover differently;
+ * leftover with remaining balance still belongs in the default Confirm-payment selector.
  * @param {{ creditAppliedNgn?: number, credit_applied_ngn?: number }} sourceOrRefund
  */
 export function refundCreditIsFreshSource(sourceOrRefund) {
@@ -515,7 +515,7 @@ export function refundFundRemainingHowToUse(p = {}) {
     : `Already used ₦${b.usedOnReceiptNgn.toLocaleString('en-NG')} on another receipt`;
   const leftBit =
     b.leftNgn > 0
-      ? `₦${b.leftNgn.toLocaleString('en-NG')} left — tick this leftover to cover this receipt, or pay it from till. Do not use the original amount again`
+      ? `₦${b.leftNgn.toLocaleString('en-NG')} left — use this leftover on the next receipt, or pay it from till. Do not use the original amount again`
       : 'Nothing left on this refund';
   return `${usedBit}. ${leftBit}.`;
 }

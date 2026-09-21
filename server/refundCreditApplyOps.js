@@ -305,8 +305,6 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
   /** @type {Array<object>} */
   const sources = [];
   /** @type {Array<object>} */
-  const extraSources = [];
-  /** @type {Array<object>} */
   const unavailableSources = [];
 
   const refundsByQuote = new Map();
@@ -362,9 +360,9 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
             ? `Use up to ₦${open.toLocaleString('en-NG')} from this quotation’s refund fund; leftover stays refundable here.`
             : `Use up to ₦${open.toLocaleString('en-NG')} from refund fund ${shape.refundID}; leftover stays refundable on ${qref}.`),
       };
-      // Default selector = never-applied funds only; leftover after a prior apply is searchable.
-      if (refundCreditIsFreshSource(usage)) sources.push(entry);
-      else extraSources.push(entry);
+      // Keep leftover in the default selector too — cashiers confirm several receipts against
+      // one refund; demoting leftover to searchable-only hid siblings after the first apply.
+      sources.push(entry);
     } else {
       const reason =
         !qref && shape.refundID
@@ -499,9 +497,8 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
           overpayUsageHowTo ||
           `Use up to ₦${leftover.toLocaleString('en-NG')} from overpayment on ${qid} — no refund request needed. Leftover stays on that job.`,
       };
-      // Never-applied leftover overpay stays in the default selector; already-applied leftover is searchable only.
-      if (creditOut <= 0) sources.push(overpayEntry);
-      else extraSources.push(overpayEntry);
+      // Leftover after a prior apply stays in the default selector (same as refund funds).
+      sources.push(overpayEntry);
     }
   }
 
@@ -512,14 +509,11 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     return refundBlocksExternalCreditOnQuotation(row);
   });
   let listedSources = sources;
-  let listedExtraSources = extraSources;
   if (blockingOnTarget) {
     listedSources = [];
-    listedExtraSources = [];
-    for (const s of [...sources, ...extraSources]) {
+    for (const s of sources) {
       if (s.sameQuotation) {
-        if (refundCreditIsFreshSource(s)) listedSources.push(s);
-        else listedExtraSources.push(s);
+        listedSources.push(s);
         continue;
       }
       unavailableSources.push({
@@ -529,7 +523,6 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     }
   }
   const listedAvailableNgn = listedSources.reduce((s, x) => s + roundMoney(x.availableNgn), 0);
-  const extraAvailableNgn = listedExtraSources.reduce((s, x) => s + roundMoney(x.availableNgn), 0);
   const plan = planRefundCreditApplyAmount({
     targetDueNgn,
     availableNgn: listedAvailableNgn,
@@ -542,18 +535,18 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     customerName: cust.name,
     targetQuotationRef: target,
     targetDueNgn,
-    /** Fresh (never-applied) funds only — default Confirm-payment selector. */
+    /** All open eligible funds (fresh + leftover) — default Confirm-payment selector. */
     totalAvailableNgn: listedAvailableNgn,
     recommendedApplyNgn: plan.applyNgn,
     remainderDueAfterRecommendNgn: plan.remainderDueNgn,
     leftoverCreditAfterRecommendNgn: plan.leftoverCreditNgn,
     sources: listedSources,
     /**
-     * Partially applied leftover still open — searchable, not in the default selector.
-     * Apply with explicit sourceIds from this list.
+     * Legacy empty list — leftover now lives in `sources` so multi-receipt confirm keeps working.
+     * Kept for older clients that still read this field.
      */
-    extraSources: listedExtraSources,
-    extraAvailableNgn,
+    extraSources: [],
+    extraAvailableNgn: 0,
     unavailableSources,
     targetBlocksExternalCredit: Boolean(blockingOnTarget),
     blockingRefundId: blockingOnTarget?.refund_id || null,
@@ -587,10 +580,10 @@ export function applyRefundCreditToQuotation(db, payload) {
 
   const listed = listEligibleRefundCredits(db, cid, target, { branchId: payload.branchId });
   if (!listed.ok) return listed;
-  const freshSources = Array.isArray(listed.sources) ? listed.sources : [];
+  const listedSources = Array.isArray(listed.sources) ? listed.sources : [];
   const extraSources = Array.isArray(listed.extraSources) ? listed.extraSources : [];
-  const selectable = [...freshSources, ...extraSources];
-  if (!selectable.length || (listed.totalAvailableNgn <= 0 && !(listed.extraAvailableNgn > 0))) {
+  const selectable = [...listedSources, ...extraSources];
+  if (!selectable.length || listed.totalAvailableNgn <= 0) {
     if (listed.targetBlocksExternalCredit) {
       const rid = listed.blockingRefundId ? ` (${listed.blockingRefundId})` : '';
       return {
@@ -601,30 +594,20 @@ export function applyRefundCreditToQuotation(db, payload) {
     return { ok: false, error: 'No refund fund available for this customer.' };
   }
 
-  let sources = freshSources;
+  let sources = listedSources.length ? listedSources : extraSources;
   const wanted = Array.isArray(payload.sourceIds)
     ? payload.sourceIds.map((s) => String(s || '').trim()).filter(Boolean)
     : null;
-  // A specific source must be named once there is more than one fresh candidate — silently pooling
+  // A specific source must be named once there is more than one candidate — silently pooling
   // every eligible refund/overpay together is exactly how one confirmation drained a refund
   // that a different payee still needed to be paid from. Only the unambiguous single-source
-  // case may fall through without a selection. Leftover (extra) funds require an explicit pick.
-  if ((!wanted || !wanted.length) && freshSources.length > 1) {
+  // case may fall through without a selection (including leftover after a prior apply).
+  if ((!wanted || !wanted.length) && selectable.length > 1) {
     return {
       ok: false,
       error: 'More than one refund fund is available for this customer — select which one this should apply against.',
       code: 'REFUND_CREDIT_SOURCE_REQUIRED',
-      sources: freshSources,
-      extraSources,
-    };
-  }
-  if ((!wanted || !wanted.length) && freshSources.length === 0 && extraSources.length > 0) {
-    return {
-      ok: false,
-      error:
-        'Only leftover refund fund (already partly applied) is available — search and select that leftover explicitly; the default selector shows fresh refunds only.',
-      code: 'REFUND_CREDIT_EXTRA_SOURCE_REQUIRED',
-      sources: freshSources,
+      sources: listedSources,
       extraSources,
     };
   }

@@ -240,9 +240,20 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
     expect(leftoverOverpay).toBe(10_000);
 
     const listedAfter = listEligibleRefundCredits(db, 'CUS-RC', 'QT-RF-DST');
-    expect(listedAfter.sources.some((s) => s.refundId === 'RF-OVER-1')).toBe(false);
-    const leftoverRefund = listedAfter.extraSources?.find((s) => s.refundId === 'RF-OVER-1');
+    // Leftover stays in the default selector so sibling receipts can still confirm against it.
+    const leftoverRefund = listedAfter.sources.find((s) => s.refundId === 'RF-OVER-1');
     expect(leftoverRefund?.availableNgn).toBe(10_000);
+    expect(leftoverRefund?.fresh).toBe(false);
+    expect(listedAfter.totalAvailableNgn).toBeGreaterThanOrEqual(10_000);
+
+    // Sibling quote still sees leftover in default sources (desk confirm path), not only extraSources.
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-RF-DST-2', 'CUS-RC', 'Credit Customer', 10000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-06-04', '${DEFAULT_BRANCH_ID}');
+    `);
+    const listedForSibling = listEligibleRefundCredits(db, 'CUS-RC', 'QT-RF-DST-2');
+    expect(listedForSibling.sources.find((s) => s.refundId === 'RF-OVER-1')?.availableNgn).toBe(10_000);
+    expect(listedForSibling.totalAvailableNgn).toBeGreaterThanOrEqual(10_000);
   });
 
   it('reverses a mistaken apply and restores the refund and target quote', () => {
@@ -707,10 +718,10 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
     expect(applied.appliedNgn).toBe(40_000);
 
     const listedAfter = listEligibleRefundCredits(db, 'CUS-ECON', 'QT-ECON-DST');
-    expect(listedAfter.sources.find((s) => s.id === 'overpay:QT-ECON-SRC')).toBeUndefined();
-    const leftover = listedAfter.extraSources?.find((s) => s.id === 'overpay:QT-ECON-SRC');
+    const leftover = listedAfter.sources.find((s) => s.id === 'overpay:QT-ECON-SRC');
     expect(leftover?.availableNgn ?? 0).toBe(10_000);
-    expect(listedAfter.extraAvailableNgn).toBe(10_000);
+    expect(leftover?.fresh).toBe(false);
+    expect(listedAfter.totalAvailableNgn).toBe(10_000);
   });
 
   it('does not list leftover overpay after the refund was till-paid (QT-1173 / RF-9456)', () => {

@@ -186,12 +186,14 @@ import {
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
+import { isQuotationActiveRefundLockError, planCashierRefundOffset, allocateRefundCreditAcrossSources } from '../shared/lib/refundCreditApply.js';
 import {
   applyRefundCreditToQuotation,
   reverseRefundCreditApplication,
   listActiveRefundCreditApplicationsBySourceReceipt,
+  listEligibleRefundCredits,
+  orderConfirmCreditSourcesForAutoOffset,
 } from './refundCreditApplyOps.js';
-import { isQuotationActiveRefundLockError } from '../shared/lib/refundCreditApply.js';
 import {
   assertRefundMoneyOutWithinApproved,
   buildRefundSettlementSummary,
@@ -11356,14 +11358,13 @@ function receiptLedgerEntryIdFromRow(rec) {
  */
 function syncTreasuryMovementsToConfirmedReceiptAmountTx(db, receiptId, ledgerEntryId, confirmedAmountNgn, actor) {
   const confirmed = roundMoney(confirmedAmountNgn);
-  if (confirmed <= 0) return;
   const ids = [String(receiptId || '').trim(), String(ledgerEntryId || '').trim()].filter(Boolean);
   const uniq = [...new Set(ids)];
   if (!uniq.length) return;
   const ph = uniq.map(() => '?').join(',');
   const movements = db
     .prepare(
-      `SELECT id, amount_ngn, treasury_account_id, posted_at_iso FROM treasury_movements
+      `SELECT id, amount_ngn, treasury_account_id, posted_at_iso, note FROM treasury_movements
        WHERE type = 'RECEIPT_IN' AND source_kind = 'LEDGER_RECEIPT' AND source_id IN (${ph})
          AND (reverses_movement_id IS NULL OR TRIM(reverses_movement_id) = '')
        ORDER BY ABS(amount_ngn) DESC`
@@ -11372,6 +11373,43 @@ function syncTreasuryMovementsToConfirmedReceiptAmountTx(db, receiptId, ledgerEn
   if (!movements.length) return;
   const sum = movements.reduce((s, m) => s + roundMoney(m.amount_ngn), 0);
   if (sum === confirmed) return;
+
+  // Full overpay/refund-fund confirm: no new bank cash — zero RECEIPT_IN lines and reverse balances.
+  if (confirmed <= 0) {
+    for (const m of movements) {
+      const oldAmt = roundMoney(m.amount_ngn);
+      if (oldAmt <= 0) continue;
+      adjustTreasuryBalanceTx(db, Number(m.treasury_account_id), -oldAmt, {
+        allowNegativeBalance: false,
+      });
+      const baseNote = m.note != null ? String(m.note) : '';
+      const zeroNote = 'Zeroed — covered by overpay/refund fund (not new bank cash)';
+      const merged =
+        baseNote && baseNote.includes('Zeroed — covered by overpay')
+          ? baseNote
+          : baseNote
+            ? `${baseNote} — ${zeroNote}`
+            : zeroNote;
+      db.prepare(`UPDATE treasury_movements SET amount_ngn = 0, note = ? WHERE id = ?`).run(
+        merged,
+        String(m.id)
+      );
+      appendAuditLog(db, {
+        actor,
+        action: 'treasury.ledger_receipt_zero_for_credit',
+        entityKind: 'treasury_movement',
+        entityId: String(m.id),
+        note: zeroNote,
+        details: {
+          movementId: String(m.id),
+          previousAmountNgn: oldAmt,
+          receiptId: String(receiptId || '').trim() || null,
+        },
+      });
+    }
+    return;
+  }
+
   if (movements.length === 1) {
     ledgerReceiptTreasuryMovementCorrectTx(
       db,
@@ -11861,11 +11899,55 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
   const creditPayload = payload?.refundCreditApply && typeof payload.refundCreditApply === 'object'
     ? payload.refundCreditApply
     : null;
-  const creditApplyNgn = roundMoney(creditPayload?.amountNgn);
-  const creditSourceIds = Array.isArray(creditPayload?.sourceIds)
+  let creditApplyNgn = roundMoney(creditPayload?.amountNgn);
+  let creditSourceIds = Array.isArray(creditPayload?.sourceIds)
     ? creditPayload.sourceIds.map((s) => String(s || '').trim()).filter(Boolean)
     : null;
-  const applyingRefundFund = creditApplyNgn > 0;
+  let applyingRefundFund = creditApplyNgn > 0;
+  /** @type {{ offsetNgn: number, cashToConfirmNgn: number, sourceIds: string[] } | null} */
+  let autoOverpayOffset = null;
+
+  // When Sales already posted the receipt, quote due is often ₦0 — cashiers still type the
+  // bank amount. If the same customer has leftover overpay (including cash held only by a
+  // staff-payee overpayment refund), divert that ₦ to credit automatically so Moniepoint is
+  // not overstated and the hanging refund shrinks instead of being paid twice.
+  if (!applyingRefundFund && !finalized) {
+    const cid = String(row.customer_id || '').trim();
+    const qref = String(row.quotation_ref || '').trim();
+    const receiptCashForOffset =
+      nextBankReceived != null && nextBankReceived > 0
+        ? nextBankReceived
+        : roundMoney(row.amount_ngn);
+    if (cid && qref && receiptCashForOffset > 0) {
+      const listed = listEligibleRefundCredits(db, cid, qref, { branchId: row.branch_id });
+      if (listed?.ok && listed.totalAvailableNgn > 0) {
+        const plan = planCashierRefundOffset({
+          receiptCashNgn: receiptCashForOffset,
+          availableNgn: listed.totalAvailableNgn,
+        });
+        if (plan.offsetNgn > 0) {
+          const selectable = orderConfirmCreditSourcesForAutoOffset(
+            db,
+            cid,
+            Array.isArray(listed.sources) ? listed.sources : []
+          );
+          const { allocations } = allocateRefundCreditAcrossSources(selectable, plan.offsetNgn);
+          const ids = allocations.map((a) => String(a.id || '').trim()).filter(Boolean);
+          if (ids.length) {
+            creditApplyNgn = plan.offsetNgn;
+            creditSourceIds = ids;
+            applyingRefundFund = true;
+            nextBankReceived = plan.cashToConfirmNgn;
+            autoOverpayOffset = {
+              offsetNgn: plan.offsetNgn,
+              cashToConfirmNgn: plan.cashToConfirmNgn,
+              sourceIds: ids,
+            };
+          }
+        }
+      }
+    }
+  }
 
   const bankAmtResolved = nextBankReceived != null && nextBankReceived > 0;
   if (!finalized && !bankAmtResolved && !applyingRefundFund) {
@@ -12049,6 +12131,8 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
       paymentLineCorrectionCount: corrections.length,
       refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
       partialSplitConfirm: usesSplitConfirm && !finalizedNow,
+      autoOverpayOffsetNgn: autoOverpayOffset?.offsetNgn || 0,
+      autoOverpayOffsetSourceIds: autoOverpayOffset?.sourceIds || [],
     },
   });
   return {
@@ -12064,6 +12148,7 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
         : [],
     refundCreditSkipped: Boolean(creditResult?.skipped),
     refundCreditSkipReason: creditResult?.skipped ? creditResult.error : undefined,
+    autoOverpayOffset,
   };
 }
 

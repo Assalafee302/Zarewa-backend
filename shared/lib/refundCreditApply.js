@@ -537,6 +537,32 @@ export function planCashierRefundOffset({ receiptCashNgn, availableNgn }) {
 }
 
 /**
+ * Whether an open refund should reduce confirm-payment "leftover overpay" on its source quote.
+ * Transport/installation (and other non-overpay) opens still reserve cash — they are not stamped
+ * when leftover is applied. Overpayment-only refunds that cannot be ticked as credit (staff /
+ * multi-payee) must NOT hide leftover: confirm applies `overpay:` and stamps those rows so the
+ * till payout shrinks instead of cashiers booking the same ₦ as new bank cash (double pay).
+ *
+ * @param {{
+ *   status?: string,
+ *   reasonCategory?: unknown,
+ *   calculationLines?: unknown,
+ *   splitDistributions?: unknown,
+ *   customerID?: string,
+ * }} shape
+ */
+export function refundOpenReservesConfirmLeftoverOverpay(shape) {
+  const overpayOnly = refundCategoriesAreOverpaymentOnly(
+    shape?.reasonCategory,
+    shape?.calculationLines
+  );
+  if (overpayOnly && !refundIsEligibleCreditSourceKind(shape)) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Allocate applyNgn across sources (FIFO as given). Remainder stays on older sources.
  * @param {Array<{ id: string, availableNgn: number }>} sources
  * @param {number} applyNgn

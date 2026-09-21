@@ -25,6 +25,7 @@ import {
   refundFundRemainingHowToUse,
   stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,
+  refundOpenReservesConfirmLeftoverOverpay,
 } from '../shared/lib/refundCreditApply.js';
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
 import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
@@ -193,8 +194,9 @@ function consumeFalseOpenRefundsOnOverpayApplyTx(db, { quotationRef, amountNgn, 
     );
     const creditOpen = refundCreditOpenAmountFromStoredRefund(row);
     const cashOut = refundCashOutstandingNgn(db, row);
-    // Pending leftover stays for the manager unless credit-open was hidden (false paid_amount).
-    if (status === 'Pending' && creditOpen > 0) continue;
+    // Pending non-overpay stays reserved for the manager. Pending/Approved overpayment
+    // (including staff-payee) is stamped so confirm leftover reduces till "still to pay".
+    if (status === 'Pending' && creditOpen > 0 && !overpayOnly) continue;
     // Transport/installation cash-payout refunds stay reserved when leftover is extra.
     // Overpayment refunds that cashiers apply as "refund fund" via leftover overpay must
     // leave the till waiting list.
@@ -388,14 +390,15 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
   /**
    * Open refund amount already earmarked per source quotation (avoid double-counting the same
    * overpayment cash as both "owed to a refund payee" and "available as leftover credit for
-   * another receipt"). Sums EVERY active refund on the quote, not just the overpayment-only ones
-   * eligible to be picked as an explicit credit source: a transport/installation staff refund
-   * (cash-payout-only, never itself selectable as a credit source — see
-   * `refundIsEligibleCreditSourceKind`) still reserves the same underlying overpayment cash, so
-   * its open balance must still reduce what is offered as leftover. Before this fix, only
-   * overpayment-only refunds were subtracted here, so a quote's overpayment could be applied as
-   * credit to a different receipt while an approved staff refund on the same quote still expected
-   * to pay that same cash out — the refund's own "still to pay" balance never moved.
+   * another receipt").
+   *
+   * Transport/installation staff refunds (cash-payout-only) still reduce leftover — they are not
+   * stamped when leftover is applied.
+   *
+   * Overpayment-only refunds that cannot be ticked as credit (staff / multi-payee) do NOT reduce
+   * leftover: confirm uses `overpay:` and {@link consumeFalseOpenRefundsOnOverpayApplyTx} stamps
+   * those rows so till payout shrinks. Hiding leftover forced cashiers to book new bank cash while
+   * the full staff refund stayed payable — double pay (LE-KD-26-1797 / RF-KD-26-9636 class).
    */
   const overpayRefundOpenByQuote = new Map();
   for (const row of refunds) {
@@ -403,6 +406,8 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     if (!qid) continue;
     const open = refundCreditOpenAmountFromStoredRefund(row);
     if (!(open > 0)) continue;
+    const shape = mapRefundRowToCreditShape(row);
+    if (!refundOpenReservesConfirmLeftoverOverpay(shape)) continue;
     overpayRefundOpenByQuote.set(qid, roundMoney((overpayRefundOpenByQuote.get(qid) || 0) + open));
   }
 
@@ -553,6 +558,48 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     statusReportLabel: REFUND_CREDIT_CONFIRMATION_STATUS,
     /** Why this quotation’s paid balance came back — confirm-payment credit was undone for a till/bank refund payout. */
     priorConfirmPaymentReleases: listPriorConfirmPaymentReleasesForTarget(db, target),
+  });
+}
+
+/**
+ * Prefer overpay pools that still have a staff/multi-payee overpayment refund open —
+ * those must be stamped so till payout shrinks. Free leftover on other quotes comes after.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} customerId
+ * @param {Array<object>} sources
+ */
+export function orderConfirmCreditSourcesForAutoOffset(db, customerId, sources) {
+  const cid = String(customerId || '').trim();
+  const list = Array.isArray(sources) ? [...sources] : [];
+  if (!cid || list.length < 2) return list;
+
+  const staffHeld = new Set();
+  const rows = db
+    .prepare(
+      `SELECT * FROM customer_refunds
+       WHERE customer_id = ?
+         AND LOWER(TRIM(COALESCE(status, ''))) IN ('pending', 'approved', 'partially paid')`
+    )
+    .all(cid);
+  for (const row of rows) {
+    const open = refundCreditOpenAmountFromStoredRefund(row);
+    if (!(open > 0)) continue;
+    const shape = mapRefundRowToCreditShape(row);
+    if (!refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines)) continue;
+    if (refundIsEligibleCreditSourceKind(shape)) continue;
+    const q = String(row.quotation_ref || '').trim();
+    if (q) staffHeld.add(q);
+  }
+
+  return list.sort((a, b) => {
+    const aHeld = a?.kind === 'overpay' && staffHeld.has(String(a.sourceQuotationRef || '')) ? 0 : 1;
+    const bHeld = b?.kind === 'overpay' && staffHeld.has(String(b.sourceQuotationRef || '')) ? 0 : 1;
+    if (aHeld !== bHeld) return aHeld - bHeld;
+    // Among staff-held pools, use the largest first (main hanging refund before tiny leftovers).
+    if (aHeld === 0 && bHeld === 0) {
+      return roundMoney(b?.availableNgn) - roundMoney(a?.availableNgn);
+    }
+    return 0;
   });
 }
 

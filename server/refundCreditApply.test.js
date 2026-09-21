@@ -935,4 +935,86 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
     expect(Number(rf.credit_applied_ngn)).toBe(40_000);
     expect(rf.status).toBe('Paid');
   });
+
+  it('lists leftover overpay when only a staff-payee overpayment refund holds the cash', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 10, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id) VALUES
+        ('CUS-STAFFOP', 'Quote Customer', '${DEFAULT_BRANCH_ID}'),
+        ('CUS-STAFFPAY', 'Staff Payee', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-SO-SRC', 'CUS-STAFFOP', 'Quote Customer', 100000, 150000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-09-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-SO-DST', 'CUS-STAFFOP', 'Quote Customer', 20790, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-09-02', '${DEFAULT_BRANCH_ID}');
+    `);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-STAFFOP',
+          customerName: 'Quote Customer',
+          amountNgn: 100_000,
+          quotationRef: 'QT-SO-SRC',
+          atISO: '2026-09-01T10:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-STAFFOP',
+          customerName: 'Quote Customer',
+          amountNgn: 50_000,
+          quotationRef: 'QT-SO-SRC',
+          atISO: '2026-09-01T10:30:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    const split = JSON.stringify([
+      {
+        recipientKind: 'customer',
+        recipientCustomerID: 'CUS-STAFFPAY',
+        amountNgn: 50_000,
+        netPayoutNgn: 50_000,
+      },
+    ]);
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, approved_amount_ngn, status, requested_by, requested_at_iso, paid_amount_ngn, branch_id,
+        calculation_lines_json, split_distributions_json
+      ) VALUES (
+        'RF-SO-1', 'CUS-STAFFOP', 'Quote Customer', 'QT-SO-SRC', '["Overpayment"]', 'Overpayment to staff',
+        50000, 50000, 'Approved', 'Sales One', '2026-09-01T11:00:00.000Z', 0, '${DEFAULT_BRANCH_ID}',
+        '${JSON.stringify([{ category: 'Overpayment', amountNgn: 50000 }]).replace(/'/g, "''")}',
+        '${split.replace(/'/g, "''")}'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-STAFFOP', 'QT-SO-DST');
+    expect(listed.ok).toBe(true);
+    expect(listed.sources.some((s) => s.refundId === 'RF-SO-1')).toBe(false);
+    const leftover = listed.sources.find((s) => s.kind === 'overpay' && s.sourceQuotationRef === 'QT-SO-SRC');
+    expect(leftover?.availableNgn).toBe(50_000);
+
+    const applied = applyRefundCreditToQuotation(db, {
+      customerID: 'CUS-STAFFOP',
+      targetQuotationRef: 'QT-SO-DST',
+      amountNgn: 20_790,
+      sourceIds: ['overpay:QT-SO-SRC'],
+      actor,
+      branchId: DEFAULT_BRANCH_ID,
+      dateISO: '2026-09-03',
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.appliedNgn).toBe(20_790);
+
+    const rf = db
+      .prepare(`SELECT credit_applied_ngn, paid_amount_ngn, status FROM customer_refunds WHERE refund_id = 'RF-SO-1'`)
+      .get();
+    expect(Number(rf.credit_applied_ngn)).toBe(20_790);
+  });
 });

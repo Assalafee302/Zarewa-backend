@@ -21,6 +21,7 @@ import {
   refundSplitHasMultiplePayees,
   refundSplitPayeeKeys,
   refundCreditPayeeIsQuoteCustomerOnly,
+  refundOpenReservesConfirmLeftoverOverpay,
   stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,
 } from './refundCreditApply.js';
@@ -356,6 +357,39 @@ describe('refundCreditApply pure helpers', () => {
       leftoverRefundNgn: 0,
     });
     expect(planCashierRefundOffset({ receiptCashNgn: 20_000, availableNgn: 50_000 }).cashToConfirmNgn).toBe(0);
+  });
+
+  it('does not let staff-payee overpay refunds reserve confirm leftover (stamp path)', () => {
+    const staffOverpay = {
+      status: 'Approved',
+      reasonCategory: ['Overpayment'],
+      calculationLines: [{ category: 'Overpayment', amountNgn: 959_380 }],
+      customerID: 'CUS-YARO',
+      splitDistributions: [
+        {
+          recipientKind: 'customer',
+          recipientCustomerID: 'CUS-STAFF',
+          amountNgn: 959_380,
+        },
+      ],
+    };
+    expect(refundIsEligibleCreditSourceKind(staffOverpay)).toBe(false);
+    expect(refundOpenReservesConfirmLeftoverOverpay(staffOverpay)).toBe(false);
+
+    const transport = {
+      status: 'Approved',
+      reasonCategory: ['Transport'],
+      calculationLines: [{ category: 'Transport', amountNgn: 20_000 }],
+      customerID: 'CUS-YARO',
+      splitDistributions: [
+        {
+          recipientKind: 'associated_staff',
+          recipientAssociatedStaffID: 'AST-1',
+          amountNgn: 20_000,
+        },
+      ],
+    };
+    expect(refundOpenReservesConfirmLeftoverOverpay(transport)).toBe(true);
   });
 
   it('does not cap overpayment-only refund credit at staff split net pool', () => {

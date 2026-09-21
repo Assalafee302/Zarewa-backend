@@ -3,12 +3,18 @@ import {
   canonicalPriceListDesignKey,
   designKeysToTry,
   isMeterSheetProductLine,
+  materialKeyFromMaterialTypeRow,
   publishedListPriceFromWorkbook,
   resolveMaterialWorkbookPriceFromRows,
   resolvePublishedListUnitNgnFromItems,
 } from './materialWorkbookQuotationPrice.js';
 
 describe('materialWorkbookQuotationPrice', () => {
+  it('materialKeyFromMaterialTypeRow maps MAT-005 to stone-coated', () => {
+    expect(materialKeyFromMaterialTypeRow({ id: 'MAT-005' })).toBe('stone-coated');
+    expect(materialKeyFromMaterialTypeRow({ id: 'MAT-005', name: 'Stone coated' })).toBe('stone-coated');
+  });
+
   const rows = [
     {
       id: 'MPS-1',

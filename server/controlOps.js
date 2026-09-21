@@ -48,6 +48,12 @@ import {
 import { coilProducedMetersFromProductionJobs, jobOutputMetresForUnproducedRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { quotedAboveFloorCreditNgn } from '../shared/lib/refundQuotedAboveFloor.js';
+import {
+  firstQuotedProductGaugeDesign,
+  parseQuotationLinesPayload,
+  quotationMaterialTypeIdFromLines,
+  quotedGaugeDesignForCommission,
+} from '../shared/lib/refundCommissionFloorLookup.js';
 import { refundCashierPayRelaxed } from './financeFeatureFlags.js';
 import {
   quotedCuttingListSheetPoolMetresFromProducts,
@@ -123,9 +129,15 @@ import {
   workbookFloorMinPerMeterAsOf,
   selectPriceListRowsAsOf,
 } from './pricingAsOf.js';
-import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
+import {
+  pricingPolicyNumbersForServiceLine,
+  resolveAliasForDesign,
+} from './pricingPolicyResolve.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
-import { resolveStainSourceMaterialTypeId } from './materialWorkbookQuotationPrice.js';
+import {
+  materialKeyFromMaterialTypeId,
+  resolveStainSourceMaterialTypeId,
+} from './materialWorkbookQuotationPrice.js';
 import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
 import { pickQuoteLineFloor } from '../shared/lib/quoteFloorPolicy.js';
 import { isStainMaterialTypeId } from '../shared/lib/stainMaterialPolicy.js';
@@ -1019,29 +1031,19 @@ function sumQuotationLinesJsonFlexible(linesJson) {
   return roundMoney(s);
 }
 
-/** First product line with gauge + design/colour — for substitution list hints (quoted vs supplied gauge). */
-function firstQuotedProductGaugeDesign(linesJson) {
-  let payload = linesJson;
-  if (typeof payload === 'string') {
-    try {
-      payload = JSON.parse(payload || '{}');
-    } catch {
-      return null;
-    }
+/**
+ * Workbook material_key from quotation header (MAT-005 → stone-coated). Prefer over job coils
+ * so stone-coated / offcut commission does not fall through to alu coil gauge pricing.
+ */
+function materialPricingMaterialKeyFromQuote(db, quote) {
+  let typeId = quotationMaterialTypeIdFromLines(quote?.lines_json);
+  if (!typeId) return null;
+  const payload = parseQuotationLinesPayload(quote?.lines_json);
+  if (isStainMaterialTypeId(typeId) && payload) {
+    typeId = resolveStainSourceMaterialTypeId(db, payload) || typeId;
   }
-  const prods = payload?.products;
-  if (!Array.isArray(prods)) return null;
-  for (const p of prods) {
-    if (!String(p?.name ?? '').trim()) continue;
-    const gauge = String(
-      p?.materialGauge ?? p?.material_gauge ?? p?.gauge ?? p?.gaugeLabel ?? ''
-    ).trim();
-    const design = String(
-      p?.materialDesign ?? p?.design ?? p?.materialColor ?? p?.colour ?? p?.color ?? ''
-    ).trim();
-    if (gauge && design) return { gauge, design };
-  }
-  return null;
+  const mk = materialKeyFromMaterialTypeId(db, typeId);
+  return mk ? String(mk).trim() : null;
 }
 
 /** Ordered design/colour strings from quotation JSON for workbook keys (deduped). */
@@ -1310,17 +1312,21 @@ function sameGaugeProducedMetresForFloorDelta(db, quote, productionJobs) {
 function quotedWorkbookFloorPpmForCommission(db, quote, productionJobs, pricingAsAtIso) {
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const sheetBranch = (branchId && String(branchId).trim()) || DEFAULT_BRANCH_ID;
-  const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
+  const quotedGd = quotedGaugeDesignForCommission(quote?.lines_json);
+  const mkFromQuote = materialPricingMaterialKeyFromQuote(db, quote);
   const ctxJob =
     (productionJobs || []).find((jj) => jobOutputMetresForUnproducedRefund(db, jj) > 0.001) ||
     (productionJobs || [])[0] ||
     null;
-  const mkQuotedCtx = ctxJob ? materialPricingMaterialKeyFromJob(db, ctxJob) : null;
+  const mkFromJob = ctxJob ? materialPricingMaterialKeyFromJob(db, ctxJob) : null;
+  // Quotation material wins (stone-coated MAT-005); job coil key is alu/aluzinc-only fallback.
+  const mkQuotedCtx = mkFromQuote || mkFromJob;
   if (quotedGd && mkQuotedCtx) {
     const f = workbookFloorPpmForQuotedGaugeDesign(db, mkQuotedCtx, quotedGd, sheetBranch, pricingAsAtIso);
     if (f != null && f > 0) return f;
   }
-  if (ctxJob) {
+  // Coil-allocated fallback only when the quote has no material type — never for stone-coated.
+  if (ctxJob && !mkFromQuote) {
     const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
     const coilGauge = producedGaugeLabelFromJobCoils(db, ctxJob.job_id) || quotedGaugeRaw;
     const lookup = listWorkbookPpmForJobAllocatedCoil(

@@ -10,7 +10,7 @@ import {
   selectPriceListRowsAsOf,
   workbookFloorPerMeterAsOf,
 } from './pricingAsOf.js';
-import { previewRefundRequest } from './controlOps.js';
+import { previewRefundRequest, maxCustomerCommissionRefundNgn } from './controlOps.js';
 
 describe('pricingAsOf', () => {
   let db;
@@ -379,5 +379,119 @@ describe('pricingAsOf', () => {
     expect(floorDelta).toBeDefined();
     // 5000 quoted list − 2000 workbook floor (Jun 2024) × 10 m. Old formula (list − quoted) was ₦0.
     expect(floorDelta.amountNgn).toBe(30_000);
+  });
+
+  it('stone-coated commission uses quote 0.24 floor not cheaper 0.20 (MD below-floor → ₦0)', () => {
+    // Trap: 0.20 floor is low enough that (7350 − 4700) × 180 = 477_000 — the live bug amount.
+    db.prepare(
+      `INSERT INTO material_pricing_sheet_rows (
+        id, material_key, gauge_mm, branch_id, design_key,
+        minimum_price_per_m_ngn, commission_ngn_per_m, updated_at_iso
+      ) VALUES
+        ('MPS-STONE-024', 'stone-coated', '0.24', 'BR-KD', 'stone-coated', 7500, 100, '2026-09-01'),
+        ('MPS-STONE-020', 'stone-coated', '0.20', 'BR-KD', 'stone-coated', 4700, 100, '2026-09-01')`
+    ).run();
+
+    const linesStone = JSON.stringify({
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.24mm',
+      materialDesign: 'stone-coated',
+      products: [
+        {
+          name: 'Roofing Sheet',
+          qty: 180,
+          unitPrice: 7350,
+          gauge: '0.24mm',
+          // Header carries design; line omits design so commission must use header / stone default.
+        },
+      ],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT INTO customers (customer_id, name) VALUES ('CUS-STONE-COMM', 'Stone commission')`
+    ).run();
+    db.prepare(
+      `INSERT INTO quotations (
+        id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status, lines_json, branch_id,
+        md_price_exception_approved_at_iso
+      ) VALUES (
+        'QT-STONE-COMM-024', 'CUS-STONE-COMM', 'Stone commission', '2026-09-01',
+        1323000, 1323000, 'Paid', 'Finished', ?, 'BR-KD', '2026-09-01T10:00:00Z'
+      )`
+    ).run(linesStone);
+    db.prepare(
+      `INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-STONE-COMM', 'CUS-STONE-COMM', 'Stone commission', 'QT-STONE-COMM-024', 1323000, 'Cleared', '2026-09-01')`
+    ).run();
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, branch_id, gauge, colour, material_type)
+       VALUES ('FG-STONE-COMM', 'Stone Roof', 0, 'm', 'BR-KD', '0.24mm', 'stone-coated', 'Stone coated')`
+    ).run();
+    // Offcut / accessories completion — no coil allocation (live stone path).
+    db.prepare(
+      `INSERT INTO production_jobs (job_id, quotation_ref, product_id, product_name, actual_meters, status, created_at_iso)
+       VALUES ('JOB-STONE-COMM', 'QT-STONE-COMM-024', 'FG-STONE-COMM', 'Stone Roof', 180, 'Completed', '2026-09-02T10:00:00Z')`
+    ).run();
+
+    const { maxNgn } = maxCustomerCommissionRefundNgn(db, 'QT-STONE-COMM-024');
+    // Quoted 7350 < stone-coated 0.24 floor 7500 → no price-above-floor credit.
+    // Must not use 0.20 floor 4700 (would yield 477_000).
+    expect(maxNgn).toBe(0);
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-STONE-COMM-024' });
+    expect(prev.ok).toBe(true);
+    const commission = prev.preview.suggestedLines.find((l) => l.category === 'Customer commission');
+    expect(commission).toBeUndefined();
+  });
+
+  it('stone-coated commission credits quoted ₦/m minus 0.24 floor when sold above floor', () => {
+    db.prepare(
+      `INSERT INTO material_pricing_sheet_rows (
+        id, material_key, gauge_mm, branch_id, design_key,
+        minimum_price_per_m_ngn, commission_ngn_per_m, updated_at_iso
+      ) VALUES
+        ('MPS-STONE-A024', 'stone-coated', '0.24', 'BR-KD', 'stone-coated', 7500, 100, '2026-09-01'),
+        ('MPS-STONE-A020', 'stone-coated', '0.20', 'BR-KD', 'stone-coated', 4700, 100, '2026-09-01')`
+    ).run();
+
+    const linesStone = JSON.stringify({
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.24mm',
+      materialDesign: 'stone-coated',
+      products: [
+        {
+          name: 'Roofing Sheet',
+          qty: 180,
+          unitPrice: 7600,
+          gauge: '0.24mm',
+        },
+      ],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT INTO customers (customer_id, name) VALUES ('CUS-STONE-ABOVE', 'Stone above floor')`
+    ).run();
+    db.prepare(
+      `INSERT INTO quotations (id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status, lines_json, branch_id)
+       VALUES ('QT-STONE-ABOVE', 'CUS-STONE-ABOVE', 'Stone above floor', '2026-09-01', 1368000, 1368000, 'Paid', 'Finished', ?, 'BR-KD')`
+    ).run(linesStone);
+    db.prepare(
+      `INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-STONE-ABOVE', 'CUS-STONE-ABOVE', 'Stone above floor', 'QT-STONE-ABOVE', 1368000, 'Cleared', '2026-09-01')`
+    ).run();
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, branch_id, gauge, colour, material_type)
+       VALUES ('FG-STONE-ABOVE', 'Stone Roof', 0, 'm', 'BR-KD', '0.24mm', 'stone-coated', 'Stone coated')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_jobs (job_id, quotation_ref, product_id, product_name, actual_meters, status, created_at_iso)
+       VALUES ('JOB-STONE-ABOVE', 'QT-STONE-ABOVE', 'FG-STONE-ABOVE', 'Stone Roof', 180, 'Completed', '2026-09-02T10:00:00Z')`
+    ).run();
+
+    const { maxNgn } = maxCustomerCommissionRefundNgn(db, 'QT-STONE-ABOVE');
+    // (7600 − 7500) × 180 — proves 0.24 floor, not 0.20.
+    expect(maxNgn).toBe(18_000);
   });
 });

@@ -23,4 +23,11 @@ describe('quotedAboveFloorCreditNgn', () => {
     expect(quotedAboveFloorCreditNgn(5000, 0, 10)).toBe(0);
     expect(quotedAboveFloorCreditNgn(5000, 4500, 0)).toBe(0);
   });
+
+  it('stone-coated MD below-floor (7350 vs 0.24 floor 7500) is ₦0 — not 0.20 floor 4700', () => {
+    expect(quotedAboveFloorCreditNgn(7350, 7500, 180)).toBe(0);
+    // Wrong gauge row (0.20) reproduces the live false commission amount.
+    expect(quotedAboveFloorCreditNgn(7350, 4700, 180)).toBe(477_000);
+    expect(quotedAboveFloorCreditNgn(7600, 7500, 180)).toBe(18_000);
+  });
 });

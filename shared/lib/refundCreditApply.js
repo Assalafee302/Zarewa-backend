@@ -496,6 +496,15 @@ export function refundFundUsageBreakdown({
 }
 
 /**
+ * Default Confirm-payment selector: never-applied refund/overpay fund only.
+ * Leftover after a prior credit apply stays searchable ({@link refundFundUsageBreakdown}.hasPartialUse).
+ * @param {{ creditAppliedNgn?: number, credit_applied_ngn?: number }} sourceOrRefund
+ */
+export function refundCreditIsFreshSource(sourceOrRefund) {
+  return refundCreditAppliedNgn(sourceOrRefund) <= 0;
+}
+
+/**
  * Cashier copy when some of this refund already covered another receipt.
  */
 export function refundFundRemainingHowToUse(p = {}) {

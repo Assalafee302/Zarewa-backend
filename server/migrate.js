@@ -7404,13 +7404,38 @@ function migrateRefundCreditApplications(db) {
         return new Set();
       }
     };
-    const cols = tableCols('refund_credit_applications');
+    let cols = tableCols('refund_credit_applications');
     if (cols.size && !cols.has('source_receipt_id')) {
       db.exec(`ALTER TABLE refund_credit_applications ADD COLUMN source_receipt_id TEXT`);
       db.exec(
         `CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_receipt
            ON refund_credit_applications(source_receipt_id)`
       );
+      cols = tableCols('refund_credit_applications');
+    }
+    const reverseCols = [
+      ['reversed_at_iso', 'TEXT'],
+      ['reversed_by_user_id', 'TEXT'],
+      ['reversed_by_name', 'TEXT'],
+      ['reverse_reason', 'TEXT'],
+      ['released_for_refund_id', 'TEXT'],
+    ];
+    for (const [col, typ] of reverseCols) {
+      if (cols.size && !cols.has(col)) {
+        try {
+          db.exec(`ALTER TABLE refund_credit_applications ADD COLUMN ${col} ${typ}`);
+        } catch {
+          /* concurrent migrate / already present */
+        }
+      }
+    }
+    try {
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_released_for
+           ON refund_credit_applications(released_for_refund_id)`
+      );
+    } catch {
+      /* ignore */
     }
   } catch {
     /* ignore — best-effort, older hosts without information_schema/PRAGMA support */

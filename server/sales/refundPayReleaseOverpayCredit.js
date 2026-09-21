@@ -105,6 +105,10 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
       actor: opts.actor,
       note: noteBit,
       dateISO,
+      releasedForRefundId: payingRefundId || undefined,
+      reverseReason: payingRefundId
+        ? `Confirm-payment credit of ₦${roundMoney(app.amountNgn).toLocaleString('en-NG')} on ${String(app.targetQuotationRef || '').trim() || 'quotation'} was released so overpayment refund ${payingRefundId} could be paid from till/bank. Re-confirm bank/cash on this quotation if the customer still owes.`
+        : noteBit,
     });
     if (!rev.ok && rev.code !== 'ALREADY_REVERSED') {
       return {
@@ -121,6 +125,8 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
         targetQuotationRef: app.targetQuotationRef || rev.targetQuotationRef || null,
         sourceReceiptId: app.sourceReceiptId || null,
         refundId: app.refundId || rev.refundId || null,
+        releasedForRefundId: rev.releasedForRefundId || payingRefundId || null,
+        reverseReason: rev.reverseReason || noteBit || null,
       });
     }
   }

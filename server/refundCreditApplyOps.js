@@ -536,6 +536,8 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     targetBlocksExternalCredit: Boolean(blockingOnTarget),
     blockingRefundId: blockingOnTarget?.refund_id || null,
     statusReportLabel: REFUND_CREDIT_CONFIRMATION_STATUS,
+    /** Why this quotation’s paid balance came back — confirm-payment credit was undone for a till/bank refund payout. */
+    priorConfirmPaymentReleases: listPriorConfirmPaymentReleasesForTarget(db, target),
   });
 }
 
@@ -848,7 +850,14 @@ export function refundTreasuryPaidNgn(db, refundId) {
  *
  * @param {import('better-sqlite3').Database} db
  * @param {string} applicationId
- * @param {{ actor?: object, note?: string, dateISO?: string, alreadyInTransaction?: boolean }} [payload]
+ * @param {{
+ *   actor?: object,
+ *   note?: string,
+ *   dateISO?: string,
+ *   alreadyInTransaction?: boolean,
+ *   releasedForRefundId?: string,
+ *   reverseReason?: string,
+ * }} [payload]
  */
 export function reverseRefundCreditApplication(db, applicationId, payload = {}) {
   const appId = String(applicationId || '').trim();
@@ -880,7 +889,14 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
   const sourceQ = String(app.source_quotation_ref || '').trim();
   const refundId = String(app.refund_id || '').trim();
   const bid = String(app.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const noteBit = String(payload.note || '').trim();
+  const releasedForRefundId = String(payload.releasedForRefundId || '').trim();
+  const noteBit = String(payload.note || payload.reverseReason || '').trim();
+  const reverseReason =
+    String(payload.reverseReason || '').trim() ||
+    (releasedForRefundId
+      ? `Confirm-payment credit of ₦${amt.toLocaleString('en-NG')} on ${target || 'quotation'} was released so overpayment refund ${releasedForRefundId} could be paid from till/bank. Re-confirm bank/cash on this quotation if the customer still owes.`
+      : noteBit ||
+        `Confirm-payment credit of ₦${amt.toLocaleString('en-NG')} on ${target || 'quotation'} was reversed. Re-confirm bank/cash if the customer still owes.`);
 
   const already = originalRef
     ? db
@@ -917,7 +933,7 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
             createdByUserId: actorId(actor),
             createdByName: actorName(actor),
             note: `Reverse refund fund ${appId}: ₦${amt.toLocaleString('en-NG')} off ${target}${
-              noteBit ? ` — ${noteBit}` : ''
+              reverseReason ? ` — ${reverseReason}` : ''
             }.`,
             atISO: atIso,
           });
@@ -934,7 +950,7 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
           createdByUserId: actorId(actor),
           createdByName: actorName(actor),
           note: `Reverse refund fund ${appId}: ₦${amt.toLocaleString('en-NG')} off ${target}${
-            noteBit ? ` — ${noteBit}` : ''
+            reverseReason ? ` — ${reverseReason}` : ''
           }.`,
           atISO: atIso,
         });
@@ -1028,10 +1044,31 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
         );
       }
 
-      db.prepare(`UPDATE refund_credit_applications SET status = ? WHERE application_id = ?`).run(
-        REFUND_CREDIT_REVERSED_STATUS,
-        appId
-      );
+      try {
+        db.prepare(
+          `UPDATE refund_credit_applications
+           SET status = ?,
+               reversed_at_iso = ?,
+               reversed_by_user_id = ?,
+               reversed_by_name = ?,
+               reverse_reason = ?,
+               released_for_refund_id = ?
+           WHERE application_id = ?`
+        ).run(
+          REFUND_CREDIT_REVERSED_STATUS,
+          atIso,
+          actorId(actor),
+          actorName(actor),
+          reverseReason,
+          releasedForRefundId || null,
+          appId
+        );
+      } catch {
+        db.prepare(`UPDATE refund_credit_applications SET status = ? WHERE application_id = ?`).run(
+          REFUND_CREDIT_REVERSED_STATUS,
+          appId
+        );
+      }
 
       if (target) syncQuotationPaidFromLedger(db, target);
       if (sourceQ && sourceQ !== target) syncQuotationPaidFromLedger(db, sourceQ);
@@ -1041,7 +1078,7 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
         action: 'ledger.reverse_refund_credit',
         entityKind: 'refund_credit_application',
         entityId: appId,
-        note: `Reversed ₦${amt.toLocaleString('en-NG')} refund fund off ${target}`,
+        note: reverseReason,
         details: {
           customerID: app.customer_id,
           targetQuotationRef: target,
@@ -1049,8 +1086,30 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
           refundId: refundId || null,
           amountNgn: amt,
           note: noteBit || null,
+          reverseReason,
+          releasedForRefundId: releasedForRefundId || null,
+          sourceReceiptId: app.source_receipt_id || null,
+          whyItCameBack:
+            'Quotation paid balance dropped because confirm-payment credit was undone so an overpayment refund could leave till/bank. Re-confirm cash/bank on the target quotation if still due.',
         },
       });
+
+      if (target) {
+        appendAuditLog(db, {
+          actor,
+          action: 'quotation.confirm_payment_credit_released',
+          entityKind: 'quotation',
+          entityId: target,
+          note: reverseReason,
+          details: {
+            applicationId: appId,
+            amountNgn: amt,
+            sourceQuotationRef: sourceQ || null,
+            releasedForRefundId: releasedForRefundId || null,
+            sourceReceiptId: app.source_receipt_id || null,
+          },
+        });
+      }
 
       const qAfter = target
         ? db.prepare(`SELECT total_ngn, paid_ngn, payment_status FROM quotations WHERE id = ?`).get(target)
@@ -1061,6 +1120,8 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
         targetQuotationRef: target,
         sourceQuotationRef: sourceQ || null,
         refundId: refundId || null,
+        releasedForRefundId: releasedForRefundId || null,
+        reverseReason,
         targetPaidNgn: roundMoney(qAfter?.paid_ngn),
         targetPaymentStatus: qAfter?.payment_status || null,
       };
@@ -1228,6 +1289,50 @@ export function listRefundCreditApplications(db, customerId = '', branchScope = 
     createdByName: row.created_by_name,
     branchId: row.branch_id,
     sourceReceiptId: row.source_receipt_id || null,
+    reversedAtISO: row.reversed_at_iso || null,
+    reversedByUserId: row.reversed_by_user_id || null,
+    reversedByName: row.reversed_by_name || null,
+    reverseReason: row.reverse_reason || null,
+    releasedForRefundId: row.released_for_refund_id || null,
+  }));
+}
+
+/**
+ * Confirm-payment credits that were undone on this quotation (so paid balance “came back”).
+ * Surfaced on refund-credit-eligible so cashiers know why they must re-confirm cash/bank.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} targetQuotationRef
+ */
+export function listPriorConfirmPaymentReleasesForTarget(db, targetQuotationRef) {
+  const target = String(targetQuotationRef || '').trim();
+  if (!target) return [];
+  let rows;
+  try {
+    rows = db
+      .prepare(
+        `SELECT * FROM refund_credit_applications
+         WHERE target_quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) = ?
+         ORDER BY COALESCE(reversed_at_iso, created_at_iso) DESC, application_id DESC
+         LIMIT 20`
+      )
+      .all(target, REFUND_CREDIT_REVERSED_STATUS.toLowerCase());
+  } catch {
+    return [];
+  }
+  return rows.map((row) => ({
+    applicationId: row.application_id,
+    amountNgn: roundMoney(row.amount_ngn),
+    sourceQuotationRef: row.source_quotation_ref || null,
+    sourceReceiptId: row.source_receipt_id || null,
+    releasedForRefundId: row.released_for_refund_id || null,
+    reversedAtISO: row.reversed_at_iso || null,
+    reversedByName: row.reversed_by_name || null,
+    reverseReason:
+      String(row.reverse_reason || '').trim() ||
+      `Confirm-payment credit of ₦${roundMoney(row.amount_ngn).toLocaleString('en-NG')} was released${
+        row.released_for_refund_id ? ` so refund ${row.released_for_refund_id} could be paid from till/bank` : ''
+      }. Re-confirm bank/cash if still due.`,
   }));
 }
 

@@ -688,7 +688,12 @@ CREATE TABLE IF NOT EXISTS refund_credit_applications (
   created_by_user_id TEXT,
   created_by_name TEXT,
   branch_id TEXT,
-  source_receipt_id TEXT
+  source_receipt_id TEXT,
+  reversed_at_iso TEXT,
+  reversed_by_user_id TEXT,
+  reversed_by_name TEXT,
+  reverse_reason TEXT,
+  released_for_refund_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_customer

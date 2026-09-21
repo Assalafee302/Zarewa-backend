@@ -9627,7 +9627,11 @@ export function payRefundEntry(db, refundId, payload) {
           entityKind: 'refund',
           entityId: refundId,
           note: creditReleaseNote,
-          details: { releasedOverpayCredits },
+          details: {
+            releasedOverpayCredits,
+            whyItCameBack:
+              'Target quotation(s) may show unpaid again because confirm-payment credit was released so this overpayment refund could leave till/bank. Re-confirm bank/cash on those quotations if still due.',
+          },
         });
       }
       if (adminMayPayUncleared && heldNetNgn > 0) {

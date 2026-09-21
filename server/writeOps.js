@@ -1602,6 +1602,37 @@ export function syncAccountsPayableFromPurchaseOrder(db, poID) {
   }
 }
 
+/** Auto AP rows the Purchases desk synthesizes when `accounts_payable` has no invoice yet. */
+export const AUTO_AP_ID_PREFIX = 'AP-PO-';
+
+export function purchaseOrderIdFromAutoApId(apId) {
+  const id = String(apId || '').trim();
+  if (!id.startsWith(AUTO_AP_ID_PREFIX)) return '';
+  return id.slice(AUTO_AP_ID_PREFIX.length).trim();
+}
+
+/**
+ * Materialize `AP-PO-{poId}` before Pay so outstanding purchases without an AP invoice still settle.
+ * @returns {{ ok: true, row: object } | { ok: false, error: string }}
+ */
+export function ensureAccountsPayableRow(db, apId) {
+  const id = String(apId || '').trim();
+  if (!id) return { ok: false, error: 'Payable not found.' };
+  let row = db.prepare(`SELECT * FROM accounts_payable WHERE ap_id = ?`).get(id);
+  if (row) return { ok: true, row };
+  const poID = purchaseOrderIdFromAutoApId(id);
+  if (!poID) return { ok: false, error: 'Payable not found.' };
+  const po = db.prepare(`SELECT po_id FROM purchase_orders WHERE po_id = ?`).get(poID);
+  if (!po) return { ok: false, error: 'Payable not found.' };
+  syncAccountsPayableFromPurchaseOrder(db, poID);
+  row = db.prepare(`SELECT * FROM accounts_payable WHERE ap_id = ?`).get(id);
+  if (!row) {
+    row = db.prepare(`SELECT * FROM accounts_payable WHERE po_ref = ? ORDER BY ap_id LIMIT 1`).get(poID);
+  }
+  if (!row) return { ok: false, error: 'Payable not found.' };
+  return { ok: true, row };
+}
+
 /**
  * Replace PO header and line rows. For each line_key that already existed, qty_received is carried
  * forward (capped by the new qty_ordered) so GRN history is not wiped.
@@ -9078,8 +9109,10 @@ export function payPaymentRequest(db, requestID, payload) {
 }
 
 export function payAccountsPayable(db, apId, payload) {
-  const row = db.prepare(`SELECT * FROM accounts_payable WHERE ap_id = ?`).get(apId);
-  if (!row) return { ok: false, error: 'Payable not found.' };
+  const ensured = ensureAccountsPayableRow(db, apId);
+  if (!ensured.ok) return ensured;
+  const row = ensured.row;
+  apId = row.ap_id;
   let poBranchId = null;
   if (row.po_ref) {
     const po = db.prepare(`SELECT po_id, branch_id FROM purchase_orders WHERE po_id = ?`).get(row.po_ref);

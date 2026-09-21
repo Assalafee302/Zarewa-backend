@@ -4,7 +4,7 @@ import { buildWorkspaceRevision } from './workspaceRevision.js';
 import { buildBootstrap } from './bootstrap.js';
 import { buildSalesDomainSnapshot, buildFinanceDomainSnapshot, buildProcurementDomainSnapshot } from './domainBootstrap.js';
 import { jsonWeakEtag } from './httpEtag.js';
-import { insertAssociatedStaff, insertSupplier } from './writeOps.js';
+import { insertAssociatedStaff, insertSupplier, ensureAccountsPayableRow, purchaseOrderIdFromAutoApId } from './writeOps.js';
 import { mergeOpenAccountsPayableWithPurchaseOrders } from './readModel.js';
 
 function mysqlAvailable() {
@@ -23,6 +23,13 @@ describe('httpEtag', () => {
   it('jsonWeakEtag is deterministic', () => {
     const payload = { ok: true, n: 1 };
     expect(jsonWeakEtag(payload)).toBe(jsonWeakEtag(payload));
+  });
+});
+
+describe('purchaseOrderIdFromAutoApId', () => {
+  it('strips the AP-PO- prefix used by synthesized payables', () => {
+    expect(purchaseOrderIdFromAutoApId('AP-PO-PO-KD-26-0001')).toBe('PO-KD-26-0001');
+    expect(purchaseOrderIdFromAutoApId('AP-2026-002')).toBe('');
   });
 });
 
@@ -175,6 +182,23 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(snap.accountsPayable.some((a) => a.poRef === 'PO-MD-1' && a.outstandingNgn === 100_000)).toBe(
       true
     );
+    db.close();
+  });
+
+  it('ensureAccountsPayableRow creates AP-PO row from an unpaid purchase order', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    insertSupplier(db, { supplierID: 'S1', name: 'Supplier 1' });
+    db.exec(`
+      INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id, supplier_paid_ngn)
+      VALUES ('PO-PAY-1', 'S1', 'Supplier 1', '2026-07-01', 'Approved', 'BR-KD', 0);
+      INSERT INTO purchase_order_lines (po_id, line_key, product_id, product_name, qty_ordered, qty_received, unit_price_ngn)
+      VALUES ('PO-PAY-1', 'L1', 'P1', 'Coil', 10, 0, 10000);
+    `);
+    expect(db.prepare(`SELECT ap_id FROM accounts_payable WHERE ap_id = 'AP-PO-PO-PAY-1'`).get()).toBeFalsy();
+    const ensured = ensureAccountsPayableRow(db, 'AP-PO-PO-PAY-1');
+    expect(ensured.ok).toBe(true);
+    expect(ensured.row.ap_id).toBe('AP-PO-PO-PAY-1');
+    expect(Number(ensured.row.amount_ngn)).toBe(100_000);
     db.close();
   });
 

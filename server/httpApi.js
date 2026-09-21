@@ -10394,12 +10394,14 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/accounts-payable/:apId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
-      const apRow = db.prepare(`SELECT po_ref FROM accounts_payable WHERE ap_id = ?`).get(req.params.apId);
+      const ensured = write.ensureAccountsPayableRow(db, req.params.apId);
+      if (!ensured.ok) return res.status(400).json({ ok: false, error: ensured.error });
+      const apRow = ensured.row;
       if (apRow?.po_ref) {
         const poGate = assertPurchaseOrderIdInWorkspace(db, req, apRow.po_ref);
         if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
       }
-      const r = write.payAccountsPayable(db, req.params.apId, {
+      const r = write.payAccountsPayable(db, apRow.ap_id, {
         ...(req.body || {}),
         createdBy: req.user.displayName,
         actor: req.user,

@@ -167,6 +167,20 @@ export function quotationOverpaymentResidualNgn({
 }
 
 /**
+ * How much overpayment residual a till/bank payout must cover.
+ * Multi-reason refunds only consume residual for the Overpayment calculation line —
+ * other categories (unproduced, transport, commission, etc.) are independent entitlements.
+ * Overpayment-only (or reason says overpay with no Overpayment line) still needs the full payout.
+ *
+ * @param {{ overpayLineNgn?: number, payoutAmountNgn?: number }} p
+ */
+export function overpayResidualNeededForPayoutNgn({ overpayLineNgn = 0, payoutAmountNgn = 0 } = {}) {
+  const overpayLine = roundRefundMoney(overpayLineNgn);
+  if (overpayLine > 0) return overpayLine;
+  return roundRefundMoney(payoutAmountNgn);
+}
+
+/**
  * Sum of non-overpayment suggested/entered lines (independent category entitlements).
  * @param {Array<{ category?: string, amountNgn?: number }>} suggestedLines
  */

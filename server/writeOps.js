@@ -183,7 +183,7 @@ import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
-import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
 import {
@@ -201,7 +201,6 @@ import {
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
 import {
-  overpayPayoutSettledErrorPayload,
   quotationOverpayResidualExcludingRefund,
   releaseSourceQuoteOverpayCreditsForPayout,
 } from './sales/refundPayReleaseOverpayCredit.js';
@@ -213,6 +212,7 @@ import { refundCashierPayRelaxed } from './financeFeatureFlags.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi, refundRequestIsPriceConcession } from '../shared/refundConstants.js';
 import {
+  overpayResidualNeededForPayoutNgn,
   sumRefundCalculationLinesByCategoryNgn,
 } from '../shared/lib/refundQuotationMoney.js';
 import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn, tableExists } from './ap2ReceivedBasisOps.js';
@@ -9440,11 +9440,18 @@ export function payRefundEntry(db, refundId, payload) {
       overpayOnThis > 0 ||
       (Array.isArray(payoutCategories) &&
         payoutCategories.some((c) => String(c || '').toLowerCase().includes('overpay')));
-    if (isOverpayPayout) {
-      const needResidualNgn = Math.max(payoutAmountNgn, overpayOnThis);
+    // Multi-reason: only the Overpayment line needs residual for credit-release bookkeeping.
+    // After BM approval, short residual must not block till/bank — approval is the authority to pay.
+    const needResidualNgn = isOverpayPayout
+      ? overpayResidualNeededForPayoutNgn({
+          overpayLineNgn: overpayOnThis,
+          payoutAmountNgn,
+        })
+      : 0;
+    if (isOverpayPayout && needResidualNgn > 0) {
       let residual = quotationOverpayResidualExcludingRefund(db, qrefPay, refundId);
       if (needResidualNgn > residual) {
-        // Cashier insisted on till/bank: free residual (undo confirm credit + cancel unpaid conflicts).
+        // Best-effort: free residual (undo confirm credit + cancel unpaid conflicts). Do not hard-block.
         const released = releaseSourceQuoteOverpayCreditsForPayout(db, {
           sourceQuotationRef: qrefPay,
           excludeRefundId: refundId,
@@ -9456,47 +9463,16 @@ export function payRefundEntry(db, refundId, payload) {
             String(payload.paymentNote ?? payload.note ?? '').trim() ||
             `Released confirmations so ${refundId} can pay from till/bank`,
         });
-        if (!released.ok) return released;
-        releasedOverpayCredits = released.reversed || [];
-        cancelledConflictingOverpayRefunds = released.cancelledRefunds || [];
-        residual = roundMoney(released.residualNgn);
-        if (needResidualNgn > residual) {
-          return {
-            ...overpayPayoutSettledErrorPayload(db, qrefPay, residual, payoutAmountNgn, refundId),
-            releasedOverpayCredits,
-            cancelledConflictingOverpayRefunds,
-          };
+        if (released.ok) {
+          releasedOverpayCredits = released.reversed || [];
+          cancelledConflictingOverpayRefunds = released.cancelledRefunds || [];
         }
+        // BM-approved payout proceeds even if residual is still short after release.
       }
     }
 
-    const approvedForGuard = roundMoney(row.approved_amount_ngn || row.amount_ngn);
-    const payoutGuard = validateRefundFinancialGuards(db, {
-      quotationRef: qrefPay,
-      refundId: refundId,
-      amountNgn: approvedForGuard,
-      calculationLines: payoutLines,
-      reasonCategories: payoutCategories,
-      actor: payload.actor,
-      hasPermission: hasPerm,
-      phase: 'pay',
-    });
-    if (!payoutGuard.ok) {
-      return releasedOverpayCredits.length || cancelledConflictingOverpayRefunds.length
-        ? { ...payoutGuard, releasedOverpayCredits, cancelledConflictingOverpayRefunds }
-        : payoutGuard;
-    }
-
-    if (isOverpayPayout) {
-      const residualAfter = quotationOverpayResidualExcludingRefund(db, qrefPay, refundId);
-      if (payoutAmountNgn > residualAfter) {
-        return {
-          ...overpayPayoutSettledErrorPayload(db, qrefPay, residualAfter, payoutAmountNgn, refundId),
-          releasedOverpayCredits,
-          cancelledConflictingOverpayRefunds,
-        };
-      }
-    }
+    // BM already approved this amount — do not re-block cashier on live preview / residual rechecks.
+    // Credit-release above still runs best-effort so ledger residual stays honest when possible.
   }
 
   const creditReleaseNote =
@@ -12215,11 +12191,13 @@ export function unconfirmSalesReceiptFinanceClearance(db, receiptId, actor = nul
 }
 
 /**
- * Move all finance-cleared sales receipts in branch scope back to Pending clearance (treasury/ledger unchanged).
+ * Move finance-cleared sales receipts in branch scope back to Pending clearance (treasury/ledger unchanged).
+ * Prefer `bulkUnconfirmSalesReceiptsFinanceClearance` when reconfirming a month — that path also clears
+ * per-split confirm flags and reverses refund credits applied on confirm.
  * @param {import('better-sqlite3').Database} db
  * @param {string} branchScope
  * @param {object | null} actor
- * @param {{ confirmPhrase?: string }} [options]
+ * @param {{ confirmPhrase?: string, dateFrom?: string, dateTo?: string }} [options]
  */
 export function resetAllSalesReceiptFinanceClearance(db, branchScope, actor = null, options = {}) {
   const phrase = String(options.confirmPhrase || '').trim();
@@ -12229,29 +12207,43 @@ export function resetAllSalesReceiptFinanceClearance(db, branchScope, actor = nu
       error: `Type ${RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE} to confirm.`,
     };
   }
+  const dateFrom = String(options.dateFrom || '').trim().slice(0, 10);
+  const dateTo = String(options.dateTo || '').trim().slice(0, 10);
+  const dateArgs = [];
+  let dateSql = '';
+  if (dateFrom || dateTo) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      return {
+        ok: false,
+        error: 'When filtering by period, provide both dateFrom and dateTo as YYYY-MM-DD.',
+      };
+    }
+    if (dateFrom > dateTo) {
+      return { ok: false, error: 'dateFrom must be on or before dateTo.' };
+    }
+    dateSql = ` AND date_iso >= ? AND date_iso <= ?`;
+    dateArgs.push(dateFrom, dateTo);
+  }
   const b = branchWhere(db, 'sales_receipts', branchScope);
-  const countRow = db
-    .prepare(
-      `SELECT COUNT(*) AS c FROM sales_receipts WHERE 1=1${b.sql}
+  const whereSql = `${b.sql}${dateSql}
        AND finance_reconciliation_saved_at_iso IS NOT NULL
        AND TRIM(finance_reconciliation_saved_at_iso) != ''
-       AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')`
-    )
-    .get(...b.args);
+       AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')`;
+  const whereArgs = [...b.args, ...dateArgs];
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS c FROM sales_receipts WHERE 1=1${whereSql}`)
+    .get(...whereArgs);
   const resetCount = Number(countRow?.c) || 0;
   if (resetCount <= 0) {
-    return { ok: true, resetCount: 0 };
+    return { ok: true, resetCount: 0, dateFrom: dateFrom || null, dateTo: dateTo || null };
   }
   const sampleIds = db
     .prepare(
-      `SELECT id FROM sales_receipts WHERE 1=1${b.sql}
-       AND finance_reconciliation_saved_at_iso IS NOT NULL
-       AND TRIM(finance_reconciliation_saved_at_iso) != ''
-       AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')
+      `SELECT id FROM sales_receipts WHERE 1=1${whereSql}
        ORDER BY date_iso ASC, id ASC
        LIMIT 25`
     )
-    .all(...b.args)
+    .all(...whereArgs)
     .map((r) => r.id);
 
   db.prepare(
@@ -12264,11 +12256,8 @@ export function resetAllSalesReceiptFinanceClearance(db, branchScope, actor = nu
       bank_confirmed_at_iso = NULL,
       bank_confirmed_by_user_id = NULL,
       bank_received_amount_ngn = NULL
-     WHERE 1=1${b.sql}
-       AND finance_reconciliation_saved_at_iso IS NOT NULL
-       AND TRIM(finance_reconciliation_saved_at_iso) != ''
-       AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')`
-  ).run(...b.args);
+     WHERE 1=1${whereSql}`
+  ).run(...whereArgs);
 
   appendAuditLog(db, {
     actor,
@@ -12276,9 +12265,9 @@ export function resetAllSalesReceiptFinanceClearance(db, branchScope, actor = nu
     entityKind: 'sales_receipt',
     entityId: '*',
     note: `Reset finance clearance on ${resetCount} receipt(s) to Pending clearance.`,
-    details: { resetCount, sampleIds, branchScope },
+    details: { resetCount, sampleIds, branchScope, dateFrom: dateFrom || null, dateTo: dateTo || null },
   });
-  return { ok: true, resetCount, sampleIds };
+  return { ok: true, resetCount, sampleIds, dateFrom: dateFrom || null, dateTo: dateTo || null };
 }
 
 /**

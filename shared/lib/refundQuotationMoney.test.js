@@ -7,6 +7,7 @@ import {
   quotationReceiptsCoverQuoteTotal,
   quotationOverpaymentResidualNgn,
   overpaymentAlreadyRefundedNgn,
+  overpayResidualNeededForPayoutNgn,
   quotationRefundHardCapNgn,
   quotationRemainingRefundableNgn,
   validateRefundCalculationLinesNgn,
@@ -19,6 +20,15 @@ describe('refundQuotationMoney', () => {
     expect(
       quotationOverpaymentExcessNgn({ cashInNgn: 5_150_000, quoteTotalNgn: 3_934_200 })
     ).toBe(1_215_800);
+  });
+
+  it('multi-reason payout residual need uses Overpayment line only', () => {
+    expect(
+      overpayResidualNeededForPayoutNgn({ overpayLineNgn: 15_000, payoutAmountNgn: 201_000 })
+    ).toBe(15_000);
+    expect(
+      overpayResidualNeededForPayoutNgn({ overpayLineNgn: 0, payoutAmountNgn: 47_450 })
+    ).toBe(47_450);
   });
 
   it('blocks when quotation total is more than receipts', () => {

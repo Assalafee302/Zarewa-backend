@@ -22,6 +22,10 @@ import {
   listCancelableConflictingOverpayRefunds,
   quotationOverpayResidualExcludingRefund,
 } from './refundPayReleaseOverpayCredit.js';
+import {
+  overpayResidualNeededForPayoutNgn,
+  sumRefundCalculationLinesByCategoryNgn,
+} from '../../shared/lib/refundQuotationMoney.js';
 
 export const REFUND_STATUS_PARTIALLY_PAID = 'Partially paid';
 
@@ -512,15 +516,37 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
 
   /** When confirm-payment credit or other unpaid overpay refunds ate residual, till pay will free them. */
   let overpaymentResidualNgn = null;
+  let overpayResidualNeededNgn = 0;
   let releasableOverpayCreditApplications = [];
   let cancelableConflictingOverpayRefunds = [];
   const qrefSettle = String(row.quotation_ref || row.quotationRef || '').trim();
+  let overpayLineNgn = 0;
+  try {
+    const rawLines = row.calculation_lines_json ?? row.calculationLinesJson ?? row.calculationLines;
+    const parsed =
+      typeof rawLines === 'string' && rawLines.trim()
+        ? JSON.parse(rawLines)
+        : Array.isArray(rawLines)
+          ? rawLines
+          : [];
+    overpayLineNgn = roundMoney(
+      sumRefundCalculationLinesByCategoryNgn(Array.isArray(parsed) ? parsed : []).Overpayment
+    );
+  } catch {
+    overpayLineNgn = 0;
+  }
   const looksOverpaySettle =
+    overpayLineNgn > 0 ||
     /overpay/i.test(String(row.reason_category || row.reasonCategory || '')) ||
     /overpay/i.test(String(row.calculation_lines_json || row.calculationLinesJson || ''));
   if (needsOpenTargets && qrefSettle && tillPayableNgn > 0 && looksOverpaySettle) {
     try {
       overpaymentResidualNgn = quotationOverpayResidualExcludingRefund(db, qrefSettle, refundId);
+      // Multi-reason refunds: residual gate is the Overpayment line only, not full till payable.
+      overpayResidualNeededNgn = overpayResidualNeededForPayoutNgn({
+        overpayLineNgn,
+        payoutAmountNgn: tillPayableNgn,
+      });
       releasableOverpayCreditApplications = listActiveRefundCreditApplicationsBySourceQuotation(
         db,
         qrefSettle
@@ -531,7 +557,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
         refundId
       );
       if (
-        tillPayableNgn > overpaymentResidualNgn &&
+        overpayResidualNeededNgn > overpaymentResidualNgn &&
         (releasableOverpayCreditApplications.length > 0 ||
           cancelableConflictingOverpayRefunds.length > 0)
       ) {
@@ -540,6 +566,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
           0
         );
         const conflictIds = cancelableConflictingOverpayRefunds.map((r) => r.refundId).join(', ');
+        // Informational only — BM approval authorizes till pay; release runs automatically on pay.
         payoutBlockers.push({
           code: 'REFUND_OVERPAYMENT_CREDIT_WILL_RELEASE',
           message:
@@ -552,19 +579,11 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
           action:
             'Pay from till/bank anyway — the system will undo confirmations and cancel those unpaid overpayment refunds first, then post this payout.',
         });
-      } else if (tillPayableNgn > overpaymentResidualNgn) {
-        payoutBlockers.push({
-          code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',
-          message:
-            overpaymentResidualNgn <= 0
-              ? 'Overpayment on this quotation is already fully covered by other refunds.'
-              : `Only ₦${overpaymentResidualNgn.toLocaleString('en-NG')} overpayment remains after other refunds.`,
-          action:
-            'Cancel this approved refund, or reverse the other paid overpayment refunds on this quotation first.',
-        });
       }
+      // Do not add REFUND_OVERPAYMENT_ALREADY_SETTLED after BM approval — cashier may pay the approved amount.
     } catch {
       overpaymentResidualNgn = null;
+      overpayResidualNeededNgn = 0;
       releasableOverpayCreditApplications = [];
       cancelableConflictingOverpayRefunds = [];
     }
@@ -588,7 +607,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   if (
     tillPayableNgn > 0 &&
     overpaymentResidualNgn != null &&
-    tillPayableNgn > overpaymentResidualNgn &&
+    overpayResidualNeededNgn > overpaymentResidualNgn &&
     (releasableOverpayCreditApplications.length > 0 ||
       cancelableConflictingOverpayRefunds.length > 0)
   ) {
@@ -666,7 +685,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       (releasableOverpayCreditApplications.length > 0 ||
         cancelableConflictingOverpayRefunds.length > 0) &&
       overpaymentResidualNgn != null &&
-      tillPayableNgn > overpaymentResidualNgn,
+      overpayResidualNeededNgn > overpaymentResidualNgn,
     overpaymentResidualNgn,
   });
 

@@ -341,3 +341,113 @@ describe.skipIf(!mysqlOk)('pay overpayment when residual shows only a slice left
     expect(String(other.status)).toBe('Cancelled');
   });
 });
+
+describe.skipIf(!mysqlOk)('multi-reason refund pay uses Overpayment line residual only', () => {
+  let db;
+  let treasuryAccountId;
+
+  beforeAll(() => {
+    db = createDatabase(':memory:');
+    // Quote ₦485k, cash in ₦500k → overpay ₦15k. Multi-reason refund ₦201k (overpay 15k + commission 186k).
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 10, unitPrice: 48500 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO app_users (id, username, display_name, password_hash, role_key, created_at_iso)
+      VALUES ('u-fin-multi', 'fin-multi', 'Finance One', 'hash', 'finance', '2026-01-01T00:00:00.000Z');
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-OP-MULTI', 'Multi Reason Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-OP-MULTI', 'CUS-OP-MULTI', 'Multi Reason Customer', 485000, 500000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-09-01', '${DEFAULT_BRANCH_ID}');
+    `);
+    const treasury = db
+      .prepare(
+        `INSERT INTO treasury_accounts (name, account_type, opening_balance_ngn, branch_id, is_active)
+         VALUES (?, 'Cash', 5_000_000, ?, 1)`
+      )
+      .run('Till multi', DEFAULT_BRANCH_ID);
+    treasuryAccountId = Number(treasury.lastInsertRowid);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-OP-MULTI',
+          customerName: 'Multi Reason Customer',
+          amountNgn: 485_000,
+          quotationRef: 'QT-OP-MULTI',
+          atISO: '2026-09-01T12:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-OP-MULTI',
+          customerName: 'Multi Reason Customer',
+          amountNgn: 15_000,
+          quotationRef: 'QT-OP-MULTI',
+          atISO: '2026-09-01T12:00:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    syncQuotationPaidFromLedger(db, 'QT-OP-MULTI');
+  }, 120_000);
+
+  afterAll(() => {
+    db?.close();
+  });
+
+  it('pays ₦201k when overpayment residual is only ₦15k (other reasons are not overpay)', () => {
+    const calcLines = [
+      { category: 'Overpayment', amountNgn: 15_000, label: 'Overpay' },
+      { category: 'Customer commission', amountNgn: 186_000, label: 'Commission' },
+    ];
+    db.prepare(
+      `INSERT INTO customer_refunds (
+         refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+         amount_ngn, approved_amount_ngn, status, requested_by, requested_at_iso,
+         reviewed_by, reviewed_at_iso, paid_amount_ngn, branch_id, calculation_lines_json
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      'RF-OP-MULTI',
+      'CUS-OP-MULTI',
+      'Multi Reason Customer',
+      'QT-OP-MULTI',
+      JSON.stringify(['Overpayment', 'Customer commission']),
+      'Mixed refund',
+      201_000,
+      201_000,
+      'Approved',
+      'Sales',
+      '2026-09-04T10:00:00.000Z',
+      'Manager',
+      '2026-09-04T11:00:00.000Z',
+      0,
+      DEFAULT_BRANCH_ID,
+      JSON.stringify(calcLines)
+    );
+
+    expect(quotationOverpayResidualExcludingRefund(db, 'QT-OP-MULTI', 'RF-OP-MULTI')).toBe(15_000);
+
+    const paid = payRefundEntry(db, 'RF-OP-MULTI', {
+      actor: { ...actor, id: 'u-fin-multi' },
+      paidBy: 'Finance One',
+      paymentNote: 'Multi-reason till payout',
+      paidAtISO: '2026-09-21',
+      paymentLines: [{ treasuryAccountId, amountNgn: 201_000, reference: 'MON-MULTI' }],
+      workspaceBranchId: DEFAULT_BRANCH_ID,
+      workspaceViewAll: true,
+    });
+    expect(paid.ok).toBe(true);
+    expect(paid.fullyPaid).toBe(true);
+    expect(paid.code).not.toBe('REFUND_OVERPAYMENT_ALREADY_SETTLED');
+
+    const row = db
+      .prepare(`SELECT status, paid_amount_ngn FROM customer_refunds WHERE refund_id = 'RF-OP-MULTI'`)
+      .get();
+    expect(String(row.status)).toBe('Paid');
+    expect(Number(row.paid_amount_ngn)).toBe(201_000);
+  });
+});

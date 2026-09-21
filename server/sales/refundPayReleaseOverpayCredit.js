@@ -336,18 +336,18 @@ export function releaseSourceQuoteOverpayCreditsForPayout(db, opts = {}) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} sourceQuotationRef
  * @param {number} residualNgn
- * @param {number} payoutAmountNgn
+ * @param {number} overpayClaimNgn — overpayment portion that must fit residual (not full multi-reason payout)
  * @param {string} [excludeRefundId]
  */
 export function overpayPayoutSettledErrorPayload(
   db,
   sourceQuotationRef,
   residualNgn,
-  payoutAmountNgn,
+  overpayClaimNgn,
   excludeRefundId = ''
 ) {
   const residual = roundMoney(residualNgn);
-  const payout = roundMoney(payoutAmountNgn);
+  const claim = roundMoney(overpayClaimNgn);
   const apps = listActiveRefundCreditApplicationsBySourceQuotation(db, sourceQuotationRef);
   const conflicting = listCancelableConflictingOverpayRefunds(
     db,
@@ -364,8 +364,8 @@ export function overpayPayoutSettledErrorPayload(
     ok: false,
     code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',
     error:
-      excessNgn > 0 && payout > excessNgn
-        ? `This quotation only has ₦${excessNgn.toLocaleString('en-NG')} cash above the quote total (cash in ₦${cashInNgn.toLocaleString('en-NG')} − quote ₦${quoteTotalNgn.toLocaleString('en-NG')}). Cannot pay ₦${payout.toLocaleString('en-NG')} as overpayment.`
+      excessNgn > 0 && claim > excessNgn
+        ? `This quotation only has ₦${excessNgn.toLocaleString('en-NG')} cash above the quote total (cash in ₦${cashInNgn.toLocaleString('en-NG')} − quote ₦${quoteTotalNgn.toLocaleString('en-NG')}). Cannot pay ₦${claim.toLocaleString('en-NG')} as overpayment.`
         : residual <= 0
           ? 'Overpayment on this quotation is already fully refunded. Paying this would double-pay the customer.'
           : `Only ₦${residual.toLocaleString('en-NG')} overpayment remains after prior refunds on this quotation.`,
@@ -373,14 +373,14 @@ export function overpayPayoutSettledErrorPayload(
     overpaymentExcessNgn: excessNgn,
     cashInNgn,
     quoteTotalNgn,
-    payoutAmountNgn: payout,
+    payoutAmountNgn: claim,
     releasableCreditApplications: apps,
     cancelableConflictingRefunds: conflicting,
     hint:
       apps.length > 0 || conflicting.length > 0
         ? 'Retry pay — the system will undo confirm-payment credit and cancel other unpaid overpayment refunds on this quotation first, then post till/bank.'
-        : excessNgn > 0 && payout > excessNgn
-          ? 'Reduce the payout to the true overpayment, or cancel this refund if the customer was already paid outside the ERP.'
+        : excessNgn > 0 && claim > excessNgn
+          ? 'Reduce the Overpayment line to the true excess, or cancel this refund if the customer was already paid outside the ERP.'
           : 'Another refund on this quotation already paid out this overpayment. Cancel this approved refund if the customer was already paid another way.',
   };
 }

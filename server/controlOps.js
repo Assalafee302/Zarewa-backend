@@ -3515,7 +3515,11 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         includeCustomerCommission: requestedCats.includes('Customer commission'),
       });
       if (mdDiscountRefundSum > 0 || requestedCats.includes('MD discount')) {
-        const mdMetres = Number(previewForCaps.preview?.quotedMeters) || 0;
+        // Same basis as agent commission: produced metres only (unproduced is a separate line).
+        const mdMetres =
+          Number(previewForCaps.preview?.mdDiscountMetres) ||
+          Number(previewForCaps.preview?.producedMetersForUnproduced) ||
+          0;
         const mdPerM = validateMdDiscountPerMetreLines(
           calcLinesRaw,
           mdMetres,
@@ -5550,7 +5554,8 @@ export function previewRefundRequest(db, payload) {
       remainingRefundableNgn,
       refundHardCapNgn,
       quotedMeters,
-      mdDiscountMetres: quotedMeters,
+      // MD discount ₦/m × produced metres (unproduced shortfall is claimed separately).
+      mdDiscountMetres: producedMetersForUnproduced,
       actualMeters,
       coilProducedMeters,
       producedMetersForUnproduced,

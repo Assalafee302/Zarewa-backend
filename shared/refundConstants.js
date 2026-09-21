@@ -3,7 +3,7 @@
  * Frontend copies via `npm run sync:shared` → src/shared/refundConstants.js
  * Bump when preview suggestion rules change materially (stored on refund snapshot).
  */
-export const REFUND_PREVIEW_VERSION = 13;
+export const REFUND_PREVIEW_VERSION = 14;
 
 /**
  * Refund quotation picker:
@@ -36,7 +36,7 @@ export function quotationMeetsRefundPickerFloor(row) {
   const hasCategories = Array.isArray(cats) && cats.length > 0;
   if (!hasCategories) return false;
   if (remaining < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
-  // MD discount is ₦/m × quoted metres (no automatic preview total). Remaining cash is the floor.
+  // MD discount is ₦/m × produced metres (no automatic preview total). Remaining cash is the floor.
   if (refundCategoriesRequireMdApproval(cats)) return true;
   if (suggested < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
   return true;

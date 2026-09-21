@@ -92,7 +92,9 @@ export function buildUnproducedMetresRefundLine(metres, pricePerMeterNgn, { trim
 
 /**
  * MD discount is the same shape as commission: applicant enters ₦ per metre,
- * total = that rate × quoted (bought) metres. 120m × ₦100/m = ₦12,000.
+ * total = that rate × produced metres (not quoted). Unproduced shortfall is a
+ * separate line, so concession ₦/m must not re-apply to metres never produced.
+ * Example: 100 m produced × ₦100/m = ₦10,000.
  */
 export function mdDiscountRefundNgn(ngnPerMeter, metres) {
   const ppm = Number(ngnPerMeter);
@@ -121,7 +123,7 @@ function mdDiscountMetresText(metres) {
 }
 
 /**
- * @param {number} metres quoted / bought metres
+ * @param {number} metres produced metres (same basis as agent commission)
  * @param {number|string} ngnPerMeter applicant ₦/m (e.g. 100)
  */
 export function buildMdDiscountRefundLine(metres, ngnPerMeter) {
@@ -162,13 +164,14 @@ export function buildMdDiscountRefundLine(metres, ngnPerMeter) {
 }
 
 /**
- * MD discount lines must be ₦/m × quoted metres (not a free lump sum).
+ * MD discount lines must be ₦/m × produced metres (not a free lump sum).
+ * Unproduced shortfall is claimed separately — do not multiply by quoted metres.
  * @param {Array<{ category?: string, label?: string, amountNgn?: number, mdDiscountNgnPerM?: number, mdDiscountMetres?: number, include?: boolean }>} lines
- * @param {number} quotedMetres
+ * @param {number} producedMetres
  * @param {number} [toleranceNgn]
  */
-export function validateMdDiscountPerMetreLines(lines, quotedMetres, toleranceNgn = REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
-  const mdMetres = Number(quotedMetres);
+export function validateMdDiscountPerMetreLines(lines, producedMetres, toleranceNgn = REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+  const mdMetres = Number(producedMetres);
   const included = (Array.isArray(lines) ? lines : []).filter((l) => {
     if (l?.include === false) return false;
     return String(l?.category || '').trim() === 'MD discount';
@@ -177,7 +180,7 @@ export function validateMdDiscountPerMetreLines(lines, quotedMetres, toleranceNg
   if (!Number.isFinite(mdMetres) || mdMetres <= 0.001) {
     return {
       ok: false,
-      error: 'MD discount is ₦ per metre × quoted metres. This quotation has no quoted roofing metres.',
+      error: 'MD discount is ₦ per metre × produced metres. This quotation has no produced roofing metres yet.',
     };
   }
   const tol = Math.max(0, roundRefundLineMoney(toleranceNgn));
@@ -187,14 +190,14 @@ export function validateMdDiscountPerMetreLines(lines, quotedMetres, toleranceNg
     if (!(ppm > 0)) {
       return {
         ok: false,
-        error: 'MD discount requires ₦ per metre (e.g. 100). Total is that rate × quoted metres, same as commission.',
+        error: 'MD discount requires ₦ per metre (e.g. 100). Total is that rate × produced metres, same as commission.',
       };
     }
     const expected = mdDiscountRefundNgn(ppm, mdMetres);
     if (expected <= 0) {
       return {
         ok: false,
-        error: 'MD discount ₦ per metre × quoted metres must be a positive amount.',
+        error: 'MD discount ₦ per metre × produced metres must be a positive amount.',
       };
     }
     const amt = roundRefundLineMoney(line?.amountNgn);
@@ -203,7 +206,7 @@ export function validateMdDiscountPerMetreLines(lines, quotedMetres, toleranceNg
         ok: false,
         error: `MD discount must be ₦${roundRefundLineMoney(ppm).toLocaleString(
           'en-NG'
-        )}/m × ${mdDiscountMetresText(mdMetres)} m quoted = ₦${expected.toLocaleString('en-NG')}.`,
+        )}/m × ${mdDiscountMetresText(mdMetres)} m produced = ₦${expected.toLocaleString('en-NG')}.`,
       };
     }
   }

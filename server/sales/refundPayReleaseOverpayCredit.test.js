@@ -241,3 +241,103 @@ describe.skipIf(!mysqlOk)('pay overpayment refund cancels conflicting unpaid ove
     expect(Number(keep.paid_amount_ngn)).toBe(47_450);
   });
 });
+
+describe.skipIf(!mysqlOk)('pay overpayment when residual shows only a slice left (₦8,925 case)', () => {
+  let db;
+  let treasuryAccountId;
+
+  beforeAll(() => {
+    db = createDatabase(':memory:');
+    // Excess ₦56,375: paying ₦47,450 leaves residual ₦8,925 while a competing Approved claim reserves ₦47,450.
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 10, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO app_users (id, username, display_name, password_hash, role_key, created_at_iso)
+      VALUES ('u-fin-slice', 'fin-slice', 'Finance One', 'hash', 'finance', '2026-01-01T00:00:00.000Z');
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-OP-SLICE', 'Slice Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-OP-SLICE', 'CUS-OP-SLICE', 'Slice Customer', 100000, 156375, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-09-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-OP-SLICE-DST', 'CUS-OP-SLICE', 'Slice Customer', 40000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-09-02', '${DEFAULT_BRANCH_ID}');
+    `);
+    const treasury = db
+      .prepare(
+        `INSERT INTO treasury_accounts (name, account_type, opening_balance_ngn, branch_id, is_active)
+         VALUES (?, 'Cash', 5_000_000, ?, 1)`
+      )
+      .run('Till slice', DEFAULT_BRANCH_ID);
+    treasuryAccountId = Number(treasury.lastInsertRowid);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-OP-SLICE',
+          customerName: 'Slice Customer',
+          amountNgn: 100_000,
+          quotationRef: 'QT-OP-SLICE',
+          atISO: '2026-09-01T12:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-OP-SLICE',
+          customerName: 'Slice Customer',
+          amountNgn: 56_375,
+          quotationRef: 'QT-OP-SLICE',
+          atISO: '2026-09-01T12:00:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    syncQuotationPaidFromLedger(db, 'QT-OP-SLICE');
+  }, 120_000);
+
+  afterAll(() => {
+    db?.close();
+  });
+
+  it('cancels the competing ₦47,450 claim so till pay of ₦47,450 succeeds (was blocked as only ₦8,925 left)', () => {
+    insertApprovedOverpayRefund(db, {
+      refundId: 'RF-OP-SLICE-OTHER',
+      customerId: 'CUS-OP-SLICE',
+      quotationRef: 'QT-OP-SLICE',
+      reason: 'Competing overpay',
+    });
+    // Competing claim already "used" as credit on another quote — old settle check blocked cancel.
+    db.prepare(
+      `UPDATE customer_refunds SET credit_applied_ngn = 10000 WHERE refund_id = 'RF-OP-SLICE-OTHER'`
+    ).run();
+    insertApprovedOverpayRefund(db, {
+      refundId: 'RF-OP-SLICE-PAY',
+      customerId: 'CUS-OP-SLICE',
+      quotationRef: 'QT-OP-SLICE',
+      reason: 'Customer already paid outside ERP',
+    });
+
+    expect(quotationOverpayResidualExcludingRefund(db, 'QT-OP-SLICE', 'RF-OP-SLICE-PAY')).toBe(8_925);
+
+    const paid = payRefundEntry(db, 'RF-OP-SLICE-PAY', {
+      actor: { ...actor, id: 'u-fin-slice' },
+      paidBy: 'Finance One',
+      paymentNote: 'Moniepoint already sent',
+      paidAtISO: '2026-09-21',
+      paymentLines: [{ treasuryAccountId, amountNgn: 47_450, reference: 'MON-SLICE' }],
+      workspaceBranchId: DEFAULT_BRANCH_ID,
+      workspaceViewAll: true,
+    });
+    expect(paid.ok).toBe(true);
+    expect(paid.fullyPaid).toBe(true);
+    expect(paid.cancelledConflictingOverpayRefunds?.some((r) => r.refundId === 'RF-OP-SLICE-OTHER')).toBe(
+      true
+    );
+
+    const other = db
+      .prepare(`SELECT status FROM customer_refunds WHERE refund_id = 'RF-OP-SLICE-OTHER'`)
+      .get();
+    expect(String(other.status)).toBe('Cancelled');
+  });
+});

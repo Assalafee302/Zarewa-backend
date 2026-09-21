@@ -733,7 +733,13 @@ export function validateRefundFinancialGuards(db, opts = {}) {
     overpayResidualRaw != null
       ? roundMoney(overpayResidualRaw)
       : roundMoney(preview.preview?.overpaymentExcessNgn);
-  if (overpayOnThis > 0 && overpayOnThis > overpayResidual + REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+  // Pay path frees confirm-credit / cancels conflicting unpaid overpays before this guard runs.
+  // Re-checking residual here double-blocked cashiers recording an already-approved till/bank payout.
+  if (
+    phase !== 'pay' &&
+    overpayOnThis > 0 &&
+    overpayOnThis > overpayResidual + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+  ) {
     return {
       ok: false,
       code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',

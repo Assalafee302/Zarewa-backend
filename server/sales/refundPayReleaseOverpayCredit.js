@@ -28,6 +28,10 @@ function roundMoney(v) {
 }
 
 /**
+ * True payee cash already left the business for this refund (till/bank or wallet withdraw).
+ * Confirm-payment / refund-fund credit is NOT counted here — those apps are reversed during
+ * overpay pay release; counting them blocked auto-cancel of competing unpaid refunds.
+ *
  * @param {import('better-sqlite3').Database} db
  * @param {object} row
  */
@@ -66,8 +70,7 @@ function refundPayeeSettledNgn(db, row) {
   } catch {
     walletWithdrawn = 0;
   }
-  const creditApplied = roundMoney(row.credit_applied_ngn);
-  return Math.max(0, treasury + walletWithdrawn + creditApplied);
+  return Math.max(0, treasury + walletWithdrawn);
 }
 
 /**
@@ -138,8 +141,9 @@ export function listCancelableConflictingOverpayRefunds(db, quotationRef, exclud
 function cancelUnpaidOverpayRefundForPayout(db, row, opts = {}) {
   const refundId = String(row?.refund_id || '').trim();
   const status = String(row?.status || '').trim();
+  const statusLower = status.toLowerCase();
   if (!refundId) return { ok: false, error: 'Refund id required.' };
-  if (status !== 'Approved' && status !== 'Pending') {
+  if (statusLower !== 'approved' && statusLower !== 'pending') {
     return { ok: false, error: `Refund ${refundId} is ${status || 'unknown'} — cannot auto-cancel.` };
   }
   const settled = refundPayeeSettledNgn(db, row);

@@ -9441,13 +9441,14 @@ export function payRefundEntry(db, refundId, payload) {
       (Array.isArray(payoutCategories) &&
         payoutCategories.some((c) => String(c || '').toLowerCase().includes('overpay')));
     if (isOverpayPayout) {
+      const needResidualNgn = Math.max(payoutAmountNgn, overpayOnThis);
       let residual = quotationOverpayResidualExcludingRefund(db, qrefPay, refundId);
-      if (payoutAmountNgn > residual) {
+      if (needResidualNgn > residual) {
         // Cashier insisted on till/bank: free residual (undo confirm credit + cancel unpaid conflicts).
         const released = releaseSourceQuoteOverpayCreditsForPayout(db, {
           sourceQuotationRef: qrefPay,
           excludeRefundId: refundId,
-          needResidualNgn: payoutAmountNgn,
+          needResidualNgn,
           payingRefundId: refundId,
           actor: payload.actor,
           dateISO: defaultPaidDay,
@@ -9459,7 +9460,7 @@ export function payRefundEntry(db, refundId, payload) {
         releasedOverpayCredits = released.reversed || [];
         cancelledConflictingOverpayRefunds = released.cancelledRefunds || [];
         residual = roundMoney(released.residualNgn);
-        if (payoutAmountNgn > residual) {
+        if (needResidualNgn > residual) {
           return {
             ...overpayPayoutSettledErrorPayload(db, qrefPay, residual, payoutAmountNgn, refundId),
             releasedOverpayCredits,
@@ -10284,10 +10285,13 @@ export function reconcileAutoOverpayApplyForQuotation(db, quotationId, ctx, acto
 /**
  * Sales line edits are blocked while the quote is on the production register or cancelled-not-produced.
  * Operations must return the job to waiting before Sales can change the quotation.
+ * Admin/MD may edit while still on the register (same exempt roles as post-production cutting-list edits).
+ * Cancelled-not-produced stays locked for everyone — refund path only.
  */
-function assertQuotationLineEditAgainstProduction(db, quotationId) {
+function assertQuotationLineEditAgainstProduction(db, quotationId, actor = null) {
   const qid = String(quotationId || '').trim();
   if (!qid) return { ok: true };
+  const mayEditOnRegister = !editMutationRequiresSecondApproval(actor);
   const lists = db
     .prepare(
       `SELECT id, status, production_registered, production_register_ref
@@ -10306,7 +10310,11 @@ function assertQuotationLineEditAgainstProduction(db, quotationId) {
     }
     const job = linkedProductionJobForCuttingList(db, row);
     const jobStatus = job?.status;
-    if (Number(row.production_registered) && quotationLineEditBlockedByProductionStatus(jobStatus)) {
+    if (
+      !mayEditOnRegister &&
+      Number(row.production_registered) &&
+      quotationLineEditBlockedByProductionStatus(jobStatus)
+    ) {
       return {
         ok: false,
         code: 'PRODUCTION_RETURN_TO_WAITING_REQUIRED',
@@ -10358,7 +10366,7 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
     payload.materialTypeId !== undefined ||
     payload.stainSourceMaterialTypeId !== undefined;
   if (materialHeaderTouched) {
-    const prodBlock = assertQuotationLineEditAgainstProduction(db, quotationId);
+    const prodBlock = assertQuotationLineEditAgainstProduction(db, quotationId, actor);
     if (!prodBlock.ok) {
       const err = new Error(prodBlock.error);
       err.code = prodBlock.code;

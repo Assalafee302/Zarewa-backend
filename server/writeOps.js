@@ -10830,16 +10830,34 @@ export function deleteCuttingListIfAllowed(db, cuttingListId) {
     .prepare(`SELECT id, status, production_registered, production_register_ref FROM cutting_lists WHERE id = ?`)
     .get(cid);
   if (!row) return { ok: false, error: 'Cutting list not found.' };
-  // Cancelled-not-produced keeps production_registered for audit; still allow delete (cleanup).
-  if (!isCuttingListCancelledNotProduced(db, row)) {
-    const hasProduction =
-      Number(row.production_registered) > 0 ||
-      String(row.status || '').trim().toLowerCase() === 'finished' ||
-      Boolean(String(row.production_register_ref || '').trim());
-    if (hasProduction) {
-      return { ok: false, error: 'Cannot delete a cutting list that already has production activity.' };
-    }
+
+  const listStatus = String(row.status || '').trim().toLowerCase();
+  const jobs = db
+    .prepare(`SELECT status FROM production_jobs WHERE cutting_list_id = ?`)
+    .all(cid);
+  const jobStatuses = jobs.map((j) => String(j.status || '').trim().toLowerCase());
+  const hasBlockingJob = jobStatuses.some((st) => st === 'planned' || st === 'running' || st === 'completed');
+  const hasTerminalReleaseJob = jobStatuses.some((st) => st === 'cancelled' || st === 'returned');
+
+  // Finished / still on the queue / completed output — keep. Cancel (not produced) or admin force-recall first.
+  if (listStatus === 'finished' || hasBlockingJob) {
+    return {
+      ok: false,
+      error:
+        'Cannot delete a cutting list that already has production activity. Cancel the job (not produced) first, or ask Admin to force-recall a completed job.',
+    };
   }
+
+  // Cancel keeps production_registered for audit; Returned leaves a terminal job row — both are safe to remove.
+  if (listStatus === 'cancelled' || hasTerminalReleaseJob || isCuttingListCancelledNotProduced(db, row)) {
+    // allow delete
+  } else if (
+    Number(row.production_registered) > 0 ||
+    Boolean(String(row.production_register_ref || '').trim())
+  ) {
+    return { ok: false, error: 'Cannot delete a cutting list that already has production activity.' };
+  }
+
   db.transaction(() => {
     db.prepare(`DELETE FROM production_jobs WHERE cutting_list_id = ?`).run(cid);
     db.prepare(`DELETE FROM cutting_lists WHERE id = ?`).run(cid);

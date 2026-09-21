@@ -26,6 +26,14 @@ describe('cuttingListProductionGate', () => {
     ).toBe(true);
     expect(
       isCuttingListCancelledNotProduced(mockDb(cancelledJob), {
+        id: 'CL-1b',
+        status: 'In production',
+        production_registered: 1,
+        production_register_ref: 'J1',
+      })
+    ).toBe(true);
+    expect(
+      isCuttingListCancelledNotProduced(mockDb(cancelledJob), {
         id: 'CL-OLD',
         status: 'Waiting',
         production_registered: 0,

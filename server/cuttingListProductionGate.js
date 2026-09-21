@@ -44,8 +44,12 @@ export function isCuttingListProductionCompleted(db, row) {
  */
 export function isCuttingListCancelledNotProduced(db, row) {
   if (!row) return false;
-  if (String(row.status || '').trim() === 'Cancelled') return true;
-  if (!Number(row.production_registered)) return false;
+  if (String(row.status || '').trim().toLowerCase() === 'cancelled') return true;
+  const registered = Number(row.production_registered) > 0;
+  const ref = String(row.production_register_ref || '').trim();
+  // Historical cancelled job rows may still exist after return-to-waiting; only treat as
+  // cancelled-not-produced while the list is still marked on the register (or has a ref).
+  if (!registered && !ref) return false;
   const job = linkedProductionJobForCuttingList(db, row);
   return Boolean(job) && isCancelledNotProducedStatus(job.status);
 }

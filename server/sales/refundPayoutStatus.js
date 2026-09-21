@@ -16,8 +16,9 @@ import {
 import { refundCashierPayRelaxed } from '../financeFeatureFlags.js';
 import { refundTillPayableNgn } from '../refundHandlers.js';
 import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../../shared/lib/refundUnclearedPayoutHold.js';
-import { refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
+import { listActiveRefundCreditApplicationsBySourceQuotation, refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
 import { refundCreditSettledNgn } from './refundCreditLedger.js';
+import { quotationOverpayResidualExcludingRefund } from './refundPayReleaseOverpayCredit.js';
 
 export const REFUND_STATUS_PARTIALLY_PAID = 'Partially paid';
 
@@ -139,6 +140,18 @@ export function buildRefundSituationBrief(s = {}) {
     whatHappened.push(`${fmtNgn(cashOutstandingNgn)} is still owed but not payable from till right now.`);
   }
 
+  if (s.willReleaseOverpayCreditOnPay) {
+    const residual = roundMoney(s.overpaymentResidualNgn);
+    whatHappened.push(
+      residual <= 0
+        ? 'Overpayment on this quotation was already used to confirm another receipt (residual ₦0).'
+        : `Only ${fmtNgn(residual)} overpayment residual remains — the rest was used to confirm another receipt.`
+    );
+    howToResolve.push(
+      `Pay ${fmtNgn(tillPayableNgn)} from till/bank — the system will undo those confirmations first, then post payout. The other quotation may show unpaid again.`
+    );
+  }
+
   if (creditAppliedNgn > 0 && tillPayableNgn > 0) {
     howToResolve.push(
       `Pay only the leftover ${fmtNgn(tillPayableNgn)} from till/bank — do not pay the original approved total.`
@@ -173,7 +186,13 @@ export function buildRefundSituationBrief(s = {}) {
   if (s.canCancelBeforePay) {
     howToResolve.push('If nothing should be paid at all: cancel this approved refund before any payee money leaves.');
   }
-  if (tillPayableNgn > 0 && creditAppliedNgn <= 0 && heldUnclearedNgn <= 0 && walletOpenNgn <= 0) {
+  if (
+    tillPayableNgn > 0 &&
+    creditAppliedNgn <= 0 &&
+    heldUnclearedNgn <= 0 &&
+    walletOpenNgn <= 0 &&
+    !s.willReleaseOverpayCreditOnPay
+  ) {
     howToResolve.push(`Pay ${fmtNgn(tillPayableNgn)} from till/bank to the payee shown on this form.`);
   }
   if (!howToResolve.length && cashOutstandingNgn <= PAYMENT_OUTSTANDING_TOLERANCE_NGN && walletOpenNgn <= 0) {
@@ -181,7 +200,9 @@ export function buildRefundSituationBrief(s = {}) {
   }
 
   let headline = publicLabel || 'Refund payout';
-  if (creditAppliedNgn > 0 && tillPayableNgn > 0) {
+  if (s.willReleaseOverpayCreditOnPay && tillPayableNgn > 0) {
+    headline = `Ready to pay ${fmtNgn(tillPayableNgn)} — will undo confirm-payment credit first`;
+  } else if (creditAppliedNgn > 0 && tillPayableNgn > 0) {
     headline = 'Part of this refund was already used on a quotation — only the leftover is payable';
   } else if (creditAppliedNgn > 0 && cashOutstandingNgn <= PAYMENT_OUTSTANDING_TOLERANCE_NGN) {
     headline = 'Refund fund already applied — no till payout left';
@@ -200,7 +221,7 @@ export function buildRefundSituationBrief(s = {}) {
     whatHappened,
     howToResolve,
     tone:
-      creditAppliedNgn > 0 || heldUnclearedNgn > 0
+      s.willReleaseOverpayCreditOnPay || creditAppliedNgn > 0 || heldUnclearedNgn > 0
         ? 'amber'
         : tillPayableNgn > 0 || walletOpenNgn > 0
           ? 'sky'
@@ -486,6 +507,49 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     });
   }
 
+  /** When confirm-payment credit ate overpay residual, till pay will auto-undo those applies. */
+  let overpaymentResidualNgn = null;
+  let releasableOverpayCreditApplications = [];
+  const qrefSettle = String(row.quotation_ref || row.quotationRef || '').trim();
+  const looksOverpaySettle =
+    /overpay/i.test(String(row.reason_category || row.reasonCategory || '')) ||
+    /overpay/i.test(String(row.calculation_lines_json || row.calculationLinesJson || ''));
+  if (needsOpenTargets && qrefSettle && tillPayableNgn > 0 && looksOverpaySettle) {
+    try {
+      overpaymentResidualNgn = quotationOverpayResidualExcludingRefund(db, qrefSettle, refundId);
+      releasableOverpayCreditApplications = listActiveRefundCreditApplicationsBySourceQuotation(
+        db,
+        qrefSettle
+      );
+      if (
+        tillPayableNgn > overpaymentResidualNgn &&
+        releasableOverpayCreditApplications.length > 0
+      ) {
+        payoutBlockers.push({
+          code: 'REFUND_OVERPAYMENT_CREDIT_WILL_RELEASE',
+          message: `Overpayment residual on this quotation is ₦${overpaymentResidualNgn.toLocaleString('en-NG')} because ₦${releasableOverpayCreditApplications
+            .reduce((s, a) => s + roundMoney(a.amountNgn), 0)
+            .toLocaleString('en-NG')} was used to confirm another receipt.`,
+          action:
+            'Pay from till/bank anyway — the system will undo those confirmations first, then post this payout. The other quotation may show unpaid again.',
+        });
+      } else if (tillPayableNgn > overpaymentResidualNgn) {
+        payoutBlockers.push({
+          code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',
+          message:
+            overpaymentResidualNgn <= 0
+              ? 'Overpayment on this quotation is already fully covered by other refunds.'
+              : `Only ₦${overpaymentResidualNgn.toLocaleString('en-NG')} overpayment remains after other refunds.`,
+          action:
+            'Cancel this approved refund, or cancel/reverse the other overpayment refunds on this quotation first.',
+        });
+      }
+    } catch {
+      overpaymentResidualNgn = null;
+      releasableOverpayCreditApplications = [];
+    }
+  }
+
   const nextActions = [];
   if (unclearedReceiptIds.length > 0) {
     nextActions.push({
@@ -501,7 +565,19 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       amountNgn: walletOpenNgn,
     });
   }
-  if (tillPayableNgn > 0) {
+  if (
+    tillPayableNgn > 0 &&
+    releasableOverpayCreditApplications.length > 0 &&
+    overpaymentResidualNgn != null &&
+    tillPayableNgn > overpaymentResidualNgn
+  ) {
+    nextActions.push({
+      code: 'pay_till_release_overpay_credit',
+      label: 'Pay till/bank (undo confirm-payment credit first)',
+      amountNgn: tillPayableNgn,
+      releasableCreditApplications: releasableOverpayCreditApplications,
+    });
+  } else if (tillPayableNgn > 0) {
     nextActions.push({
       code: 'pay_till',
       label: 'Pay till/bank',
@@ -560,6 +636,11 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       (lifecycleStatus === 'Approved' || storedStatus === 'Approved') &&
       payeeSettledNgn <= 0 &&
       walletWithdrawnNgn <= 0,
+    willReleaseOverpayCreditOnPay:
+      releasableOverpayCreditApplications.length > 0 &&
+      overpaymentResidualNgn != null &&
+      tillPayableNgn > overpaymentResidualNgn,
+    overpaymentResidualNgn,
   });
 
   let walletOpenCredits = [];
@@ -592,6 +673,8 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     payeeSettledNgn,
     cashOutstandingNgn,
     tillPayableNgn,
+    overpaymentResidualNgn,
+    releasableOverpayCreditApplications,
     status: lifecycleStatus,
     publicLabel,
     payoutBlockers,

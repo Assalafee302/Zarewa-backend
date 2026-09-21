@@ -213,8 +213,6 @@ import { refundCashierPayRelaxed } from './financeFeatureFlags.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi, refundRequestIsPriceConcession } from '../shared/refundConstants.js';
 import {
-  overpaymentAlreadyRefundedNgn,
-  quotationOverpaymentResidualNgn,
   sumRefundCalculationLinesByCategoryNgn,
 } from '../shared/lib/refundQuotationMoney.js';
 import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn, tableExists } from './ap2ReceivedBasisOps.js';

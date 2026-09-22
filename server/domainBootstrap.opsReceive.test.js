@@ -1,6 +1,9 @@
 /**
  * Store GRN: operations snapshot must include Approved POs before transport link.
  * Prior lean ops hydrate only shipped inTransitLoads — MD-approved POs stayed invisible.
+ *
+ * Also: ops must not put a receipt-pending-only subset under shared `purchaseOrders`
+ * (SPA merge would wipe the full procurement register).
  */
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
@@ -35,8 +38,15 @@ describe.skipIf(!mysqlOk)('operations snapshot receivable purchase orders', () =
 
     const snap = buildOperationsDomainSnapshot(db, { user: storeUser, branchScope: 'BR-KD' });
     expect(snap.inTransitLoads).toEqual([]);
-    expect(snap.purchaseOrders.map((p) => p.poID)).toEqual(['PO-KD-26-0099']);
-    expect(snap.purchaseOrders[0].status).toBe('Approved');
+    // Shared desk register keeps all statuses (must not shrink procurement merges).
+    expect(snap.purchaseOrders.map((p) => p.poID).sort()).toEqual([
+      'PO-KD-26-0001',
+      'PO-KD-26-0002',
+      'PO-KD-26-0099',
+    ]);
+    // Explicit receivable bag for store GRN / in-transit UI.
+    expect(snap.receivablePurchaseOrders.map((p) => p.poID)).toEqual(['PO-KD-26-0099']);
+    expect(snap.receivablePurchaseOrders[0].status).toBe('Approved');
     db.close();
   });
 

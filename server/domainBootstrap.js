@@ -348,17 +348,34 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
   const movements = coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [];
   const coilControlEvents = coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [];
   const materialPoolSummary = coilMovOk ? computePoolSummary(db, branchScope) : null;
-  // Store GRN list needs Approved POs even before transport creates an in_transit_loads row.
-  // Shell/dashboard defer purchaseOrders; ops hydrate must ship receivable ones.
+  // Store GRN needs Approved POs even before transport creates an in_transit_loads row.
+  // Shell/dashboard defer purchaseOrders; ops hydrate must ship them.
+  //
+  // Invariant: `purchaseOrders` is the shared desk register key (also used by procurement).
+  // Never ship a status-filtered subset under that key — SPA domain merge replaces the bag,
+  // so an ops-only receivable list (~4) would wipe the full procurement register (~74).
+  // Store receive filters with shouldShowPoInTransit / receivablePurchaseOrders.
   const poDeskOpts = deskPageListOpts();
   const poDeskLim = poDeskOpts.unlimited ? 0 : Number(poDeskOpts.limit) || deskPageLimit();
-  const purchaseOrders = poListOk
+  const recentPos = poListOk
+    ? listPurchaseOrders(db, branchScope, { ...poDeskOpts, skipSideEffects: true })
+    : [];
+  const receivablePurchaseOrders = poListOk
     ? listPurchaseOrders(db, branchScope, {
         ...poDeskOpts,
         skipSideEffects: true,
         statusKeys: [...RECEIPT_PENDING_PO_STATUS_KEYS],
       })
     : [];
+  const purchaseOrders = (() => {
+    const byId = new Map();
+    // Receivable first so older Approved POs outside the recent window still appear.
+    for (const po of receivablePurchaseOrders) byId.set(po.poID, po);
+    for (const po of recentPos) {
+      if (!byId.has(po.poID)) byId.set(po.poID, po);
+    }
+    return [...byId.values()];
+  })();
   const pageSize = deskPageLimit();
   return {
     ok: true,
@@ -391,6 +408,7 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
     yardCoilRegister: yardOk ? listYardCoils(db, branchScope) : [],
     purchaseOrders,
+    receivablePurchaseOrders,
     inTransitLoads: user ? listInTransitLoads(db, branchScope) : [],
     materialRequests: user ? listMaterialRequests(db, workScope) : [],
     machines: user ? listMachines(db, workScope) : [],
@@ -404,11 +422,14 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
         productionJobs: 'created_at_iso_desc',
         movements: 'at_iso_desc',
         purchaseOrders: 'order_date_iso_desc',
+        receivablePurchaseOrders: 'order_date_iso_desc',
       },
       listLimitsApplied: {
         ...(historyLim ? { cuttingLists: historyLim, productionJobs: historyLim, movements: historyLim } : {}),
         ...(coilMovOk ? { coilLots: coilDesk.mode } : {}),
-        ...(poListOk && poDeskLim ? { purchaseOrders: poDeskLim } : {}),
+        ...(poListOk && poDeskLim
+          ? { purchaseOrders: poDeskLim, receivablePurchaseOrders: poDeskLim }
+          : {}),
       },
       coilLotsRecovery: coilMovOk ? COIL_DESK_RECOVERY : undefined,
       productionDeskRecovery:
@@ -435,7 +456,13 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
             }
           : {}),
         ...(yardOk ? { yardCoilRegister: true } : {}),
-        ...(poListOk ? { purchaseOrders: poDeskLim > 0 && purchaseOrders.length >= poDeskLim } : {}),
+        ...(poListOk
+          ? {
+              purchaseOrders: poDeskLim > 0 && purchaseOrders.length >= poDeskLim,
+              receivablePurchaseOrders:
+                poDeskLim > 0 && receivablePurchaseOrders.length >= poDeskLim,
+            }
+          : {}),
       },
       backgroundHydrate: buildBackgroundHydrateMeta(
         [
@@ -456,6 +483,12 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
             path: '/api/stock-movements',
             limit: historyLim,
             loaded: movements.length,
+          },
+          {
+            key: 'purchaseOrders',
+            path: '/api/purchase-orders',
+            limit: poDeskLim,
+            loaded: purchaseOrders.length,
           },
         ],
         { pageSize }

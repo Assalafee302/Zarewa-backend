@@ -24,14 +24,15 @@ function isAdminTrialActor(actor, hasPermission) {
   if (typeof hasPermission === 'function' && hasPermission('*')) return true;
   const perms = Array.isArray(actor?.permissions) ? actor.permissions : [];
   if (perms.includes('*')) return true;
-  return normalizeRoleKey(actor) === 'admin';
+  const rk = normalizeRoleKey(actor);
+  return rk === 'admin' || rk === 'md';
 }
 
 /**
  * Who may till-pay while the payee still has unconfirmed receipts on this refund's job.
- * Cashiers / BM / HoA / admin / refunds.approve / finance.approve: override with note
+ * Cashiers / BM / HoA / admin / MD / refunds.approve / finance.approve: override with note
  * (pay path still requires ≥10-char note for non-admin).
- * MD/CEO/chairman: never (blocked from customer-refund pay entirely).
+ * CEO/chairman: never (blocked from customer-refund pay entirely).
  *
  * @param {{ roleKey?: string, role_key?: string, permissions?: string[] } | null | undefined} actor
  * @param {(perm: string) => boolean} [hasPermission]
@@ -40,7 +41,7 @@ function isAdminTrialActor(actor, hasPermission) {
 export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission, opts = {}) {
   if (isAdminTrialActor(actor, hasPermission)) return true;
   const rk = normalizeRoleKey(actor);
-  if (rk === 'md' || rk === 'ceo' || rk === 'chairman') return false;
+  if (rk === 'ceo' || rk === 'chairman') return false;
   if (rk === 'cashier') {
     const held = Math.max(0, Math.round(Number(opts?.heldNetNgn) || 0));
     return held > 0;

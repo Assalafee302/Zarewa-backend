@@ -39,19 +39,29 @@ describe('branch refund lock window (admin, quotations + receipts in range)', ()
   });
 
   const admin = { id: 'adm1', displayName: 'Admin User', roleKey: 'admin', permissions: ['*'] };
-  const md = { id: 'md1', displayName: 'MD', roleKey: 'md', permissions: [] };
+  const md = { id: 'md1', displayName: 'MD', roleKey: 'md', permissions: ['*'] };
 
-  it('MD cannot set a branch window; admin can lock 1–16 September', () => {
-    expect(
-      setBranchRefundsBlocked(
-        db,
-        'BR-YL',
-        { fromISO: '2026-09-01', toISO: '2026-09-16', reason: 'Lock Yola 1–16 Sep catch-up' },
-        md
-      ).code
-    ).toBe('FORBIDDEN');
-
+  it('MD or admin can lock a branch window 1–16 September', () => {
     const r = setBranchRefundsBlocked(
+      db,
+      'BR-YL',
+      {
+        fromISO: '2026-09-01',
+        toISO: '2026-09-16',
+        reason: 'Yola historical refunds treated as already paid',
+      },
+      md
+    );
+    expect(r.ok).toBe(true);
+    expect(r.blocked).toBe(true);
+    expect(String(r.refundsBlockedFromISO || '')).toMatch(/^2026-09-01/);
+    expect(String(r.refundsBlockedToISO || '')).toMatch(/^2026-09-16/);
+
+    // Clear then re-lock as admin to prove both roles may write the window.
+    expect(
+      setBranchRefundsBlocked(db, 'BR-YL', { unblock: true, reason: 'Clear for admin re-lock' }, admin).ok
+    ).toBe(true);
+    const rAdmin = setBranchRefundsBlocked(
       db,
       'BR-YL',
       {
@@ -61,10 +71,7 @@ describe('branch refund lock window (admin, quotations + receipts in range)', ()
       },
       admin
     );
-    expect(r.ok).toBe(true);
-    expect(r.blocked).toBe(true);
-    expect(String(r.refundsBlockedFromISO || '')).toMatch(/^2026-09-01/);
-    expect(String(r.refundsBlockedToISO || '')).toMatch(/^2026-09-16/);
+    expect(rAdmin.ok).toBe(true);
   });
 
   it('blocks Yola quotes and receipts in the window; leaves earlier Yola quotes open', () => {

@@ -207,9 +207,17 @@ export const ROLE_DEFINITIONS = {
   },
   md: {
     label: 'Managing Director',
-    // Executive + org-wide rollups (merged former CEO scope). Procurement is centralized here, not a separate job role.
-    // Office / Workspace desk (`office.use`) paused for all seeded roles — re-enable per role when ready.
+    // Full product access — same wildcard break-glass as Administrator. Explicit keys remain for
+    // docs/tests and MD-specific gates. Office desk (`office.use`) stays paused unless listed.
     permissions: [
+      '*',
+      'settings.view',
+      'settings.manage',
+      'ai.knowledge.view',
+      'ai.knowledge.manage',
+      'ai.query.access',
+      'ai.proposals.view',
+      'ai.proposals.manage',
       'hq.view_all_branches',
       'exec.dashboard.view',
       'dashboard.view',
@@ -721,6 +729,12 @@ const STORE_FLOOR_DEPARTMENT_LABELS = new Set([
   'operations_officer',
 ]);
 
+/** Administrator or Managing Director — full break-glass product access. */
+export function isFullAccessRoleKey(roleKey) {
+  const rk = normalizeRoleKey(roleKey);
+  return rk === 'admin' || rk === 'md';
+}
+
 /**
  * Union role template permissions with optional custom list (custom adds; does not remove role defaults).
  * @param {string} roleKey
@@ -730,7 +744,7 @@ export function mergeRoleAndCustomPermissions(roleKey, customParsed) {
   const base = permissionsForRole(roleKey);
   if (!Array.isArray(customParsed) || customParsed.length === 0) return [...base];
   if (customParsed.includes('*')) {
-    if (normalizeRoleKey(roleKey) === 'admin') return ['*'];
+    if (isFullAccessRoleKey(roleKey)) return ['*'];
     // Ignore wildcard in custom JSON — prevents privilege escalation via permissions_json.
   }
   const set = new Set(base);

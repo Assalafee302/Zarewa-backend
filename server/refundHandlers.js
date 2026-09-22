@@ -31,7 +31,7 @@ export function isRefundAdminTrialActor(actor, hasPermission) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '_');
-  return rk === 'admin';
+  return rk === 'admin' || rk === 'md';
 }
 
 /**
@@ -227,11 +227,11 @@ export function assertRefundPayerNotApprover(row, actor, hasPermission) {
   return { ok: true, adminTrial: false };
 }
 
-const EXECUTIVE_REFUND_PAY_BLOCKED_ROLE_KEYS = new Set(['md', 'ceo', 'chairman']);
+const EXECUTIVE_REFUND_PAY_BLOCKED_ROLE_KEYS = new Set(['ceo', 'chairman']);
 
 /**
- * MD/CEO/chairman keep finance.pay for expenses and treasury, but cannot pay customer refunds.
- * Admin trial still allowed. Dual-control (approver ≠ payer) is applied after this role gate.
+ * CEO/chairman keep finance.pay for expenses and treasury, but cannot pay customer refunds.
+ * Admin and MD (full-access) may pay via admin trial. Dual-control (approver ≠ payer) is applied after this role gate.
  * @param {Record<string, unknown>} row
  * @param {{ id?: string; roleKey?: string; role_key?: string; displayName?: string; username?: string } | null | undefined} actor
  * @param {(perm: string) => boolean} hasPermission
@@ -248,7 +248,7 @@ export function assertActorMayPayCustomerRefund(row, actor, hasPermission) {
     return {
       ok: false,
       error:
-        'Managing Director cannot pay customer refunds. Cashier or Head of Accounts must execute the payout.',
+        'This executive role cannot pay customer refunds. Cashier or Head of Accounts must execute the payout.',
     };
   }
   return assertRefundPayerNotApprover(row, actor, hasPermission);

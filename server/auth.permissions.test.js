@@ -109,6 +109,15 @@ describe('operations_officer role aliases', () => {
     expect(md).not.toContain('ot.pay');
   });
 
+  it('gives MD the same full-access wildcard as Administrator', () => {
+    const md = permissionsForRole('md');
+    const admin = permissionsForRole('admin');
+    expect(md).toContain('*');
+    expect(admin).toContain('*');
+    expect(md).toContain('settings.view');
+    expect(md).toContain('settings.manage');
+  });
+
   it('pauses Office desk for MD and branch manager; keeps desks separate', () => {
     const md = permissionsForRole('md');
     const bm = permissionsForRole('sales_manager');
@@ -116,6 +125,12 @@ describe('operations_officer role aliases', () => {
     expect(md).not.toContain('office.use');
     expect(bm).not.toContain('exec.dashboard.view');
     expect(bm).not.toContain('office.use');
+  });
+
+  it('allows wildcard in custom JSON only for Admin and MD', () => {
+    expect(mergeRoleAndCustomPermissions('md', ['*'])).toEqual(['*']);
+    expect(mergeRoleAndCustomPermissions('admin', ['*'])).toEqual(['*']);
+    expect(mergeRoleAndCustomPermissions('sales_manager', ['*'])).not.toContain('*');
   });
 
   it('includes HR self-service so floor staff can use My Profile', () => {

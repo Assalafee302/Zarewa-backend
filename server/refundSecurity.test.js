@@ -1235,7 +1235,7 @@ describe('Refund Phase 11A controls', () => {
     expect(cashierPay.status).toBe(201);
   });
 
-  it('blocks MD from paying a customer refund while cashier still can', async () => {
+  it('lets MD pay a customer refund as full-access (same as admin trial)', async () => {
     const staff = request.agent(app);
     await loginAs(staff, 'sales.staff', 'Sales@123');
     const create = await staff.post('/api/refunds').send({
@@ -1267,15 +1267,6 @@ describe('Refund Phase 11A controls', () => {
       treasuryAccountId,
       amountNgn: 5000,
     });
-    expect(mdPay.status).toBe(400);
-    expect(String(mdPay.body.error || '')).toMatch(/cannot pay customer refunds/i);
-
-    const cashier = request.agent(app);
-    await loginAs(cashier, 'cashier', 'Cashier@12345!');
-    const cashierPay = await cashier.post(`/api/refunds/${refundID}/pay`).send({
-      treasuryAccountId,
-      amountNgn: 5000,
-    });
-    expect(cashierPay.status).toBe(201);
+    expect(mdPay.status).toBe(201);
   });
 });

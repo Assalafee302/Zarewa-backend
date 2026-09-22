@@ -83,7 +83,7 @@ export function actorMaySelectRestrictedExpenseCategories(actor, hasPermission =
 }
 
 /**
- * Admin (and wildcard) may pay a Staff loan payment request without an HR loan row.
+ * Admin/MD (and wildcard) may pay a Staff loan payment request without an HR loan row.
  * Cashiers and Finance still need the approved HR loan link.
  * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
  * @param {(perm: string) => boolean} [hasPermission]
@@ -92,7 +92,7 @@ export function actorMayBypassStaffLoanHrLink(actor, hasPermission = () => false
   if (!actor) return false;
   if (actorHasWildcard(actor, hasPermission)) return true;
   const rk = String(actor.roleKey || actor.role_key || '').trim().toLowerCase();
-  return rk === 'admin';
+  return rk === 'admin' || rk === 'md';
 }
 
 /**

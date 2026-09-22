@@ -30,7 +30,7 @@ describe('refundHandlers (Phase 11A)', () => {
   it('detects admin trial actor', () => {
     expect(isRefundAdminTrialActor({ roleKey: 'admin' }, () => false)).toBe(true);
     expect(isRefundAdminTrialActor({ roleKey: 'sales_manager' }, (p) => p === '*')).toBe(true);
-    expect(isRefundAdminTrialActor({ roleKey: 'md' }, () => false)).toBe(false);
+    expect(isRefundAdminTrialActor({ roleKey: 'md' }, () => false)).toBe(true);
   });
 
   it('lets admin and cashier override uncleared-receipt payout hold (cashier needs held > 0)', () => {
@@ -48,7 +48,7 @@ describe('refundHandlers (Phase 11A)', () => {
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, (p) => p === 'finance.approve')).toBe(
       false
     );
-    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'md' }, () => false)).toBe(false);
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'md' }, () => false)).toBe(true);
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'finance_manager' }, () => false)).toBe(true);
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'sales_manager' }, () => false)).toBe(true);
     expect(
@@ -216,11 +216,16 @@ describe('refundHandlers (Phase 11A)', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('blocks MD from customer-refund payout while leaving dual-control for other roles', () => {
+  it('lets MD pay customer refunds as full-access; CEO stays blocked', () => {
     process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '0';
     const row = { approved_by_user_id: 'USR-SM', approved_by: 'Sales Manager' };
     const md = { id: 'USR-MD', displayName: 'Managing Director', roleKey: 'md' };
-    const blocked = assertActorMayPayCustomerRefund(row, md, () => false);
+    const mdPay = assertActorMayPayCustomerRefund(row, md, () => false);
+    expect(mdPay.ok).toBe(true);
+    expect(mdPay.adminTrial).toBe(true);
+
+    const ceo = { id: 'USR-CEO', displayName: 'CEO', roleKey: 'ceo' };
+    const blocked = assertActorMayPayCustomerRefund(row, ceo, () => false);
     expect(blocked.ok).toBe(false);
     expect(blocked.error).toMatch(/cannot pay customer refunds/i);
 

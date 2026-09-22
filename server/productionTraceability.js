@@ -3001,8 +3001,9 @@ function reverseProductionRecognitionGlForJobTx(db, job, atISO, actor) {
  */
 export function adminForceRecallAndDeleteCuttingList(db, jobID, payload = {}, opts = {}) {
   const actor = opts.actor || {};
-  if (normalizeRoleKey(actor.roleKey ?? actor.role_key) !== 'admin') {
-    return { ok: false, error: 'Only an administrator can force-recall a job and delete its cutting list.', code: 'ADMIN_ONLY' };
+  const rk = normalizeRoleKey(actor.roleKey ?? actor.role_key);
+  if (rk !== 'admin' && rk !== 'md') {
+    return { ok: false, error: 'Only Admin or Managing Director can force-recall a job and delete its cutting list.', code: 'ADMIN_ONLY' };
   }
   const jobId = String(jobID ?? '').trim();
   if (!jobId) return { ok: false, error: 'Job ID required.' };

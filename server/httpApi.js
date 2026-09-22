@@ -4081,8 +4081,9 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/admin/data-reset-presets', requireAuth, (req, res) => {
     try {
-      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
-        return res.status(403).json({ ok: false, error: 'Admin only.' });
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (rk !== 'admin' && rk !== 'md' && !userHasPermission(req.user, '*')) {
+        return res.status(403).json({ ok: false, error: 'Admin or MD only.' });
       }
       const branchId = String(req.workspaceBranchId || '').trim();
       const branch = branchId ? getBranch(db, branchId) : null;
@@ -4125,8 +4126,9 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/admin/data-reset', requireAuth, requirePermission('settings.manage'), (req, res) => {
     try {
-      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
-        return res.status(403).json({ ok: false, error: 'Admin only.' });
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (rk !== 'admin' && rk !== 'md' && !userHasPermission(req.user, '*')) {
+        return res.status(403).json({ ok: false, error: 'Admin or MD only.' });
       }
       const body = req.body || {};
       const presetIds = Array.isArray(body.presetIds) ? body.presetIds : [];
@@ -4165,10 +4167,11 @@ export function registerHttpApi(app, db) {
    */
   app.post('/api/admin/reconcile-sales-derived', requireAuth, requirePermission('settings.manage'), (req, res) => {
     try {
-      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (rk !== 'admin' && rk !== 'md' && !userHasPermission(req.user, '*')) {
         return res.status(403).json({
           ok: false,
-          error: 'Only the administrator role can run this maintenance job.',
+          error: 'Only Admin or Managing Director can run this maintenance job.',
         });
       }
       if (req.body?.confirm !== true) {
@@ -4209,10 +4212,11 @@ export function registerHttpApi(app, db) {
    */
   app.post('/api/admin/reapply-finance-reconciled-receipts', requireAuth, requirePermission('settings.manage'), (req, res) => {
     try {
-      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (rk !== 'admin' && rk !== 'md' && !userHasPermission(req.user, '*')) {
         return res.status(403).json({
           ok: false,
-          error: 'Only the administrator role can run this maintenance job.',
+          error: 'Only Admin or Managing Director can run this maintenance job.',
         });
       }
       if (req.body?.confirm !== true) {
@@ -7754,13 +7758,14 @@ export function registerHttpApi(app, db) {
   });
 
   /**
-   * Admin only: reverse completed/open production supply and delete the job + cutting list
+   * Admin/MD only: reverse completed/open production supply and delete the job + cutting list
    * (wrong-entry / duplicate stone-coated supply cleanup). Not a shop-floor recall.
    */
   app.post('/api/production-jobs/:jobId/admin-force-recall', requireAuth, (req, res) => {
     try {
-      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
-        return res.status(403).json({ ok: false, error: 'Admin only.' });
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (rk !== 'admin' && rk !== 'md' && !userHasPermission(req.user, '*')) {
+        return res.status(403).json({ ok: false, error: 'Admin or MD only.' });
       }
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });

@@ -1,5 +1,5 @@
 /**
- * Admin-only branch refund lock window (quotations + receipts in a from–to date range).
+ * Admin/MD branch refund lock window (quotations + receipts in a from–to date range).
  * Other branches and transactions outside the window stay refundable.
  */
 import { actorId, actorName } from '../auth.js';
@@ -45,7 +45,7 @@ export function setBranchRefundsBlocked(db, branchId, payload, actor) {
   if (!userMayBlockBranchRefunds(actor)) {
     return {
       ok: false,
-      error: 'Blocking refunds for a branch requires Administrator authority.',
+      error: 'Blocking refunds for a branch requires Admin or Managing Director authority.',
       code: 'FORBIDDEN',
     };
   }

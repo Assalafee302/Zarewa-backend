@@ -92,7 +92,7 @@ export function userMayBlockBranchRefunds(actor) {
   const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
   if (perms.includes('*')) return true;
   const rk = String(actor.roleKey || '').trim().toLowerCase();
-  return rk === 'admin';
+  return rk === 'admin' || rk === 'md';
 }
 
 /**

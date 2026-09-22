@@ -113,10 +113,10 @@ describe('workspaceGovernance', () => {
     expect(userMayOverrideProductionAlignment('sales_staff')).toBe(false);
   });
 
-  it('restricts branch refund lock windows to administrator; quotation block stays MD/admin', () => {
+  it('restricts branch refund lock windows to Admin/MD; quotation block stays MD/admin', () => {
     expect(userMayBlockBranchRefunds({ roleKey: 'admin' })).toBe(true);
     expect(userMayBlockBranchRefunds({ permissions: ['*'] })).toBe(true);
-    expect(userMayBlockBranchRefunds({ roleKey: 'md' })).toBe(false);
+    expect(userMayBlockBranchRefunds({ roleKey: 'md' })).toBe(true);
     expect(userMayBlockBranchRefunds({ roleKey: 'sales_manager' })).toBe(false);
     expect(userMayBlockQuotationRefunds({ roleKey: 'md' })).toBe(true);
     expect(userMayBlockQuotationRefunds({ roleKey: 'admin' })).toBe(true);

@@ -46,6 +46,24 @@ describe('resolveBulkUnconfirmDateRange', () => {
   });
 });
 
+describe('bulk unconfirm branch gate (no db)', () => {
+  it('rejects ALL / empty branch scope before touching receipts', () => {
+    expect(previewBulkUnconfirmSalesReceipts(null, 'ALL', { yearMonth: '2026-05' }).code).toBe(
+      'BRANCH_REQUIRED'
+    );
+    expect(previewBulkUnconfirmSalesReceipts(null, '', { yearMonth: '2026-05' }).code).toBe(
+      'BRANCH_REQUIRED'
+    );
+    expect(
+      bulkUnconfirmSalesReceiptsFinanceClearance(null, 'ALL', ACTOR, {
+        yearMonth: '2026-05',
+        confirmPhrase: RECEIPT_BULK_UNCONFIRM_CONFIRM_PHRASE,
+        reason: 'Should never run across all branches',
+      }).code
+    ).toBe('BRANCH_REQUIRED');
+  });
+});
+
 describe.skipIf(!mysqlOk)('bulkUnconfirmSalesReceiptsFinanceClearance', () => {
   let db;
 
@@ -142,5 +160,52 @@ describe.skipIf(!mysqlOk)('bulkUnconfirmSalesReceiptsFinanceClearance', () => {
       .prepare(`SELECT finance_confirmed_at_iso FROM treasury_movements WHERE id = 'TM-MAY'`)
       .get();
     expect(tmMay.finance_confirmed_at_iso).toBeFalsy();
+  });
+
+  it('does not unconfirm another branch’s confirmed receipts for the same month', () => {
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-2', 'Other Branch Customer', 'BR-002');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-OTHER', 'CUS-2', 'Other Branch Customer', 90000, 0, 'Unpaid', 'Finished', '{}', '2026-05-12', 'BR-002');
+      INSERT INTO sales_receipts (
+        id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso, ledger_entry_id, branch_id
+      ) VALUES (
+        'LE-OTHER', 'CUS-2', 'Other Branch Customer', 'QT-OTHER', 90000, '₦90,000', 'Pending clearance', '2026-05-12', 'LE-OTHER', 'BR-002'
+      );
+      INSERT INTO ledger_entries (id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, payment_method)
+      VALUES ('LE-OTHER', 'RECEIPT', 'CUS-2', 'Other Branch Customer', 'QT-OTHER', 90000, '2026-05-12T12:00:00.000Z', 'Transfer');
+      INSERT INTO treasury_movements (
+        id, type, source_kind, source_id, treasury_account_id, amount_ngn, posted_at_iso, counterparty_kind
+      ) VALUES (
+        'TM-OTHER', 'RECEIPT_IN', 'LEDGER_RECEIPT', 'LE-OTHER', 1, 90000, '2026-05-12T12:00:00.000Z', 'CUSTOMER'
+      );
+    `);
+    expect(
+      patchSalesReceiptFinanceSettlement(db, 'LE-OTHER', { bankReceivedAmountNgn: 90000 }, ACTOR).ok
+    ).toBe(true);
+
+    const previewA = previewBulkUnconfirmSalesReceipts(db, 'BR-001', { yearMonth: '2026-05' });
+    expect(previewA.ok).toBe(true);
+    expect(previewA.sampleIds).toEqual(['LE-MAY']);
+    expect(previewA.count).toBe(1);
+
+    const previewB = previewBulkUnconfirmSalesReceipts(db, 'BR-002', { yearMonth: '2026-05' });
+    expect(previewB.ok).toBe(true);
+    expect(previewB.sampleIds).toEqual(['LE-OTHER']);
+
+    const r = bulkUnconfirmSalesReceiptsFinanceClearance(db, 'BR-001', ACTOR, {
+      yearMonth: '2026-05',
+      confirmPhrase: RECEIPT_BULK_UNCONFIRM_CONFIRM_PHRASE,
+      reason: 'Only unconfirm branch BR-001 May receipts',
+    });
+    expect(r.ok).toBe(true);
+    expect(r.unconfirmedCount).toBe(1);
+    expect(r.branchScope).toBe('BR-001');
+
+    const other = db
+      .prepare(`SELECT status, finance_reconciliation_saved_at_iso FROM sales_receipts WHERE id = ?`)
+      .get('LE-OTHER');
+    expect(String(other.status)).toBe('Cleared');
+    expect(other.finance_reconciliation_saved_at_iso).toBeTruthy();
   });
 });

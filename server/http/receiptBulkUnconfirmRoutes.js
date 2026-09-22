@@ -1,11 +1,34 @@
 import { requirePermission } from '../auth.js';
 import { apiError } from '../apiError.js';
-import { DEFAULT_BRANCH_ID } from '../branches.js';
 import {
   bulkUnconfirmSalesReceiptsFinanceClearance,
   previewBulkUnconfirmSalesReceipts,
 } from '../finance/receiptBulkUnconfirmOps.js';
 import { RECEIPT_BULK_UNCONFIRM_CONFIRM_PHRASE } from '../../shared/lib/receiptClearance.js';
+
+/**
+ * Bulk unconfirm is always single-branch. Never fall back to DEFAULT_BRANCH_ID or rollup ALL.
+ * @param {import('express').Request} req
+ * @returns {{ ok: true, branchScope: string } | { ok: false, code: string, error: string }}
+ */
+function resolveBulkUnconfirmBranchScope(req) {
+  if (req.workspaceViewAll) {
+    return {
+      ok: false,
+      code: 'BRANCH_REQUIRED',
+      error: 'Open a specific branch workspace before bulk-unconfirming receipts (not All branches).',
+    };
+  }
+  const branchScope = String(req.workspaceBranchId || '').trim();
+  if (!branchScope || branchScope === 'ALL') {
+    return {
+      ok: false,
+      code: 'BRANCH_REQUIRED',
+      error: 'Open a specific branch workspace before bulk-unconfirming receipts.',
+    };
+  }
+  return { ok: true, branchScope };
+}
 
 /**
  * Bulk unconfirm confirmed sales receipts for a branch + month/period (reconfirm workflow).
@@ -17,8 +40,9 @@ export function registerReceiptBulkUnconfirmRoutes(app, db) {
 
   app.get('/api/sales-receipts/bulk-unconfirm/preview', perm, (req, res) => {
     try {
-      const branchScope = req.workspaceBranchId || DEFAULT_BRANCH_ID;
-      const r = previewBulkUnconfirmSalesReceipts(db, branchScope, {
+      const scope = resolveBulkUnconfirmBranchScope(req);
+      if (!scope.ok) return res.status(400).json(scope);
+      const r = previewBulkUnconfirmSalesReceipts(db, scope.branchScope, {
         yearMonth: req.query?.yearMonth,
         dateFrom: req.query?.dateFrom,
         dateTo: req.query?.dateTo,
@@ -40,9 +64,10 @@ export function registerReceiptBulkUnconfirmRoutes(app, db) {
 
   app.post('/api/sales-receipts/bulk-unconfirm', perm, (req, res) => {
     try {
-      const branchScope = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+      const scope = resolveBulkUnconfirmBranchScope(req);
+      if (!scope.ok) return res.status(400).json(scope);
       const body = req.body || {};
-      const r = bulkUnconfirmSalesReceiptsFinanceClearance(db, branchScope, req.user, body);
+      const r = bulkUnconfirmSalesReceiptsFinanceClearance(db, scope.branchScope, req.user, body);
       if (!r.ok && r.code === 'PARTIAL_FAILURE') {
         return res.status(207).json(r);
       }

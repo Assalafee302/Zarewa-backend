@@ -61,6 +61,30 @@ describe('refundQuotationMoney', () => {
     ).toBe(true);
   });
 
+  it('allows minute residual under the Branch Manager minor-receivable band', () => {
+    expect(
+      quotationReceiptsCoverQuoteTotal({
+        quoteTotalNgn: 1_907_345,
+        receiptCashNgn: 1_907_320,
+        cashInNgn: 1_907_320,
+      }).ok
+    ).toBe(true);
+    expect(
+      quotationReceiptsCoverQuoteTotal({
+        quoteTotalNgn: 500_000,
+        receiptCashNgn: 499_001,
+        cashInNgn: 499_001,
+      }).ok
+    ).toBe(true);
+    expect(
+      quotationReceiptsCoverQuoteTotal({
+        quoteTotalNgn: 500_000,
+        receiptCashNgn: 499_000,
+        cashInNgn: 499_000,
+      }).ok
+    ).toBe(false);
+  });
+
   it('uses cash-in when there are no receipt rows', () => {
     expect(
       quotationReceiptsCoverQuoteTotal({

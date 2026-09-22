@@ -9,6 +9,7 @@
 
 import { REFUND_DERIVED_CAP_CATEGORIES, mergeRefundCategoryCapsNgn } from './refundCategoryDerivedCaps.js';
 import { isEffectivelyFullyPaid } from './paymentOutstandingTolerance.js';
+import { isMinorReceivableForBranchManager } from './receivableWriteOffPolicy.js';
 
 export function roundRefundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -58,7 +59,8 @@ export function quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn }) {
 
 /**
  * Refunds require receipts (or cash-in when no receipt rows exist) to cover the quotation total.
- * Quote above receipts is a hard block — do not pay out against an unpaid balance.
+ * Material underpayment is a hard block. Minute residuals in the Branch Manager minor-receivable
+ * band (< ₦1,000 with payment on file) are allowed — refund hard cap is still cash received.
  * @param {{ quoteTotalNgn?: number, receiptCashNgn?: number, cashInNgn?: number }} p
  * @returns {{ ok: boolean, quoteTotalNgn: number, receiptsTotalNgn: number, shortfallNgn: number, message?: string }}
  */
@@ -71,6 +73,10 @@ export function quotationReceiptsCoverQuoteTotal(p) {
     return { ok: true, quoteTotalNgn: quoteTotal, receiptsTotalNgn: receiptsTotal, shortfallNgn: 0 };
   }
   const shortfallNgn = Math.max(0, quoteTotal - receiptsTotal);
+  // Same band BM may clear without collecting — do not force a till trip for ₦25-class residuals.
+  if (isMinorReceivableForBranchManager(shortfallNgn, receiptsTotal)) {
+    return { ok: true, quoteTotalNgn: quoteTotal, receiptsTotalNgn: receiptsTotal, shortfallNgn: 0 };
+  }
   return {
     ok: false,
     quoteTotalNgn: quoteTotal,

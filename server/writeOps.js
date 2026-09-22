@@ -383,6 +383,8 @@ function normalizeIsoTimestamp(value) {
  *   When false (default), ignore `branchId` on each row so callers cannot override booking branch.
  *   `allowActiveRefundQuotationRefs` permits internal credit-transfer rows on source quotes that still have Pending/Approved refunds.
  *   `allowManagerClearedQuotationRefs` permits finance confirmation / credit-apply rows on quotes that were manager-cleared while receipts were still unconfirmed.
+ *   Manager-cleared closes the quote for further customer cash-in; refund payout bookkeeping
+ *   (`REFUND_ADVANCE` / `REFUND_OVERPAY` / `REFUND_CONCESSION`) still posts — approval often auto-clears the quote.
  */
 export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
   const allowPerRow = Boolean(opts.allowPerRowBranchId);
@@ -411,14 +413,19 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
     if (r.quotationRef && !opts.bypassQuotationPaymentLocks) {
       const q = db.prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`).get(r.quotationRef);
       if (q) {
+        // Outbound refund settlement — not customer payments in. Approval auto-clears the quote.
+        const refundPayoutBookkeeping = /^(REFUND_ADVANCE|REFUND_OVERPAY|REFUND_CONCESSION)$/i.test(
+          String(r.type || '')
+        );
         if (q.manager_cleared_at_iso) {
           const allowedCleared =
-            allowManagerClearedQuotes && allowManagerClearedQuotes.has(String(r.quotationRef));
+            refundPayoutBookkeeping ||
+            (allowManagerClearedQuotes && allowManagerClearedQuotes.has(String(r.quotationRef)));
           if (!allowedCleared) {
             throw new Error(`Quotation ${r.quotationRef} has been cleared by manager and is closed for further payments.`);
           }
         }
-        if (q.manager_flagged_at_iso) {
+        if (q.manager_flagged_at_iso && !refundPayoutBookkeeping) {
           throw new Error(`Quotation ${r.quotationRef} is flagged by manager for review and is closed for further payments.`);
         }
       }
@@ -9750,7 +9757,12 @@ export function payRefundEntry(db, refundId, payload) {
             createdByName: paidBy,
           });
         }
-        if (rows.length > 0) insertLedgerRows(db, rows, wb);
+        // Manager-cleared (often set on refund approval) must not block payout bookkeeping.
+        if (rows.length > 0) {
+          insertLedgerRows(db, rows, wb, {
+            allowManagerClearedQuotationRefs: qrefPay ? [qrefPay] : undefined,
+          });
+        }
       }
       return { movements, nextPaidAmountNgn, fullyPaid, refundGlPolicy };
     })();

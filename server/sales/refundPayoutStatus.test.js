@@ -327,6 +327,89 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
       .get(REFUND_ID);
     expect(Number(retention?.open_ngn ?? 0)).toBe(0);
   });
+
+  it('pays a commission refund even when the quotation is manager-cleared', () => {
+    // Approval auto-clears the quote; payout still posts REFUND_CONCESSION on that ref.
+    const CONCESSION_ID = 'RF-STATUS-CONCESSION-1';
+    const QREF = 'QT-RF-CLEARED-PAY';
+    db.prepare(`DELETE FROM customer_refunds WHERE refund_id = ?`).run(CONCESSION_ID);
+    db.prepare(`DELETE FROM quotations WHERE id = ?`).run(QREF);
+    db.prepare(
+      `INSERT INTO quotations (
+         id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status,
+         lines_json, date_iso, branch_id, manager_cleared_at_iso
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      QREF,
+      CUSTOMER_ID,
+      'Quote Customer',
+      100_000,
+      100_000,
+      'Paid',
+      'Finished',
+      '{}',
+      '2026-03-01',
+      'BR-KD',
+      '2026-03-28T12:00:00.000Z'
+    );
+    db.prepare(
+      `INSERT INTO customer_refunds (
+         refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+         amount_ngn, calculation_lines_json, status,
+         payee_name, payee_account_no, payee_bank_name, branch_id, requested_by, requested_at_iso,
+         approved_amount_ngn, paid_amount_ngn, payment_note
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      CONCESSION_ID,
+      CUSTOMER_ID,
+      'Bashir Shehu',
+      QREF,
+      '["Commission"]',
+      'Commission',
+      15_000,
+      JSON.stringify([{ category: 'Commission', amountNgn: 15_000, label: 'Commission' }]),
+      'Approved',
+      'Muhammad Ibrahim Bakari',
+      '3064987728',
+      'First Bank',
+      'BR-KD',
+      'Sales',
+      '2026-03-28T10:00:00.000Z',
+      15_000,
+      0,
+      'Settled at approval: company cut ₦0 → retention ledger.'
+    );
+    const acct = db.prepare(`SELECT id FROM treasury_accounts LIMIT 1`).get();
+    const cashier = db
+      .prepare(
+        `SELECT id, username, role_key AS roleKey, display_name AS displayName
+         FROM app_users WHERE username = 'cashier' LIMIT 1`
+      )
+      .get();
+    expect(acct?.id).toBeTruthy();
+    expect(cashier?.id).toBeTruthy();
+    const paid = payRefundEntry(db, CONCESSION_ID, {
+      paymentLines: [{ treasuryAccountId: acct.id, amountNgn: 15_000, dateISO: '2026-03-29' }],
+      actor: { id: cashier.id, displayName: cashier.displayName, roleKey: 'cashier' },
+      paidBy: 'Cashier',
+      dateISO: '2026-03-29',
+    });
+    expect(paid.ok).toBe(true);
+    expect(String(paid.error || '')).not.toMatch(/cleared by manager/i);
+    const concessionRow = db
+      .prepare(
+        `SELECT type, quotation_ref, amount_ngn FROM ledger_entries
+         WHERE type = 'REFUND_CONCESSION' AND bank_reference = ?`
+      )
+      .get(CONCESSION_ID);
+    expect(concessionRow).toBeTruthy();
+    expect(String(concessionRow.quotation_ref)).toBe(QREF);
+    expect(Number(concessionRow.amount_ngn)).toBe(15_000);
+    db.prepare(`DELETE FROM customer_refunds WHERE refund_id = ?`).run(CONCESSION_ID);
+    db.prepare(`DELETE FROM ledger_entries WHERE bank_reference = ?`).run(CONCESSION_ID);
+    db.prepare(`DELETE FROM treasury_movements WHERE source_id = ?`).run(CONCESSION_ID);
+    db.prepare(`DELETE FROM quotations WHERE id = ?`).run(QREF);
+  });
 });
 
 describe('buildRefundSituationBrief', () => {

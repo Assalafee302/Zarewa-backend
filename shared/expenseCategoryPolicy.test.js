@@ -181,19 +181,27 @@ describe('expenseCategoryPolicy', () => {
     );
   });
 
-  it('lets admin or MD pay a staff loan without an HR loan link; cashier cannot', () => {
+  it('lets admin, MD or cashier pay a staff loan without an HR loan link', () => {
     expect(actorMayBypassStaffLoanHrLink({ roleKey: 'admin' })).toBe(true);
-    expect(actorMayBypassStaffLoanHrLink({ roleKey: 'cashier' })).toBe(false);
+    expect(actorMayBypassStaffLoanHrLink({ roleKey: 'cashier' })).toBe(true);
     expect(actorMayBypassStaffLoanHrLink({ roleKey: 'finance_manager' })).toBe(false);
     expect(actorMayBypassStaffLoanHrLink({ roleKey: 'md' })).toBe(true);
     expect(actorMayBypassStaffLoanHrLink({ permissions: ['*'] })).toBe(true);
 
-    const cashierBlocked = validateSpecialLaneTreasuryPayout({
+    const cashierOk = validateSpecialLaneTreasuryPayout({
       category: 'Staff loan',
       hasHrLoanLink: false,
       actor: { roleKey: 'cashier' },
     });
-    expect(cashierBlocked.ok).toBe(false);
+    expect(cashierOk.ok).toBe(true);
+    expect(cashierOk.staffLoanHrLinkBypass).toBe(true);
+
+    const financeBlocked = validateSpecialLaneTreasuryPayout({
+      category: 'Staff loan',
+      hasHrLoanLink: false,
+      actor: { roleKey: 'finance_manager' },
+    });
+    expect(financeBlocked.ok).toBe(false);
 
     const adminOk = validateSpecialLaneTreasuryPayout({
       category: 'Staff loan',

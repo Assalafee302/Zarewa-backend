@@ -2862,7 +2862,7 @@ function buildPaymentRequestPayoutGatePreview(db, row, actor) {
       detail: hasHrLoanLink
         ? 'Linked to approved HR loan'
         : bypassHrLoanLink
-          ? 'Admin may pay this staff loan without an HR loan request'
+          ? 'You may pay this staff loan as a regular expense (no HR loan request needed)'
           : 'Disburse only from an approved HR staff loan request',
     });
   }

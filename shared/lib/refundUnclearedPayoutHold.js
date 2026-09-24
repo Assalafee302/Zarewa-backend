@@ -42,10 +42,9 @@ export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission, 
   if (isAdminTrialActor(actor, hasPermission)) return true;
   const rk = normalizeRoleKey(actor);
   if (rk === 'ceo' || rk === 'chairman') return false;
-  if (rk === 'cashier') {
-    const held = Math.max(0, Math.round(Number(opts?.heldNetNgn) || 0));
-    return held > 0;
-  }
+  // Not gated on heldNetNgn: relaxed desk reports 0 held while stored splits still flag the
+  // payee as held, which left cashiers with View only on staff lines.
+  if (rk === 'cashier') return true;
   if (rk === 'sales_manager' || rk === 'branch_manager' || rk === 'finance_manager' || rk === 'admin') {
     return true;
   }

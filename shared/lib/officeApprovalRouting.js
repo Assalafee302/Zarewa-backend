@@ -39,13 +39,14 @@ export function computeOfficeApprovalRoute(input = {}) {
 
   const requiresMd =
     amount > EXPENSE_MD_APPROVAL_THRESHOLD_NGN && !isRefundLikeExpenseCategory(cat);
+  const mdAboveThresholdLabel = `MD approval (above ₦${EXPENSE_MD_APPROVAL_THRESHOLD_NGN.toLocaleString('en-NG')})`;
 
   if (/hr|leave|loan/.test(cat)) {
     steps.push({ role: 'hr_admin', label: 'HR / Admin review' });
     steps.push({ role: 'gmhr', label: 'GM HR approval' });
   } else if (/procurement|purchase/.test(cat)) {
     steps.push({ role: 'operations_officer', label: 'Procurement review' });
-    if (requiresMd) steps.push({ role: 'md', label: 'MD approval (above ₦200,000)' });
+    if (requiresMd) steps.push({ role: 'md', label: mdAboveThresholdLabel });
     steps.push({ role: 'finance_manager', label: 'Finance oversight' });
   } else if (/fuel|diesel/.test(cat)) {
     steps.push({ role: 'cashier', label: 'Branch Cashier payment' });
@@ -58,7 +59,7 @@ export function computeOfficeApprovalRoute(input = {}) {
     steps.push({ role: 'finance_manager', label: 'Finance review' });
     if (requiresMd) steps.push({ role: 'md', label: 'MD approval' });
   } else {
-    if (requiresMd) steps.push({ role: 'md', label: 'MD approval (above ₦200,000)' });
+    if (requiresMd) steps.push({ role: 'md', label: mdAboveThresholdLabel });
     steps.push({ role: 'finance_manager', label: 'Finance / Cashier' });
   }
 

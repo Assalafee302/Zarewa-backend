@@ -3,6 +3,7 @@
  */
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { summarizeExecWorkTrayApprovalTiers } from '../shared/lib/execApprovalTier.js';
+import { EXPENSE_MD_APPROVAL_THRESHOLD_NGN } from '../shared/workspaceGovernance.js';
 
 const PULSE_GREEN = 'green';
 const PULSE_AMBER = 'amber';
@@ -37,7 +38,7 @@ export function buildMdCockpitPulses(db, ctx) {
   const limits = ctx?.limits ?? getOrgGovernanceLimits(db);
   const monthlyPayrollProxy = Math.max(
     1,
-    Math.round(Number(limits?.expenseExecutiveThresholdNgn) || 200_000) * 15
+    Math.round(Number(limits?.expenseExecutiveThresholdNgn) || EXPENSE_MD_APPROVAL_THRESHOLD_NGN) * 15
   );
   const cashWeeks = ctx.treasuryCashNgn / (monthlyPayrollProxy / 4.33);
   const cashPulse = pulseStatus(cashWeeks, { green: 4, amber: 2 });

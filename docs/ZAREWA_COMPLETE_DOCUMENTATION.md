@@ -596,7 +596,7 @@ With **`ZAREWA_EMPTY_SEED=1`** on a fresh database, numbering starts at **0001**
 
 Configurable under **Settings → Governance → Office approval thresholds**:
 
-- **Payment requests:** branch manager approves up to expense threshold (default **₦200,000**); above requires MD/admin.
+- **Payment requests:** branch manager approves up to expense threshold (default **₦500,000**); above requires MD/admin.
 - **Refunds:** executive sign-off above refund threshold (default **₦1,000,000**).
 
 ### 5.3 Filing references
@@ -4925,7 +4925,7 @@ This complements the in-app workspace and Settings. It reflects the approval and
 
 ## Branch manager (`sales_manager`)
 
-- Approves **payment requests** up to the **expense threshold** (default ₦200,000) when you have `finance.approve`.
+- Approves **payment requests** up to the **expense threshold** (default ₦500,000) when you have `finance.approve`.
 - Above that amount, **MD/CEO** (or admin) must approve.
 - Use **Workspace → Unfiled** to clear items missing a **filing reference** after completion.
 - **Inter-branch requests**: create via `POST /api/office/inter-branch-requests` (UI can be wired later); only branch managers create them.

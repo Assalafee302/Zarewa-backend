@@ -14,8 +14,8 @@ describe('officeApprovalRouting', () => {
   });
 
   it('branch manager can approve below threshold', () => {
-    expect(branchManagerCanApproveAmount('sales_manager', 150_000)).toBe(true);
-    expect(branchManagerCanApproveAmount('sales_manager', 250_000)).toBe(false);
+    expect(branchManagerCanApproveAmount('sales_manager', EXPENSE_MD_APPROVAL_THRESHOLD_NGN)).toBe(true);
+    expect(branchManagerCanApproveAmount('sales_manager', EXPENSE_MD_APPROVAL_THRESHOLD_NGN + 1)).toBe(false);
   });
 
   it('fuel route includes cashier', () => {

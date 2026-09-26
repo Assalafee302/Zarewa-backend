@@ -4,7 +4,7 @@ This complements the in-app workspace and Settings. It reflects the approval and
 
 ## Branch manager (`sales_manager`)
 
-- Approves **payment requests** up to the **expense threshold** (default ₦200,000) when you have `finance.approve`.
+- Approves **payment requests** up to the **expense threshold** (default ₦500,000) when you have `finance.approve`.
 - Above that amount, **MD/CEO** (or admin) must approve.
 - Use **Workspace → Unfiled** to clear items missing a **filing reference** after completion.
 - **Inter-branch requests**: create via `POST /api/office/inter-branch-requests` (UI can be wired later); only branch managers create them.

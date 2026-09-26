@@ -193,7 +193,7 @@ Extend article **`refund-headroom-categories`** and **`refund-approval-workflow`
 | `duplicate-payment-alert` | Override needs audit reason |
 | `receipt-reversal-process` | Reverse → re-post; never overwrite history |
 | `finance-receipt-clearance` | Pending → Cleared; link cashier desk |
-| New: `payment-request-thresholds` | Office PR: BM ≤ **₦200,000** default; above → MD |
+| New: `payment-request-thresholds` | Office PR: BM ≤ **₦500,000** default; above → MD |
 
 ---
 

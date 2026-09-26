@@ -278,7 +278,7 @@ Canonical definitions: `server/auth.js` → `ROLE_DEFINITIONS`.
 | **Permissions** | Sales manage, quotations, refunds approve, operations manage, production, deliveries, material incident approve, team HR |
 | **Allowed** | `/manager`, `/sales`, `/operations`, `/team-hr` |
 | **Restricted** | Main `/hr`, `/executive-hr`, `/accounting`, broad `/accounts` |
-| **Approval authority** | Refunds (below MD threshold), payment requests ≤₦200k (default), price-floor exceptions (BM step), material incidents, team leave/loan endorse |
+| **Approval authority** | Refunds (below MD threshold), payment requests ≤₦500k (default), price-floor exceptions (BM step), material incidents, team leave/loan endorse |
 
 ### 3.6 Sales Officer (`sales_staff`)
 

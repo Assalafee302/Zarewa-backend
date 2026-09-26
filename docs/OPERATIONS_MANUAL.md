@@ -236,7 +236,7 @@ With **`ZAREWA_EMPTY_SEED=1`** on a fresh database, numbering starts at **0001**
 
 Configurable under **Settings → Governance → Office approval thresholds**:
 
-- **Payment requests:** branch manager approves up to expense threshold (default **₦200,000**); above requires MD/admin.
+- **Payment requests:** branch manager approves up to expense threshold (default **₦500,000**); above requires MD/admin.
 - **Refunds:** executive sign-off above refund threshold (default **₦1,000,000**).
 
 ### 5.3 Filing references

@@ -4,7 +4,10 @@
  * Frontend copies via `npm run sync:shared` → src/shared/lib/execApprovalTier.js
  */
 
-import { REFUND_MD_APPROVAL_THRESHOLD_NGN } from '../workspaceGovernance.js';
+import {
+  EXPENSE_MD_APPROVAL_THRESHOLD_NGN,
+  REFUND_MD_APPROVAL_THRESHOLD_NGN,
+} from '../workspaceGovernance.js';
 import {
   normalizeRefundReasonCategoriesForApi,
   refundCategoriesRequireMdApproval,
@@ -28,8 +31,6 @@ const MD_ONLY_KINDS = new Set([
   'staff_purchase_credit',
 ]);
 
-const DEFAULT_EXPENSE_MD_THRESHOLD_NGN = 200_000;
-
 /**
  * @param {object | null | undefined} item
  * @param {{ refundExecutiveThresholdNgn?: number; expenseExecutiveThresholdNgn?: number }} [limits]
@@ -42,7 +43,7 @@ export function classifyExecWorkTrayApprovalTier(item, limits = {}) {
     Number(item?.amountNgn ?? row.amount_ngn ?? row.amount_requested_ngn ?? 0) || 0
   );
   const refundHi = Number(limits.refundExecutiveThresholdNgn) || REFUND_MD_APPROVAL_THRESHOLD_NGN;
-  const expenseHi = Number(limits.expenseExecutiveThresholdNgn) || DEFAULT_EXPENSE_MD_THRESHOLD_NGN;
+  const expenseHi = Number(limits.expenseExecutiveThresholdNgn) || EXPENSE_MD_APPROVAL_THRESHOLD_NGN;
 
   if (MD_ONLY_KINDS.has(kind)) {
     return { tier: EXEC_APPROVAL_TIER_MD_ONLY, label: 'MD only' };

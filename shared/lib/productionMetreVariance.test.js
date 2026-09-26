@@ -31,6 +31,42 @@ describe('assessProductionMetreOverrun', () => {
     });
     expect(r.overrun).toBe(true);
     expect(r.overMeters).toBeCloseTo(91, 5);
+    expect(r.hardBlock).toBe(true);
+    expect(r.message).toMatch(/cannot approve/i);
+  });
+
+  it('hard-blocks a completed run many times the plan (57.5 m booked at 897 m)', () => {
+    const r = assessProductionMetreOverrun({
+      plannedMeters: 57.5,
+      flatsheetMeters: 897.2,
+    });
+    expect(r.hardBlock).toBe(true);
+    expect(r.overMeters).toBeCloseTo(839.7, 5);
+    expect(r.message).toMatch(/more than double/i);
+  });
+
+  it('hard-blocks a large flatsheet output when that plan bucket is zero', () => {
+    const r = assessProductionMetreOverrun({
+      stoneHybrid: true,
+      plannedMeters: 100,
+      plannedRoofM: 100,
+      plannedFlatsheetM: 0,
+      stoneMetersConsumed: 100,
+      flatsheetMeters: 897.2,
+    });
+    expect(r.hardBlock).toBe(true);
+    expect(r.message).toMatch(/flatsheet\/offcut/i);
+    expect(r.message).toMatch(/cannot approve/i);
+  });
+
+  it('still allows a small overrun to be waived with a manager remark', () => {
+    const r = assessProductionMetreOverrun({
+      plannedMeters: 57.5,
+      flatsheetMeters: 60,
+    });
+    expect(r.overrun).toBe(true);
+    expect(r.hardBlock).toBe(false);
+    expect(r.message).toMatch(/manager remark/i);
   });
 
   it('does not treat stone roofing + offcut flatsheet as a roofing overrun of the roof plan', () => {
@@ -44,6 +80,7 @@ describe('assessProductionMetreOverrun', () => {
     });
     expect(r.roofOverMeters).toBe(0);
     expect(r.flatsheetOverMeters).toBeCloseTo(22, 5);
+    expect(r.hardBlock).toBe(false);
     expect(r.overrun).toBe(true);
     expect(r.message).toMatch(/flatsheet\/offcut/i);
     expect(r.message).not.toMatch(/roofing/i);

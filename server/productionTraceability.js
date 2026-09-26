@@ -579,6 +579,13 @@ function meterOverrunRemarkGate(job, payload, { stoneHybrid, stoneMetersConsumed
     stoneMetersConsumed,
     flatsheetMeters,
   });
+  if (assessed.hardBlock) {
+    return {
+      ok: false,
+      error: assessed.message,
+      code: 'METER_OVERRUN_HARD_BLOCK',
+    };
+  }
   if (!assessed.overrun) return null;
   const remark = String(payload?.meterOverrunRemark ?? '').trim();
   if (remark.length >= 3) return null;
@@ -1335,11 +1342,14 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       const hasOpenInPayload =
         Object.prototype.hasOwnProperty.call(submitted, 'openingWeightKg') ||
         Object.prototype.hasOwnProperty.call(submitted, 'opening_weight_kg');
-      const openingWeightKg = roundWholeKg(
-        hasOpenInPayload
-          ? safeNumber(submitted.openingWeightKg ?? submitted.opening_weight_kg)
-          : safeNumber(allocation.opening_weight_kg)
-      );
+      const reservedOpening = roundWholeKg(safeNumber(allocation.opening_weight_kg));
+      if (
+        hasOpenInPayload &&
+        openingKgDiffersFromReserved(reservedOpening, submitted.openingWeightKg ?? submitted.opening_weight_kg)
+      ) {
+        throw new Error(OPENING_KG_LOCKED_ERROR);
+      }
+      const openingWeightKg = reservedOpening;
       const hasCoilInPayload = Object.prototype.hasOwnProperty.call(submitted, 'coilNo');
       const coilNoForRow = hasCoilInPayload
         ? String(submitted.coilNo ?? submitted.coil_no ?? '').trim()
@@ -1383,7 +1393,15 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       const qtyRemaining = clampNonNegative(
         coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
       );
-      if (consumedWeightKg > qtyRemaining + 0.0001) {
+      // Completed jobs already took this allocation's kg off the coil. A re-preview of the
+      // same roll must add that posted consumption back, or the row is skipped and the
+      // register says "enter closing kg" even though the run log is filled in.
+      const samePostedCoil = !hasCoilInPayload || coilNoForRow === coilKey;
+      const alreadyPostedKg =
+        jobStatus === 'Completed' && partialPreview && samePostedCoil
+          ? clampNonNegative(safeNumber(allocation.consumed_weight_kg))
+          : 0;
+      if (consumedWeightKg > qtyRemaining + alreadyPostedKg + 0.0001) {
         if (partialPreview) continue;
         throw new Error(`Coil ${rowLabel} does not have enough remaining kg.`);
       }
@@ -1591,12 +1609,18 @@ export function previewProductionConversion(db, jobID, payload = {}) {
   };
 }
 
+/** Opening kg is the reservation taken when the coil was allocated. The run log must not rewrite it. */
+const OPENING_KG_LOCKED_ERROR =
+  'Opening kg is the weight reserved when the coil was allocated. Change it before the job starts, or return a running job to Planned. It cannot be edited on the run log.';
+
+function openingKgDiffersFromReserved(storedOpeningKg, submittedOpeningKg) {
+  return Math.abs(roundWholeKg(safeNumber(submittedOpeningKg)) - roundWholeKg(safeNumber(storedOpeningKg))) > 0.0001;
+}
+
 /**
  * Persist closing kg, metres, and note on allocated coils while the job is running (no stock move, not completion).
- * Lets operators save progress between coils or from a phone before hitting Complete.
- *
- * Each reading may optionally include `coilNo` and/or `openingWeightKg` to correct a mistaken allocation
- * (same permission as production.manage). Reservations on coil_lots are adjusted; no finished-goods or COGS move.
+ * Coil number may still be corrected on the same line. Opening kg stays the reserved weight.
+ * Reservations on coil_lots are adjusted when the coil changes; no finished-goods or COGS move.
  */
 export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobID);
@@ -1630,11 +1654,14 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
     if (hasCoilInPayload && !nextCoil) {
       return { ok: false, error: 'Each run log line must have a coil number when coil is sent in the payload.' };
     }
-    const nextOpening = roundWholeKg(
-      hasOpenInPayload
-        ? safeNumber(line.openingWeightKg ?? line.opening_weight_kg)
-        : safeNumber(row.opening_weight_kg)
-    );
+    const reservedOpening = roundWholeKg(safeNumber(row.opening_weight_kg));
+    if (
+      hasOpenInPayload &&
+      openingKgDiffersFromReserved(reservedOpening, line.openingWeightKg ?? line.opening_weight_kg)
+    ) {
+      return { ok: false, error: OPENING_KG_LOCKED_ERROR, code: 'OPENING_KG_LOCKED' };
+    }
+    const nextOpening = reservedOpening;
     if (nextOpening <= 0) {
       return { ok: false, error: `Opening kg must be greater than 0 (line ${aid}).` };
     }
@@ -3613,6 +3640,9 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
       return { ok: false, error: `Allocation ${aid} is not in Completed state.` };
     }
     if (nextOpening <= 0) return { ok: false, error: `Line ${aid}: opening kg must be greater than 0.` };
+    if (openingKgDiffersFromReserved(row.opening_weight_kg, nextOpening)) {
+      return { ok: false, error: OPENING_KG_LOCKED_ERROR, code: 'OPENING_KG_LOCKED' };
+    }
     if (nextClosing < 0 || nextClosing > nextOpening + 0.0001) {
       return { ok: false, error: `Line ${aid}: closing kg must be between 0 and opening.` };
     }
@@ -3727,6 +3757,17 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     proposedJobOutputMetres: newTotalM + newOff,
   });
   if (!paidRefundGate.ok) return paidRefundGate;
+  const metreHard = assessProductionMetreOverrun({
+    stoneHybrid: jobIsStoneCoilHybrid(db, job),
+    plannedMeters: job.planned_meters,
+    plannedRoofM: job.planned_roof_m,
+    plannedFlatsheetM: job.planned_flatsheet_m,
+    stoneMetersConsumed: safeNumber(job.actual_roof_m),
+    flatsheetMeters: newTotalM + newOff,
+  });
+  if (metreHard.hardBlock) {
+    return { ok: false, error: metreHard.message, code: 'METER_OVERRUN_HARD_BLOCK' };
+  }
   const productId = String(job.product_id ?? '').trim();
   const atISO = normalizeIso(payload.atISO || nowIso());
 

@@ -4,6 +4,15 @@
 export const PRODUCTION_METRE_VARIANCE_WARN_PCT = 5;
 
 /**
+ * Completion hard stop. A manager remark may waive a normal overrun.
+ * It cannot waive output that is both more than double the plan and more than
+ * this many metres over it (a 57 m order booked at ~900 m). A small plan
+ * (for example 1 m flatsheet with yard offcut) stays on the remark path.
+ */
+export const PRODUCTION_METRE_OVERRUN_HARD_MULTIPLE = 2;
+export const PRODUCTION_METRE_OVERRUN_HARD_EXTRA_M = 50;
+
+/**
  * @param {unknown} plannedMeters
  * @param {unknown} actualMeters
  * @returns {number | null} signed variance % (actual relative to planned)
@@ -52,9 +61,22 @@ const OVERRUN_EPS = 0.001;
  *   overMeters: number,
  *   roofOverMeters: number,
  *   flatsheetOverMeters: number,
+ *   hardBlock: boolean,
  *   message: string | null,
  * }}
  */
+function metreOverrunIsHardBlock(planned, output, overMeters) {
+  if (!(output > 0)) return false;
+  if (!(overMeters > PRODUCTION_METRE_OVERRUN_HARD_EXTRA_M + OVERRUN_EPS)) return false;
+  if (!(planned > 0)) return true;
+  return output > planned * PRODUCTION_METRE_OVERRUN_HARD_MULTIPLE + OVERRUN_EPS;
+}
+
+function hardBlockMessage(scope, output, planned, overMeters) {
+  const what = scope ? `${scope} ` : '';
+  return `Output ${what}(${output.toFixed(2)} m) is ${overMeters.toFixed(2)} m over the plan (${planned.toFixed(2)} m) and more than double the order. Reduce the metres before completing. A manager remark cannot approve this overrun.`;
+}
+
 export function assessProductionMetreOverrun(input = {}) {
   const plannedMeters = Number(input.plannedMeters) || 0;
   const plannedRoofM = Number(input.plannedRoofM) || 0;
@@ -67,6 +89,9 @@ export function assessProductionMetreOverrun(input = {}) {
     const roofOver = Math.max(0, stoneM - roofPlan);
     const fsOver = Math.max(0, flatsheetM - plannedFlatsheetM);
     const overrun = roofOver > OVERRUN_EPS || fsOver > OVERRUN_EPS;
+    const roofHard = metreOverrunIsHardBlock(roofPlan, stoneM, roofOver);
+    const fsHard = metreOverrunIsHardBlock(plannedFlatsheetM, flatsheetM, fsOver);
+    const hardBlock = roofHard || fsHard;
     const parts = [];
     if (roofOver > OVERRUN_EPS) {
       parts.push(
@@ -78,27 +103,37 @@ export function assessProductionMetreOverrun(input = {}) {
         `flatsheet/offcut ${flatsheetM.toFixed(2)} m vs plan ${plannedFlatsheetM.toFixed(2)} m (${fsOver.toFixed(2)} m over)`
       );
     }
+    const hardParts = [];
+    if (roofHard) hardParts.push(hardBlockMessage('roofing', stoneM, roofPlan, roofOver));
+    if (fsHard) hardParts.push(hardBlockMessage('flatsheet/offcut', flatsheetM, plannedFlatsheetM, fsOver));
     return {
       overrun,
       overMeters: roofOver + fsOver,
       roofOverMeters: roofOver,
       flatsheetOverMeters: fsOver,
-      message: overrun
-        ? `Output exceeds planned metres (${parts.join('; ')}). Enter a manager overrun remark (at least 3 characters) or reduce metres.`
-        : null,
+      hardBlock,
+      message: hardBlock
+        ? hardParts.join(' ')
+        : overrun
+          ? `Output exceeds planned metres (${parts.join('; ')}). Enter a manager overrun remark (at least 3 characters) or reduce metres.`
+          : null,
     };
   }
 
   const output = flatsheetM > 0 ? flatsheetM : stoneM;
   const over = plannedMeters > 0 ? Math.max(0, output - plannedMeters) : 0;
   const overrun = plannedMeters > 0 && output > plannedMeters + OVERRUN_EPS;
+  const hardBlock = metreOverrunIsHardBlock(plannedMeters, output, over);
   return {
     overrun,
     overMeters: over,
     roofOverMeters: 0,
     flatsheetOverMeters: over,
-    message: overrun
-      ? `Output (${output.toFixed(2)} m) exceeds planned (${plannedMeters.toFixed(2)} m). Enter a manager remark explaining the overrun to continue.`
-      : null,
+    hardBlock,
+    message: hardBlock
+      ? hardBlockMessage('', output, plannedMeters, over)
+      : overrun
+        ? `Output (${output.toFixed(2)} m) exceeds planned (${plannedMeters.toFixed(2)} m). Enter a manager remark explaining the overrun to continue.`
+        : null,
   };
 }

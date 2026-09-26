@@ -3030,7 +3030,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const allocationId = alloc.body.allocations[0].id;
     await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-03-29' });
 
-    const overNoRemark = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+    const extreme = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
       completedAtISO: '2026-03-29',
       allocations: [
         {
@@ -3038,6 +3038,24 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
           coilNo: coilA,
           closingWeightKg: 400,
           metersProduced: 100,
+          finishCoil: false,
+        },
+      ],
+      offcutInventoryMeters: 3,
+      meterOverrunRemark: 'Manager approved overrun — site measure exceeded cutting list.',
+    });
+    expect(extreme.status).toBe(400);
+    expect(extreme.body.code).toBe('METER_OVERRUN_HARD_BLOCK');
+    expect(String(extreme.body.error || '')).toMatch(/cannot approve|double/i);
+
+    const overNoRemark = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29',
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 760,
+          metersProduced: 10,
           finishCoil: false,
         },
       ],
@@ -3052,8 +3070,8 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         {
           allocationId,
           coilNo: coilA,
-          closingWeightKg: 400,
-          metersProduced: 100,
+          closingWeightKg: 760,
+          metersProduced: 10,
           finishCoil: false,
         },
       ],
@@ -3061,7 +3079,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       meterOverrunRemark: 'Manager approved overrun — site measure exceeded cutting list.',
     });
     expect(overOk.status).toBe(200);
-    expect(overOk.body.actualMeters).toBeCloseTo(103, 3);
+    expect(overOk.body.actualMeters).toBeCloseTo(13, 3);
   });
 
   it('completion-coil-corrections sets actual_meters to coil sum plus stored offcutInventoryMeters', async () => {
@@ -3869,7 +3887,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(coils.length).toBe(2);
   });
 
-  it('POST coil-run-log corrects opening kg and coil identity while job is running', async () => {
+  it('POST coil-run-log rejects opening kg edits and still allows a coil change', async () => {
     const sup = await agent.post('/api/suppliers').send({ name: 'RunLog Correct Sup', city: 'Test' });
     expect(sup.status).toBe(201);
     const mkGrn = async (coilNo, lineKey) => {
@@ -3949,23 +3967,25 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
           allocationId: allocId,
           coilNo: 'CL-RLOG-C1',
           openingWeightKg: 1500,
-          closingWeightKg: 0,
-          metersProduced: 0,
+          closingWeightKg: 1400,
+          metersProduced: 10,
           note: '',
         },
       ],
     });
-    expect(r1.status).toBe(200);
-    expect(r1.body.ok).toBe(true);
-    expect(r1.body.allocations[0].openingWeightKg).toBe(1500);
+    expect(r1.status).toBe(400);
+    expect(r1.body.code).toBe('OPENING_KG_LOCKED');
+    expect(String(r1.body.error || '')).toMatch(/opening kg/i);
+    const still = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
+    expect(still.body.allocations[0].openingWeightKg).toBe(2000);
     const r2 = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-run-log`).send({
       readings: [
         {
           allocationId: allocId,
           coilNo: 'CL-RLOG-C2',
-          openingWeightKg: 1200,
-          closingWeightKg: 0,
-          metersProduced: 0,
+          openingWeightKg: 2000,
+          closingWeightKg: 1800,
+          metersProduced: 10,
           note: 'wrong coil typed',
         },
       ],
@@ -3973,7 +3993,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(r2.status).toBe(200);
     expect(r2.body.ok).toBe(true);
     expect(r2.body.allocations[0].coilNo).toBe('CL-RLOG-C2');
-    expect(r2.body.allocations[0].openingWeightKg).toBe(1200);
+    expect(r2.body.allocations[0].openingWeightKg).toBe(2000);
   });
 
   it('PATCH manager-review-signoff lets branch manager clear without a KPI code', async () => {

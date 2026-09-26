@@ -2,6 +2,7 @@ import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines }
 import {
   coilProducedMetersFromProductionJobs,
   jobActualMetersFromProductionJobs,
+  jobEffectiveOutputMetresForRefund,
   jobOutputMetresForUnproducedRefund,
   producedMetersForUnproducedRefund,
 } from './refundCoilProducedMeters.js';
@@ -44,6 +45,7 @@ export function buildRefundProductionFulfillmentSummary(db, quote, productionJob
     const offcutInventoryMeters =
       Number(j.offcut_inventory_meters ?? j.offcutInventoryMeters) || 0;
     const jobCoilMeters = jobOutputMetresForUnproducedRefund(db, j);
+    const jobEffectiveMeters = jobEffectiveOutputMetresForRefund(db, j);
     let outputSource = 'none';
     if (String(status).toLowerCase() === 'completed') {
       if (jobCoilMeters > 0 && rawActualMeters > jobCoilMeters + 0.001) outputSource = 'coil_and_offcut';
@@ -56,10 +58,10 @@ export function buildRefundProductionFulfillmentSummary(db, quote, productionJob
       jobId,
       status,
       plannedMeters,
-      /** Effective produced metres (includes FG completion adjustments). */
-      actualMeters: jobCoilMeters > 0 ? jobCoilMeters : rawActualMeters,
+      /** Effective produced metres (includes FG, roof, and stone corrections). */
+      actualMeters: jobEffectiveMeters > 0 ? jobEffectiveMeters : rawActualMeters,
       offcutInventoryMeters,
-      eligibleProducedMeters: jobCoilMeters,
+      eligibleProducedMeters: jobEffectiveMeters,
       outputSource,
     };
   });

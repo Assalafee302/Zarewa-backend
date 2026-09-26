@@ -70,6 +70,49 @@ describe('refund preview — cancelled job with overpayment excess', () => {
     expect(overlap.ok).toBe(true);
   });
 
+  it('uses the completed job metres when an earlier job was cancelled', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roofing Sheet', qty: '40', unitPrice: '5000' }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT INTO quotations (
+        id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso
+      ) VALUES ('QT-SUPERSEDE', 'CUS-LAB', 'Refund Lab Customer', 200000, 226000, 'Paid', 'Finished', ?, '2026-05-02')`
+    ).run(lines);
+    db.prepare(
+      `INSERT INTO sales_receipts (
+        id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso,
+        finance_reconciliation_saved_at_iso, bank_confirmed_at_iso
+      ) VALUES (
+        'RCT-SUPERSEDE', 'CUS-LAB', 'Refund Lab Customer', 'QT-SUPERSEDE', 226000, 'Cleared', '2026-05-02',
+        '2026-05-02T12:00:00.000Z', '2026-05-02T12:00:00.000Z'
+      )`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_jobs (
+        job_id, quotation_ref, customer_id, customer_name, status, planned_meters, actual_meters, created_at_iso
+      ) VALUES ('PRO-OLD', 'QT-SUPERSEDE', 'CUS-LAB', 'Refund Lab Customer', 'Cancelled', 40, 8, '2026-05-01T00:00:00.000Z')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_jobs (
+        job_id, quotation_ref, customer_id, customer_name, status, planned_meters, actual_meters,
+        actual_roof_m, actual_flatsheet_m, created_at_iso
+      ) VALUES ('PRO-NEW', 'QT-SUPERSEDE', 'CUS-LAB', 'Refund Lab Customer', 'Completed', 40, 10, 30, 10, '2026-05-03T00:00:00.000Z')`
+    ).run();
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-SUPERSEDE' });
+    expect(prev.ok).toBe(true);
+    expect(prev.preview.cancelledNotProduced).toBe(false);
+    expect(prev.preview.producedMetersForUnproduced).toBe(40);
+    expect(prev.preview.economicFloor.producedOutputMeters).toBe(40);
+    const linesOut = prev.preview.suggestedLines.filter((l) => Math.round(Number(l.amountNgn) || 0) > 0);
+    expect(linesOut.map((l) => l.category)).not.toContain('Order cancellation');
+    expect(linesOut.find((l) => l.category === 'Overpayment')?.amountNgn).toBe(26_000);
+    expect(prev.preview.suggestedAmountNgn).toBe(26_000);
+  });
+
   it('exposes open production job when a non-terminal job remains on quote', () => {
     db.prepare(
       `INSERT INTO production_jobs (

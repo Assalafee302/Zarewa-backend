@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   coilProducedMetersFromProductionJobs,
   jobActualMetersFromProductionJobs,
+  jobEffectiveOutputMetresForRefund,
   jobOutputMetresForUnproducedRefund,
   producedMetersForUnproducedRefund,
 } from './refundCoilProducedMeters.js';
@@ -125,6 +126,22 @@ describe('refundCoilProducedMeters', () => {
     const job = { job_id: 'PRO-ADJ', status: 'Completed', actual_meters: 10 };
     expect(jobOutputMetresForUnproducedRefund(db, job)).toBeCloseTo(8.75, 5);
     expect(producedMetersForUnproducedRefund(db, [job])).toBeCloseTo(8.75, 5);
+  });
+
+  it('uses the corrected roof metres, not the earlier lower actual_meters, and ignores a cancelled job', () => {
+    const db = memDbWithCoils([]);
+    const cancelled = { job_id: 'PRO-OLD', status: 'Cancelled', actual_meters: 8 };
+    const completed = {
+      job_id: 'PRO-NEW',
+      status: 'Completed',
+      actual_meters: 12,
+      actual_roof_m: 40,
+      actual_flatsheet_m: 12,
+    };
+    expect(jobEffectiveOutputMetresForRefund(db, cancelled)).toBe(0);
+    expect(jobEffectiveOutputMetresForRefund(db, completed)).toBe(52);
+    expect(producedMetersForUnproducedRefund(db, [cancelled, completed])).toBe(52);
+    expect(producedMetersForUnproducedRefund(db, [cancelled, completed], { isStoneMeterQuote: true })).toBe(40);
   });
 
   it('producedMetersForUnproducedRefund applies FG adjustments on stone meter quotes', () => {

@@ -45,7 +45,7 @@ import {
   isStoneFlatsheetQuotationLine,
   validateQuotationLineIntegrity,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
-import { coilProducedMetersFromProductionJobs, jobOutputMetresForUnproducedRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
+import { coilProducedMetersFromProductionJobs, jobEffectiveOutputMetresForRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { quotedAboveFloorCreditNgn } from '../shared/lib/refundQuotedAboveFloor.js';
 import {
@@ -1284,7 +1284,7 @@ function sameGaugeProducedMetresForFloorDelta(db, quote, productionJobs) {
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
   let sameM = 0;
   for (const j of productionJobs || []) {
-    const outputM = jobOutputMetresForUnproducedRefund(db, j);
+    const outputM = jobEffectiveOutputMetresForRefund(db, j);
     const jobId = String(j?.job_id ?? j?.jobID ?? '').trim();
     const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId).filter(
       (g) => (Number(g.meters) || 0) > 0.001
@@ -1321,7 +1321,7 @@ function quotedWorkbookFloorPpmForCommission(db, quote, productionJobs, pricingA
   const quotedGd = quotedGaugeDesignForCommission(quote?.lines_json);
   const mkFromQuote = materialPricingMaterialKeyFromQuote(db, quote);
   const ctxJob =
-    (productionJobs || []).find((jj) => jobOutputMetresForUnproducedRefund(db, jj) > 0.001) ||
+    (productionJobs || []).find((jj) => jobEffectiveOutputMetresForRefund(db, jj) > 0.001) ||
     (productionJobs || [])[0] ||
     null;
   const mkFromJob = ctxJob ? materialPricingMaterialKeyFromJob(db, ctxJob) : null;
@@ -1662,7 +1662,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
   for (const j of productionJobs || []) {
     const st = String(j?.status ?? '').trim().toLowerCase();
     if (st !== 'completed') continue;
-    const outputM = jobOutputMetresForUnproducedRefund(db, j);
+    const outputM = jobEffectiveOutputMetresForRefund(db, j);
     if (outputM <= 0) continue;
     const jobId = String(j.job_id ?? j.jobID ?? '').trim();
     const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId).filter((g) => (Number(g.meters) || 0) > 0.001);
@@ -4599,6 +4599,16 @@ export function previewRefundRequest(db, payload) {
         : producedMetersForUnproducedRefund(db, productionJobs, {
             isStoneMeterQuote: stoneMeterQuoteForUnproduced,
           });
+  // Completed-job effective metres (roof/stone corrections and FG adjustments). A cancelled
+  // earlier job is not the output record once a later job was completed and saved.
+  const completedEffectiveOutputM = productionJobs.reduce(
+    (sum, j) => sum + jobEffectiveOutputMetresForRefund(db, j),
+    0
+  );
+  const cancelledNotProduced =
+    hasCancelledProductionJob &&
+    completedEffectiveOutputM <= 0.001 &&
+    producedMetersForUnproduced <= 0.001;
   // Keep preview.actualMeters aligned with refund math (not raw production_jobs.actual_meters).
   const actualMeters =
     actualMetersOverride != null
@@ -4620,7 +4630,7 @@ export function previewRefundRequest(db, payload) {
       'Material has been marked delivered for this quotation; order cancellation and unproduced-meterage refunds are not allowed.'
     );
   }
-  if (productionFulfillment.fullyProducedRoofing && !hasCancelledProductionJob) {
+  if (productionFulfillment.fullyProducedRoofing && !cancelledNotProduced) {
     if (!blockedRefundCategories.includes('Unproduced meterage')) {
       blockedRefundCategories.push('Unproduced meterage');
     }
@@ -4669,11 +4679,12 @@ export function previewRefundRequest(db, payload) {
   }
 
   // 1. Overpayment Auto-detection (RECEIPT total + OVERPAY_ADVANCE from split-till posting)
-  // Cancelled jobs use Order cancellation for the full cash path — do not also suggest
-  // Overpayment (same cash headroom; stacking exceeds the hard cap).
+  // A cancelled job with no later completed output uses Order cancellation for the full cash
+  // path — do not also suggest Overpayment (same cash headroom). A cancelled attempt that was
+  // replaced by a completed job is not that path.
   const overpaymentExcessNgn = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
   if (
-    !hasCancelledProductionJob &&
+    !cancelledNotProduced &&
     !hardBlockedCategories.has('Overpayment') &&
     overpaymentResidualNgn > 0
   ) {
@@ -5134,7 +5145,7 @@ export function previewRefundRequest(db, payload) {
     quotationRef &&
     overpaymentExcessNgn > 0 &&
     quoteTotalNgn > 0 &&
-    !hasCancelledProductionJob
+    !cancelledNotProduced
   ) {
     if (overpaymentResidualNgn <= 0) {
       warnings.push(
@@ -5195,7 +5206,7 @@ export function previewRefundRequest(db, payload) {
     if (hardBlockedCategories.has(cat)) continue;
     if (blockedRefundCategories.includes(cat)) continue;
     if (cat === 'Order cancellation') {
-      if (hasCancelledProductionJob) eligibleRefundCategories.push(cat);
+      if (cancelledNotProduced) eligibleRefundCategories.push(cat);
       continue;
     }
     if (cat === 'Unproduced meterage') {
@@ -5246,7 +5257,7 @@ export function previewRefundRequest(db, payload) {
     if (cat === 'MD discount') {
       if (
         hasCompletedProductionJob &&
-        !hasCancelledProductionJob &&
+        !cancelledNotProduced &&
         refundHardCapNgn != null &&
         refundHardCapNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN
       ) {
@@ -5444,7 +5455,7 @@ export function previewRefundRequest(db, payload) {
   let finalSuggestedLines = [...cappedSuggestedLines];
   const orderCancelDerivedCap = roundMoney(effectiveCategorySuggestedMaxNgn['Order cancellation'] || 0);
   if (
-    hasCancelledProductionJob &&
+    cancelledNotProduced &&
     !hardBlockedCategories.has('Order cancellation') &&
     orderCancelDerivedCap > 0
   ) {
@@ -5490,11 +5501,24 @@ export function previewRefundRequest(db, payload) {
         'Cancelled production on this quotation: preview uses Order cancellation only (full refundable cash, including any overpayment above quote). Overpayment and itemized unproduced/transport/installation/service lines were omitted to avoid double-counting — add them manually only if you are not claiming full cancellation.'
       );
     }
+  } else if (!cancelledNotProduced && hasCancelledProductionJob) {
+    warnings.push(
+      'An earlier production job on this quotation was cancelled. Refund metres and the economic floor use the completed job, including metre corrections saved after the first entry. Order cancellation is not used while that completed output is on file.'
+    );
   }
   const finalSuggestedAmountNgn = finalSuggestedLines.reduce(
     (sum, line) => sum + roundMoney(line.amountNgn),
     0
   );
+  if (refundHardCapNgn != null) {
+    const refundedForHeadroomNgn = Math.max(0, roundMoney(cashInNgn) - roundMoney(refundHardCapNgn));
+    remainingRefundableNgn = quotationRemainingRefundableNgn({
+      cashInNgn,
+      quoteTotalNgn,
+      totalRefundedNgn: refundedForHeadroomNgn,
+      suggestedLines: finalSuggestedLines,
+    });
+  }
 
   const openProductionJobRow = quotationRef ? quotationHasOpenProductionJob(db, quotationRef) : null;
   const refundEligibility =
@@ -5550,6 +5574,7 @@ export function previewRefundRequest(db, payload) {
       productionAlignmentIssues: alignmentIssues,
       economicFloor,
       hasCancelledProductionJob,
+      cancelledNotProduced,
       openProductionJob: openProductionJobRow
         ? { jobId: openProductionJobRow.job_id, status: openProductionJobRow.st }
         : null,

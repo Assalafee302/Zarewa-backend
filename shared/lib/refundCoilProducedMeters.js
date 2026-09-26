@@ -1,4 +1,4 @@
-import { jobStoneRoofingMetres } from './jobOutputMetres.js';
+import { jobStoneRoofingMetres, jobTotalOutputMetres } from './jobOutputMetres.js';
 
 /**
  * Metres drawn from coil allocations on production jobs (coil consumption only).
@@ -85,6 +85,25 @@ export function jobOutputMetresForUnproducedRefund(db, job) {
 }
 
 /**
+ * Finished metres that count for refund headroom on one job.
+ * Completed jobs only — a cancelled earlier entry is not the output record.
+ * Uses the higher of coil/actual/offcut, the production-screen split
+ * (roof + cladding + flatsheet), and stone-roof corrections, plus FG adjustments.
+ * A later save that only updates `actual_roof_m` or stone draw must not leave
+ * the refund on the original lower `actual_meters`.
+ */
+export function jobEffectiveOutputMetresForRefund(db, job) {
+  const st = String(job?.status ?? '').trim().toLowerCase();
+  if (st !== 'completed') return 0;
+  const jid = String(job?.job_id ?? job?.jobID ?? '').trim();
+  const fgAdj = fgCompletionAdjustmentMetresForJob(db, jid);
+  const coilPath = jobOutputMetresForUnproducedRefund(db, job);
+  const split = jobTotalOutputMetres(job);
+  const stoneRoof = jobStoneRoofingMetres(job, netStoneConsumptionMetresForJob(db, jid));
+  return Math.max(coilPath, split > 1e-9 ? split + fgAdj : 0, stoneRoof > 1e-9 ? stoneRoof + fgAdj : 0);
+}
+
+/**
  * Net stone-coated roofing metres drawn for a job (STONE_CONSUMPTION posts negative qty on draw).
  * Includes post-completion stone metres corrections, which restate these movements.
  */
@@ -127,7 +146,7 @@ export function producedMetersForUnproducedRefund(db, productionJobs, opts = {})
   }
   let sum = 0;
   for (const j of productionJobs) {
-    sum += jobOutputMetresForUnproducedRefund(db, j);
+    sum += jobEffectiveOutputMetresForRefund(db, j);
   }
   return sum;
 }

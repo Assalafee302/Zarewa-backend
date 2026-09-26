@@ -159,6 +159,32 @@ describe('buildRefundEconomicFloorSummary (unit)', () => {
     expect(summary.maxDefensibleRefundNgn).toBe(60_800);
   });
 
+  it('values corrected completed metres and ignores a cancelled earlier job', () => {
+    const db = mockFloorDb({ coilMetersByJob: {}, coilGaugeByJob: {} });
+    const quote = {
+      lines_json: JSON.stringify({ products: [{ name: 'Roofing Sheet', qty: 50, unitPrice: 4000 }] }),
+      branch_id: 'BR-KD',
+    };
+    const jobs = [
+      { job_id: 'PRO-OLD', status: 'Cancelled', actual_meters: 10 },
+      {
+        job_id: 'PRO-NEW',
+        status: 'Completed',
+        actual_meters: 10,
+        actual_roof_m: 40,
+        actual_flatsheet_m: 10,
+      },
+    ];
+    const summary = buildRefundEconomicFloorSummary(db, quote, jobs, {
+      cashInNgn: 226_000,
+      priorRefundedNgn: 0,
+    });
+    expect(summary.producedOutputMeters).toBe(50);
+    expect(summary.floorDeliveredValueNgn).toBe(200_000);
+    expect(summary.maxDefensibleRefundNgn).toBe(26_000);
+    expect(summary.jobRows.map((r) => r.jobId)).toEqual(['PRO-NEW']);
+  });
+
   it('values mixed coil gauges on one job with override ppm applied per slice', () => {
     // Override still applies one rate, but metres must not collapse to a single first-gauge label.
     const db = mockFloorDb({

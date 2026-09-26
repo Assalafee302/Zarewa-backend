@@ -205,6 +205,12 @@ import {
 } from './finance/partnerWalletCredit.js';
 import { voidCompanyRetentionForRefundTx } from './finance/refundCompanyRetentionLedger.js';
 import { savedCustomerPayoutAccount } from './sales/customerPayoutAccount.js';
+import {
+  applyQuoteCustomerSplitRemainder,
+  coerceRefundSplitRecipient,
+  normalizeRefundSplitRows,
+  resolveRefundSplitPayoutAccount,
+} from './sales/refundSplitCreate.js';
 import { refundCreditSettledNgn, refundCreditTargetsFor } from './sales/refundCreditLedger.js';
 
 /** Payee money out (till / wallet / credit) — not company cut. Kept local to avoid import cycles. */
@@ -3075,92 +3081,6 @@ function quotationHasUnclearedReceipts(db, quotationRef) {
   return Number(row?.c) > 0;
 }
 
-function normalizeRefundSplitRows(input) {
-  const rows = Array.isArray(input) ? input : [];
-  return rows
-    .map((r) => {
-      const kindRaw = String(r?.recipientKind ?? r?.recipient_kind ?? '').trim().toLowerCase();
-      const staffId = String(
-        r?.recipientAssociatedStaffID ?? r?.recipient_associated_staff_id ?? ''
-      ).trim();
-      const customerId = String(
-        r?.recipientCustomerID ?? r?.recipient_customer_id ?? r?.recipientId ?? ''
-      ).trim();
-      const amountNgn = roundMoney(r?.amountNgn ?? r?.amount_ngn);
-      const note = String(r?.note ?? '').trim();
-      const companyCutWaived = Boolean(
-        r?.companyCutWaived === true || r?.company_cut_waived === true || r?.waiveCompanyCut === true
-      );
-      const companyCutWaiverNote = String(
-        r?.companyCutWaiverNote ?? r?.company_cut_waiver_note ?? ''
-      ).trim();
-      const asStaff =
-        kindRaw === 'associated_staff' ||
-        kindRaw === 'staff' ||
-        (Boolean(staffId) && !customerId);
-      if (asStaff) {
-        const id = staffId || customerId;
-        return {
-          recipientKind: 'associated_staff',
-          recipientAssociatedStaffID: id,
-          recipientCustomerID: '',
-          amountNgn,
-          note,
-          companyCutWaived,
-          companyCutWaiverNote,
-        };
-      }
-      return {
-        recipientKind: 'customer',
-        recipientCustomerID: customerId,
-        recipientAssociatedStaffID: '',
-        amountNgn,
-        note,
-        companyCutWaived,
-        companyCutWaiverNote,
-      };
-    })
-    .filter(
-      (r) =>
-        r.amountNgn > 0 &&
-        ((r.recipientKind === 'associated_staff' && r.recipientAssociatedStaffID) ||
-          (r.recipientKind === 'customer' && r.recipientCustomerID))
-    );
-}
-
-function savedAssociatedStaffPayoutAccount(db, staffId) {
-  const id = String(staffId || '').trim();
-  if (!id) return null;
-  const row = db
-    .prepare(
-      `SELECT id, name, staff_type, status, bank_account_name, bank_name, bank_account_no
-       FROM associated_staff WHERE id = ?`
-    )
-    .get(id);
-  if (!row) return null;
-  if (String(row.status || 'Active').trim().toLowerCase() !== 'active') return null;
-  const bankAccountNo = String(row.bank_account_no || '').trim();
-  const bankName = String(row.bank_name || '').trim();
-  const bankAccountName = String(row.bank_account_name || '').trim();
-  if (!bankAccountNo || !bankName) return null;
-  return {
-    partyKind: 'associated_staff',
-    partyId: id,
-    partyName: String(row.name || '').trim(),
-    payeeName: bankAccountName || String(row.name || '').trim(),
-    payeeAccountNo: bankAccountNo,
-    payeeBankName: bankName,
-    staffType: String(row.staff_type || '').trim(),
-  };
-}
-
-function resolveRefundSplitPayoutAccount(db, split) {
-  if (String(split?.recipientKind || '').trim() === 'associated_staff') {
-    return savedAssociatedStaffPayoutAccount(db, split.recipientAssociatedStaffID);
-  }
-  return savedCustomerPayoutAccount(db, split.recipientCustomerID);
-}
-
 export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANCH_ID) {
   const customerID = String(payload.customerID ?? '').trim();
   const amountNgn = roundMoney(payload.amountNgn);
@@ -3203,14 +3123,6 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       return { ok: false, error: 'Select at least one refund reason category.' };
     }
 
-    const requestedSplits = normalizeRefundSplitRows(payload.refundSplits ?? payload.splitDistributions);
-    const splitTotalNgn = requestedSplits.reduce((s, r) => s + roundMoney(r.amountNgn), 0);
-    if (requestedSplits.length > 0 && Math.abs(splitTotalNgn - amountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
-      return {
-        ok: false,
-        error: `Split total (₦${splitTotalNgn.toLocaleString('en-NG')}) must equal refund amount (₦${amountNgn.toLocaleString('en-NG')}).`,
-      };
-    }
     const associatedStaffPolicyEnabled = /^(1|true|yes|on)$/i.test(
       String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')
     );
@@ -3219,9 +3131,23 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     const providedPayeeBankName = String(payload.payeeBankName ?? payload.payee_bank_name ?? '').trim();
     const customerSavedPayee = savedCustomerPayoutAccount(db, customerID);
 
+    let requestedSplits = normalizeRefundSplitRows(payload.refundSplits ?? payload.splitDistributions, {
+      quoteCustomerId: customerID,
+    }).map((s) => coerceRefundSplitRecipient(db, s));
+    requestedSplits = applyQuoteCustomerSplitRemainder(requestedSplits, amountNgn, customerID, {
+      customerHasBank: Boolean(customerSavedPayee),
+    });
+    const splitTotalNgn = requestedSplits.reduce((s, r) => s + roundMoney(r.amountNgn), 0);
+    if (requestedSplits.length > 0 && Math.abs(splitTotalNgn - amountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+      return {
+        ok: false,
+        error: `Split total (₦${splitTotalNgn.toLocaleString('en-NG')}) must equal refund amount (₦${amountNgn.toLocaleString('en-NG')}).`,
+      };
+    }
+
     const resolvedSplits = [];
     for (const split of requestedSplits) {
-      const acct = resolveRefundSplitPayoutAccount(db, split);
+      const acct = resolveRefundSplitPayoutAccount(db, split, refundBranchId);
       if (!acct) {
         const who =
           split.recipientKind === 'associated_staff'
@@ -4537,12 +4463,27 @@ export function previewRefundRequest(db, payload) {
   const hasCompletedProductionJob = productionJobs.some(
     (j) => String(j.status || '').trim().toLowerCase() === 'completed'
   );
+  const excludeRefundIdForPreview =
+    String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null;
   const existingRefunds = quotationRef
-    ? db
-        .prepare(
-          `SELECT * FROM customer_refunds WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
-        )
-        .all(quotationRef)
+    ? (
+        excludeRefundIdForPreview
+          ? db
+              .prepare(
+                `SELECT * FROM customer_refunds
+                 WHERE quotation_ref = ?
+                   AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
+                   AND refund_id != ?`
+              )
+              .all(quotationRef, excludeRefundIdForPreview)
+          : db
+              .prepare(
+                `SELECT * FROM customer_refunds
+                 WHERE quotation_ref = ?
+                   AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
+              )
+              .all(quotationRef)
+      )
     : [];
 
   const refundedCategories = new Set();
@@ -4610,10 +4551,9 @@ export function previewRefundRequest(db, payload) {
   const receiptCashNgn = cashBreakdown?.receiptCashNgn ?? paidOnQuoteNgn;
   const quoteTotalNgn = roundMoney(quote?.total_ngn);
   const pricingAsAtIso = quotationPricingAsAtIso(quote, db);
-  const excludeRefundIdForOverpay = String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null;
   const overpayAlreadyRefundedNgn = overpaymentAlreadyRefundedNgn(
     existingRefunds,
-    excludeRefundIdForOverpay
+    excludeRefundIdForPreview
   );
   const creditAppliedOutNgn = quotationUnlinkedOverpayCreditOutNgn(db, quotationRef);
   const overpaymentResidualNgn = quotationOverpaymentResidualNgn({
@@ -4896,7 +4836,11 @@ export function previewRefundRequest(db, payload) {
 
   if (quotationRef && !hardBlockedCategories.has('Accessory shortfall')) {
     const accSummary = accessoryFulfillmentSummaryForQuotation(db, quotationRef);
-    const shortfallCaps = loadActiveRefundShortfallCaps(db, quotationRef);
+    const shortfallCaps = loadActiveRefundShortfallCaps(
+      db,
+      quotationRef,
+      excludeRefundIdForPreview
+    );
     for (const a of accSummary) {
       const sf = Math.max(0, Number(a.shortfall) || 0);
       const alreadyQty =
@@ -4916,7 +4860,11 @@ export function previewRefundRequest(db, payload) {
   }
 
   if (quotationRef && quote?.lines_json && !hardBlockedCategories.has('Stone flatsheet shortfall')) {
-    const shortfallCaps = loadActiveRefundShortfallCaps(db, quotationRef);
+    const shortfallCaps = loadActiveRefundShortfallCaps(
+      db,
+      quotationRef,
+      excludeRefundIdForPreview
+    );
     for (const s of stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, quote.lines_json)) {
       const m2 = Number(s.shortfallM2) || 0;
       const key = `${normAccessoryNameKey(s.name)}|${s.lengthM}`;

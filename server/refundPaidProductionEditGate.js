@@ -41,8 +41,12 @@ export function loadPaidRefundProductionCaps(db, quotationRef) {
   return aggregatePaidShortfallsFromRefunds(rows);
 }
 
-/** Caps from all open + paid refunds (excludes rejected/cancelled) for refund preview delta netting. */
-export function loadActiveRefundShortfallCaps(db, quotationRef) {
+/**
+ * Caps from all open + paid refunds (excludes rejected/cancelled) for refund preview delta netting.
+ * Pass `excludeRefundId` when re-previewing the same request (approve / pay) so its own shortfall
+ * lines are not netted against itself.
+ */
+export function loadActiveRefundShortfallCaps(db, quotationRef, excludeRefundId = null) {
   const ref = String(quotationRef || '').trim();
   if (!ref) {
     return {
@@ -51,14 +55,25 @@ export function loadActiveRefundShortfallCaps(db, quotationRef) {
       stoneShortfallM2ByKey: new Map(),
     };
   }
-  const rows = db
-    .prepare(
-      `SELECT calculation_lines_json, status
-       FROM customer_refunds
-       WHERE quotation_ref = ?
-         AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
-    )
-    .all(ref);
+  const exclude = String(excludeRefundId || '').trim();
+  const rows = exclude
+    ? db
+        .prepare(
+          `SELECT calculation_lines_json, status
+           FROM customer_refunds
+           WHERE quotation_ref = ?
+             AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
+             AND refund_id != ?`
+        )
+        .all(ref, exclude)
+    : db
+        .prepare(
+          `SELECT calculation_lines_json, status
+           FROM customer_refunds
+           WHERE quotation_ref = ?
+             AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
+        )
+        .all(ref);
   return aggregateActiveRefundShortfallsFromRefunds(rows);
 }
 

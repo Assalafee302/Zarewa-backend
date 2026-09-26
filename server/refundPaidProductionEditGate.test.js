@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
 import {
   validateProducedMetresEditAgainstPaidRefunds,
   validateAccessoryCorrectionAgainstPaidRefunds,
+  loadActiveRefundShortfallCaps,
 } from './refundPaidProductionEditGate.js';
 
 describe('refundPaidProductionEditGate', () => {
@@ -10,24 +11,16 @@ describe('refundPaidProductionEditGate', () => {
 
   beforeEach(() => {
     db = createDatabase(':memory:');
-    db.exec(`
-      CREATE TABLE quotations (id TEXT PRIMARY KEY, lines_json TEXT);
-      CREATE TABLE production_jobs (
-        job_id TEXT PRIMARY KEY, quotation_ref TEXT, status TEXT, actual_meters REAL
-      );
-      CREATE TABLE production_completion_adjustments (
-        id TEXT PRIMARY KEY, job_id TEXT, delta_finished_goods_m REAL
-      );
-      CREATE TABLE customer_refunds (
-        refund_id TEXT PRIMARY KEY, quotation_ref TEXT, calculation_lines_json TEXT,
-        paid_amount_ngn INTEGER, status TEXT
-      );
-      CREATE TABLE production_job_accessory_usage (
-        job_id TEXT, quotation_ref TEXT, quote_line_id TEXT, name TEXT, supplied_qty REAL
-      );
-    `);
-    db.prepare(`INSERT INTO quotations (id, lines_json) VALUES (?, ?)`).run(
+    db.prepare(
+      `INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, lines_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
       'QT-CAP',
+      'CUS-X',
+      'Cap',
+      192000,
+      192000,
+      'Finished',
       JSON.stringify({
         products: [{ name: 'Roofing Sheet', qty: 40, unitPrice: 4800 }],
         accessories: [{ id: 'ACC-1', name: 'Ridge cap', qty: 20, unitPrice: 1000 }],
@@ -35,14 +28,20 @@ describe('refundPaidProductionEditGate', () => {
       })
     );
     db.prepare(
-      `INSERT INTO production_jobs (job_id, quotation_ref, status, actual_meters) VALUES (?, ?, ?, ?)`
-    ).run('PRO-CAP', 'QT-CAP', 'Completed', 28);
-    db.prepare(
-      `INSERT INTO customer_refunds (refund_id, quotation_ref, calculation_lines_json, paid_amount_ngn, status)
+      `INSERT INTO production_jobs (job_id, quotation_ref, status, actual_meters, created_at_iso)
        VALUES (?, ?, ?, ?, ?)`
+    ).run('PRO-CAP', 'QT-CAP', 'Completed', 28, '2026-04-01T12:00:00.000Z');
+    db.prepare(
+      `INSERT INTO customer_refunds (
+         refund_id, quotation_ref, customer_id, customer_name, amount_ngn,
+         calculation_lines_json, paid_amount_ngn, status
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       'RF-CAP',
       'QT-CAP',
+      'CUS-X',
+      'Cap',
+      57600,
       JSON.stringify([
         {
           category: 'Unproduced meterage',
@@ -54,6 +53,10 @@ describe('refundPaidProductionEditGate', () => {
       57600,
       'Paid'
     );
+  });
+
+  afterEach(() => {
+    db?.close();
   });
 
   it('blocks increasing produced metres above post-refund cap', () => {
@@ -77,9 +80,10 @@ describe('refundPaidProductionEditGate', () => {
       'RF-CAP'
     );
     db.prepare(
-      `INSERT INTO production_job_accessory_usage (job_id, quotation_ref, quote_line_id, name, supplied_qty)
-       VALUES ('PRO-CAP', 'QT-CAP', 'ACC-1', 'Ridge cap', 15)`
-    ).run();
+      `INSERT INTO production_job_accessory_usage
+         (id, job_id, quotation_ref, quote_line_id, name, ordered_qty, supplied_qty, posted_at_iso)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('PAU-CAP', 'PRO-CAP', 'QT-CAP', 'ACC-1', 'Ridge cap', 20, 15, '2026-04-01T12:00:00.000Z');
     const blocked = validateAccessoryCorrectionAgainstPaidRefunds(db, 'QT-CAP', 'PRO-CAP', [
       { quoteLineId: 'ACC-1', name: 'Ridge cap', suppliedQty: 16 },
     ]);
@@ -88,5 +92,25 @@ describe('refundPaidProductionEditGate', () => {
       { quoteLineId: 'ACC-1', name: 'Ridge cap', suppliedQty: 15 },
     ]);
     expect(allowed.ok).toBe(true);
+  });
+
+  it('loadActiveRefundShortfallCaps excludes the refund being re-previewed', () => {
+    db.prepare(`UPDATE customer_refunds SET calculation_lines_json = ?, status = ? WHERE refund_id = ?`).run(
+      JSON.stringify([
+        {
+          category: 'Accessory shortfall',
+          label: 'Accessory shortfall: Ridge cap (5 × ₦1,000)',
+          amountNgn: 5000,
+          include: true,
+        },
+      ]),
+      'Pending',
+      'RF-CAP'
+    );
+    const withSelf = loadActiveRefundShortfallCaps(db, 'QT-CAP');
+    expect(withSelf.accessoryShortfallByKey.get('ridge cap')).toBe(5);
+
+    const withoutSelf = loadActiveRefundShortfallCaps(db, 'QT-CAP', 'RF-CAP');
+    expect(withoutSelf.accessoryShortfallByKey.get('ridge cap') || 0).toBe(0);
   });
 });

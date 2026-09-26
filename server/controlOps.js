@@ -45,6 +45,11 @@ import {
   isStoneFlatsheetQuotationLine,
   validateQuotationLineIntegrity,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import {
+  matchesCorrugationService,
+  matchesInstallationService,
+  matchesTransportService,
+} from '../shared/lib/refundQuotedServiceKind.js';
 import { coilProducedMetersFromProductionJobs, jobEffectiveOutputMetresForRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { quotedAboveFloorCreditNgn } from '../shared/lib/refundQuotedAboveFloor.js';
@@ -945,7 +950,12 @@ function collectQuotationServices(db, quotationRef, quote) {
         const t = String(row?.type ?? row?.itemType ?? row?.category ?? row?.lineType ?? '')
           .trim()
           .toLowerCase();
-        if (t === 'service' || t === 'services') pushService(row);
+        const nl = serviceNameLower(row);
+        const namedService =
+          matchesTransportService(nl) ||
+          matchesInstallationService(nl) ||
+          matchesCorrugationService(nl);
+        if (t === 'service' || t === 'services' || namedService) pushService(row);
       }
     }
   } catch {
@@ -1905,37 +1915,6 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
     });
   }
   return issues;
-}
-
-function matchesTransportService(nameLower) {
-  if (!nameLower) return false;
-  return (
-    nameLower.includes('transport') ||
-    nameLower.includes('haulage') ||
-    nameLower.includes('hauling') ||
-    nameLower.includes('delivery') ||
-    nameLower.includes('logistic') ||
-    nameLower.includes('dispatch') ||
-    nameLower.includes('freight') ||
-    nameLower.includes('waybill')
-  );
-}
-
-function matchesInstallationService(nameLower) {
-  if (!nameLower) return false;
-  return (
-    nameLower.includes('install') ||
-    nameLower.includes('fitting') ||
-    nameLower.includes('erection') ||
-    nameLower.includes('mounting')
-  );
-}
-
-/** Only service exclusion from refund preview: corrugation is never suggested or counted as a refundable service line. */
-function matchesCorrugationService(nameLower) {
-  if (!nameLower) return false;
-  const n = String(nameLower).replace(/\s+/g, ' ').trim();
-  return n.includes('corrugation') || n.includes('currugation');
 }
 
 export function periodKeyFromDate(dateISO) {
@@ -4777,7 +4756,8 @@ export function previewRefundRequest(db, payload) {
     );
   }
 
-  // 3. Service refunds — transport / installation / other quoted services (bending, labour, etc.)
+  // 3. Service refunds — transport / installation (includes quoted labour) / other services.
+
   const quoteLines = collectQuotationServices(db, quotationRef, quote);
   const miscServiceLines = [];
   for (const s of quoteLines) {
@@ -4823,7 +4803,7 @@ export function previewRefundRequest(db, payload) {
     if (isInstall) {
       if (!hardBlockedCategories.has('Installation issue')) {
         suggestedLines.push({
-          label: `Unclaimed installation: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
+          label: `Unclaimed installation / labour: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
           amountNgn: amt,
           category: 'Installation issue',
         });
@@ -4838,7 +4818,7 @@ export function previewRefundRequest(db, payload) {
     if (totalMisc > 0) {
       const names = miscServiceLines.map((x) => x.name);
       suggestedLines.push({
-        label: `Quoted additional services (e.g. bending, labour): ${names.join('; ')} — ₦${totalMisc.toLocaleString('en-NG')} total`,
+        label: `Quoted additional services (e.g. bending): ${names.join('; ')} — ₦${totalMisc.toLocaleString('en-NG')} total`,
         amountNgn: totalMisc,
         category: 'Additional services',
       });

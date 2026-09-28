@@ -2478,6 +2478,80 @@ function isMeterBasisCoilPoLine(line) {
   );
 }
 
+function grnEntryIsNonCoil(product, productId) {
+  const pid = String(productId || '').trim();
+  const isFs =
+    product != null ? isStoneFlatsheetProductRow(product) : /^STONE-FS-/i.test(pid);
+  const isStone =
+    !isFs &&
+    (product != null
+      ? isStoneMeterProductRow(product) && !isStoneFlatsheetProductRow(product)
+      : /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid));
+  const isAcc =
+    product != null
+      ? /^ACC-/i.test(String(product.product_id || '').trim())
+      : /^ACC-/i.test(pid);
+  return isFs || isStone || isAcc;
+}
+
+function coilNoExists(db, coilNo) {
+  const wanted = String(coilNo || '').trim();
+  if (!wanted) return false;
+  const exact = db.prepare(`SELECT coil_no FROM coil_lots WHERE coil_no = ? LIMIT 1`).get(wanted);
+  if (exact) return true;
+  const folded = db
+    .prepare(`SELECT coil_no FROM coil_lots WHERE LOWER(coil_no) = LOWER(?) LIMIT 1`)
+    .get(wanted);
+  return Boolean(folded);
+}
+
+function coilNumberConflict(err) {
+  const msg = String(err?.message || err || '');
+  return /coil_lots/i.test(msg) && (/duplicate entry/i.test(msg) || /unique constraint/i.test(msg));
+}
+
+/**
+ * Next unused `CL-YY-####`.
+ * Invariant: `coil_lots.coil_no` is a global primary key (every branch, including consumed lots).
+ * The store desk only loads on-hand coils for the current branch, so numbering from that list collides.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} [year2]
+ * @param {string[]} [reserved]
+ */
+export function nextFreeClCoilNo(db, year2 = String(new Date().getFullYear()).slice(-2), reserved = []) {
+  const yy = String(year2 || '').replace(/\D/g, '').slice(-2).padStart(2, '0');
+  const re = new RegExp(`^CL-${yy}-(\\d+)$`, 'i');
+  let max = 0;
+  const rows = db.prepare(`SELECT coil_no FROM coil_lots WHERE LOWER(coil_no) LIKE ?`).all(`cl-${yy}-%`);
+  for (const row of rows) {
+    const m = String(row.coil_no || '').trim().match(re);
+    if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
+  }
+  for (const cn of reserved) {
+    const m = String(cn || '').trim().match(re);
+    if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
+  }
+  const taken = new Set((reserved || []).map((c) => String(c || '').trim().toLowerCase()).filter(Boolean));
+  let n = max + 1;
+  while (n < max + 100000) {
+    const candidate = `CL-${yy}-${String(n).padStart(4, '0')}`;
+    if (!taken.has(candidate.toLowerCase()) && !coilNoExists(db, candidate)) return candidate;
+    n += 1;
+  }
+  return `CL-${yy}-${String(n).padStart(4, '0')}`;
+}
+
+function coilNoTakenResult(db, coilYy, requested, reserved = []) {
+  const nextCoilNo = nextFreeClCoilNo(db, coilYy, reserved);
+  return {
+    ok: false,
+    code: 'COIL_NO_TAKEN',
+    takenCoilNo: requested,
+    nextCoilNo,
+    error: `Coil number ${requested} is already registered. Use a new number (next free is ${nextCoilNo}).`,
+  };
+}
+
 /** @param {import('better-sqlite3').Database} db */
 export function confirmGrn(
   db,
@@ -2622,11 +2696,24 @@ export function confirmGrn(
   const updLine = db.prepare(
     `UPDATE purchase_order_lines SET qty_received = qty_received + ? WHERE po_id = ? AND line_key = ?`
   );
-  const existingLots = db.prepare(`SELECT COUNT(*) AS c FROM coil_lots`).get().c;
   const coilYy = String(new Date().getFullYear()).slice(-2);
 
   const coilNumbers = [];
   const mdShortReceiptAlerts = [];
+  const claimedCoilNos = [];
+  for (const e of entries) {
+    const line = findPoLine(lines, e);
+    const product = getProductRowForWorkspace(db, e.productID, coilBranch);
+    const pid = String(line?.product_id || e.productID || '').trim();
+    if (grnEntryIsNonCoil(product, pid)) continue;
+    const requested = String(e.coilNo || '').trim();
+    if (!requested) continue;
+    const dupInBatch = claimedCoilNos.some((n) => n.toLowerCase() === requested.toLowerCase());
+    if (dupInBatch || coilNoExists(db, requested)) {
+      return coilNoTakenResult(db, coilYy, requested, claimedCoilNos);
+    }
+    claimedCoilNos.push(requested);
+  }
 
   function pushShortReceiptAlertIfNeeded(line, qtyAdded, refLabel) {
     const ordered = Number(line.qty_ordered) || 0;
@@ -2644,8 +2731,8 @@ export function confirmGrn(
     }
   }
 
+  try {
   db.transaction(() => {
-    let seq = existingLots;
     for (let i = 0; i < entries.length; i += 1) {
       const e = entries[i];
       const line = findPoLine(lines, e);
@@ -2772,9 +2859,8 @@ export function confirmGrn(
         continue;
       }
 
-      seq += 1;
-      const coilNo =
-        e.coilNo?.trim() || `CL-${coilYy}-${String(seq).padStart(4, '0')}`;
+      const requestedCoilNo = String(e.coilNo || '').trim();
+      const coilNo = requestedCoilNo || nextFreeClCoilNo(db, coilYy, coilNumbers);
       coilNumbers.push(coilNo);
       const wRawLot = e.weightKg != null && e.weightKg !== '' ? Number(e.weightKg) : null;
       const w = wRawLot != null && Number.isFinite(wRawLot) && wRawLot > 0 ? wRawLot : null;
@@ -2841,6 +2927,7 @@ export function confirmGrn(
         atISO: entryReceivedAtISO(lineDateISO),
         unitPriceNgn: econ.unitCostNgnPerKg ?? null,
         valueNgn: econ.landedCostNgn ?? null,
+        branchId: coilBranch,
       });
       const glR = tryPostGrnInventoryJournal(db, {
         entryDateISO: lineDateISO,
@@ -2910,14 +2997,26 @@ export function confirmGrn(
       }
     }
   })();
+  } catch (e) {
+    if (coilNumberConflict(e)) {
+      const fromMsg = String(e?.message || '').match(/Duplicate entry '([^']+)'/i);
+      const taken = fromMsg?.[1] || claimedCoilNos[0] || 'that coil';
+      return coilNoTakenResult(db, coilYy, taken, claimedCoilNos);
+    }
+    return { ok: false, error: String(e?.message || e || 'Could not post goods receipt.') };
+  }
 
   for (const alert of mdShortReceiptAlerts) {
-    notifyMdCoilShortReceipt(db, {
-      poID,
-      ...alert,
-      actor: opts?.actor,
-      branchId: coilBranch,
-    });
+    try {
+      notifyMdCoilShortReceipt(db, {
+        poID,
+        ...alert,
+        actor: opts?.actor,
+        branchId: coilBranch,
+      });
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   return { ok: true, coilNos: coilNumbers, mdShortReceiptAlerts };

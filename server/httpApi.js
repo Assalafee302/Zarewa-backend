@@ -7970,33 +7970,69 @@ export function registerHttpApi(app, db) {
 
 
   app.post('/api/purchase-orders/:poId/grn', requirePermission('inventory.receive'), (req, res) => {
-    const poGate = assertPurchaseOrderIdInWorkspace(db, req, req.params.poId);
-    if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
-    const { entries, supplierID, supplierName, allowConversionMismatch } = req.body || {};
-    const allowMismatch =
-      Boolean(allowConversionMismatch) && userHasPermission(req.user, 'purchase_orders.manage');
-    const r = write.confirmGrn(
-      db,
-      req.params.poId,
-      entries || [],
-      supplierID,
-      supplierName,
-      req.workspaceBranchId || DEFAULT_BRANCH_ID,
-      { allowConversionMismatch: allowMismatch, actor: req.user }
-    );
-    if (r.ok && allowMismatch) {
-      appendAuditLog(db, {
-        actor: req.user,
-        action: 'inventory.grn_conversion_override',
-        entityKind: 'purchase_order',
-        entityId: req.params.poId,
-        note: 'GRN posted with conversion alignment override',
-      });
+    try {
+      const poGate = assertPurchaseOrderIdInWorkspace(db, req, req.params.poId);
+      if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
+      const { entries, supplierID, supplierName, allowConversionMismatch } = req.body || {};
+      const allowMismatch =
+        Boolean(allowConversionMismatch) && userHasPermission(req.user, 'purchase_orders.manage');
+      const r = write.confirmGrn(
+        db,
+        req.params.poId,
+        entries || [],
+        supplierID,
+        supplierName,
+        req.workspaceBranchId || DEFAULT_BRANCH_ID,
+        { allowConversionMismatch: allowMismatch, actor: req.user }
+      );
+      if (r.ok && allowMismatch) {
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'inventory.grn_conversion_override',
+          entityKind: 'purchase_order',
+          entityId: req.params.poId,
+          note: 'GRN posted with conversion alignment override',
+        });
+      }
+      if (r.ok) {
+        try {
+          syncInTransitLoadFromGrn(db, req.params.poId, entries || [], req.user);
+        } catch (syncErr) {
+          console.error(syncErr);
+        }
+      }
+      if (!r.ok) return res.status(400).json(r);
+      let payload = r;
+      try {
+        payload = withPurchaseOrderWriteDelta(db, req.params.poId, r);
+      } catch (deltaErr) {
+        console.error(deltaErr);
+      }
+      res.status(200).json(payload);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
     }
-    if (r.ok) syncInTransitLoadFromGrn(db, req.params.poId, entries || [], req.user);
-    if (!r.ok) return res.status(400).json(r);
-    res.status(200).json(withPurchaseOrderWriteDelta(db, req.params.poId, r));
   });
+
+  app.get(
+    '/api/coil-lots/next-number',
+    requirePermission([
+      'inventory.receive',
+      'purchase_orders.manage',
+      'operations.manage',
+      'production.manage',
+    ]),
+    (req, res) => {
+      try {
+        const coilNo = write.nextFreeClCoilNo(db);
+        res.json({ ok: true, coilNo });
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
 
   app.post('/api/inventory/stone-receipt', requirePermission('inventory.receive'), (req, res) => {
     try {

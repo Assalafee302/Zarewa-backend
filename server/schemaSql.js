@@ -257,6 +257,26 @@ CREATE TABLE IF NOT EXISTS coil_lots (
   unit_cost_ngn_per_kg INTEGER
 );
 
+-- Store asks to fix a mistyped coil number. The number does not change until a branch manager approves.
+CREATE TABLE IF NOT EXISTS coil_number_corrections (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL,
+  from_coil_no TEXT NOT NULL,
+  to_coil_no TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  requested_by_user_id TEXT,
+  requested_by_display TEXT,
+  requested_at_iso TEXT NOT NULL,
+  decided_by_user_id TEXT,
+  decided_by_display TEXT,
+  decided_at_iso TEXT,
+  decision_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_coil_number_corrections_branch_status
+  ON coil_number_corrections(branch_id, status, requested_at_iso DESC);
+
 CREATE TABLE IF NOT EXISTS stock_movements (
   id TEXT PRIMARY KEY,
   at_iso TEXT NOT NULL,

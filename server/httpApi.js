@@ -40,6 +40,7 @@ import {
   salesBridgeReportRows,
 } from '../shared/lib/standardReportsSales.js';
 import { expensesPackReport, refundsPackReport } from '../shared/lib/standardReportsFinance.js';
+import { listPaidCompanyRetentionWithdrawals } from './finance/refundCompanyRetentionLedger.js';
 import {
   purchasesOrderedRows,
   purchasesPaidRows,
@@ -1041,6 +1042,7 @@ import { registerBranchRefundFreezeRoutes } from './http/branchRefundFreezeRoute
 import { registerExpenseTreasuryCatchUpRoutes } from './http/expenseTreasuryCatchUpRoutes.js';
 import { registerCashierTillTruthRoutes } from './http/cashierTillTruthRoutes.js';
 import { registerReceiptBulkUnconfirmRoutes } from './http/receiptBulkUnconfirmRoutes.js';
+import { registerCoilNumberCorrectionRoutes } from './http/coilNumberCorrectionRoutes.js';
 
 export function registerHttpApi(app, db) {
   registerMobileApi(app, db);
@@ -1118,6 +1120,7 @@ export function registerHttpApi(app, db) {
   registerExpenseTreasuryCatchUpRoutes(app, db);
   registerCashierTillTruthRoutes(app, db);
   registerReceiptBulkUnconfirmRoutes(app, db);
+  registerCoilNumberCorrectionRoutes(app, db);
   registerWorkspaceChatRoutes(app, db);
 
   /** Accounting sub-ledgers — Creditors, Debtors, Assets register. */
@@ -5092,7 +5095,19 @@ export function registerHttpApi(app, db) {
         branchScope === 'ALL' ? 'ALL' : branchScope,
         financeHistoryListOpts()
       );
-      const pack = refundsPackReport(refunds, startDate, endDate, creditApps);
+      const companyCutWithdrawals = listPaidCompanyRetentionWithdrawals(
+        db,
+        branchScope,
+        startDate,
+        endDate
+      );
+      const pack = refundsPackReport(
+        refunds,
+        startDate,
+        endDate,
+        creditApps,
+        companyCutWithdrawals
+      );
       res.json({ ok: true, startDate, endDate, branchScope, ...pack });
     } catch (e) {
       console.error(e);

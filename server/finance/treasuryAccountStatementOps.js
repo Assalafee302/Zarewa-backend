@@ -17,6 +17,13 @@ function sourceLabel(row) {
   if (kind === 'PAYMENT_REQUEST' || String(row.type || '').includes('PAYMENT_REQUEST')) return 'Payment req';
   if (kind === 'LEDGER_RECEIPT' || row.type === 'RECEIPT_IN') return 'Sales receipt';
   if (kind === 'REFUND' || kind === 'REFUND_PAYOUT' || row.type === 'REFUND_PAYOUT') return 'Refund';
+  if (
+    kind === 'REFUND_COMPANY_RETENTION' ||
+    kind === 'REFUND_COMPANY_CUT_PAYOUT' ||
+    row.type === 'REFUND_COMPANY_CUT_PAYOUT'
+  ) {
+    return 'Company cut';
+  }
   if (kind === 'TREASURY_TRANSFER' || String(row.type || '').includes('TRANSFER')) return 'Transfer';
   return row.type || kind || 'Movement';
 }

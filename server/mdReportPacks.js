@@ -17,6 +17,7 @@ import {
 } from './readModel.js';
 import { receiptsRegisterReportRows, refundCreditApplyReportRows } from '../shared/lib/standardReportsSales.js';
 import { expensesPackReport, refundsPackReport } from '../shared/lib/standardReportsFinance.js';
+import { listPaidCompanyRetentionWithdrawals } from './finance/refundCompanyRetentionLedger.js';
 import { purchasesOrderedRows } from '../shared/lib/standardReportsPurchases.js';
 import { listRefundCreditApplications } from './refundCreditApplyOps.js';
 import { financeHistoryListOpts } from './listQueryOpts.js';
@@ -67,7 +68,13 @@ export function buildExecutiveDailyPack(db, opts = {}) {
   const creditApplyRows = refundCreditApplyReportRows(creditApps, date, date);
 
   const refunds = listRefunds(db, branchScope).filter((r) => inRange(r.requestedAtISO, date, date));
-  const refundsPack = refundsPackReport(listRefunds(db, branchScope), date, date, creditApps);
+  const refundsPack = refundsPackReport(
+    listRefunds(db, branchScope),
+    date,
+    date,
+    creditApps,
+    listPaidCompanyRetentionWithdrawals(db, branchScope, date, date)
+  );
   const paymentRequests = listPaymentRequests(db, branchScope).filter((p) =>
     inRange(p.requestDate || p.request_date, date, date)
   );
@@ -117,6 +124,7 @@ export function buildExecutiveDailyPack(db, opts = {}) {
       refundsRequestedCount: refunds.length,
       refundCreditAppliedLines: refundsPack.creditAppliedInPeriod?.length || 0,
       refundCreditAppliedTotalNgn: refundsPack.summary?.creditAppliedTotalNgn || 0,
+      refundCompanyCutWithdrawnNgn: refundsPack.summary?.companyCutWithdrawnNgn || 0,
       paymentRequestsCount: paymentRequests.length,
       productionJobsCompletedCount: jobsCompleted.length,
     },
@@ -156,7 +164,8 @@ export function buildExecutiveWeeklyPack(db, opts = {}) {
     listRefunds(db, branchScope),
     startDate,
     endDate,
-    creditApps
+    creditApps,
+    listPaidCompanyRetentionWithdrawals(db, branchScope, startDate, endDate)
   );
 
   const expenses = listExpenses(db, branchScope);
@@ -203,6 +212,7 @@ export function buildExecutiveWeeklyPack(db, opts = {}) {
       refundsInWeekCount: refunds.length,
       refundCreditAppliedLines: refundsPack.creditAppliedInPeriod?.length || 0,
       refundCreditAppliedTotalNgn: refundsPack.summary?.creditAppliedTotalNgn || 0,
+      refundCompanyCutWithdrawnNgn: refundsPack.summary?.companyCutWithdrawnNgn || 0,
     },
     procurement: {
       purchaseOrdersInWeekCount: Array.isArray(pos) ? pos.length : 0,

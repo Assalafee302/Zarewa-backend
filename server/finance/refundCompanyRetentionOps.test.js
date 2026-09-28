@@ -3,6 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { actorMayCashApproveCompanyRetentionWithdrawal } from './refundCompanyRetentionOps.js';
+import { companyRetentionAvailability } from './refundCompanyRetentionLedger.js';
 
 describe('actorMayCashApproveCompanyRetentionWithdrawal', () => {
   it('allows Branch Manager role keys', () => {
@@ -15,6 +16,21 @@ describe('actorMayCashApproveCompanyRetentionWithdrawal', () => {
     expect(
       actorMayCashApproveCompanyRetentionWithdrawal({ roleKey: 'cashier', permissions: ['*'] })
     ).toBe(true);
+  });
+
+  it('locks an open withdrawal until it is paid or cancelled', () => {
+    expect(
+      companyRetentionAvailability({ totalOpenNgn: 961_510, reservedNgn: 50_000, cooldownActive: false })
+    ).toEqual({ availableNgn: 911_510, heldNgn: 50_000, reservedNgn: 50_000 });
+    expect(
+      companyRetentionAvailability({ totalOpenNgn: 911_510, reservedNgn: 0, cooldownActive: false })
+    ).toEqual({ availableNgn: 911_510, heldNgn: 0, reservedNgn: 0 });
+  });
+
+  it('locks the whole balance during the post-payout cooldown', () => {
+    expect(
+      companyRetentionAvailability({ totalOpenNgn: 100_000, reservedNgn: 0, cooldownActive: true })
+    ).toMatchObject({ availableNgn: 0, heldNgn: 100_000 });
   });
 
   it('blocks cashier and finance_manager without BM role', () => {

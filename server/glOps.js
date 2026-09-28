@@ -833,6 +833,36 @@ export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
   }
 }
 
+/**
+ * Company-cut retention payout: cash leaves the till to the company payee.
+ * Dr drawings (3200), Cr cash (1000). Idempotent per withdrawal id.
+ */
+export function tryPostCompanyCutWithdrawalGlTx(db, payload) {
+  if (!isGlPostingEnabled()) return skippedGlPostingResult();
+  const withdrawalId = String(payload.withdrawalId || '').trim();
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  if (!withdrawalId || amt <= 0) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid company-cut withdrawal GL date.' };
+  ensureSupplementalGlAccounts(db);
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: `Company cut retention withdrawal ${withdrawalId}`,
+      sourceKind: 'COMPANY_CUT_WITHDRAWAL_GL',
+      sourceId: withdrawalId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: '3200', debitNgn: amt, memo: withdrawalId },
+        { accountCode: '1000', creditNgn: amt, memo: withdrawalId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 /** Dr Cash (1000), Cr suspense (2150) — when Finance registers an unlinked bank deposit. */
 export function tryPostBankDepositRegisterGl(db, payload) {
   const depositId = String(payload.depositId || '').trim();

@@ -1668,6 +1668,19 @@ function migrateRefundCompanyRetention2026(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_rcw_branch_status
       ON refund_company_retention_withdrawals(branch_id, status);
+
+    CREATE TABLE IF NOT EXISTS refund_company_retention_withdrawal_allocations (
+      id TEXT PRIMARY KEY,
+      withdrawal_id TEXT NOT NULL,
+      credit_entry_id TEXT NOT NULL,
+      refund_id TEXT,
+      amount_ngn INTEGER NOT NULL,
+      created_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rcw_alloc_withdrawal
+      ON refund_company_retention_withdrawal_allocations(withdrawal_id);
+    CREATE INDEX IF NOT EXISTS idx_rcw_alloc_refund
+      ON refund_company_retention_withdrawal_allocations(refund_id);
   `);
 
   const rcwCols = (() => {

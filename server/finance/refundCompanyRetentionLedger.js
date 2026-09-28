@@ -160,12 +160,30 @@ function branchScopeSql(alias, branchScope) {
   return { sql: ` AND trim(IFNULL(${alias}.branch_id, '')) = ?`, args: [scope] };
 }
 
+/**
+ * Withdrawable company-cut balance.
+ * An unpaid request reserves its amount (locked) until it is paid or cancelled.
+ * During the post-payout cooldown the whole open balance is locked.
+ */
+export function companyRetentionAvailability({
+  totalOpenNgn = 0,
+  reservedNgn = 0,
+  cooldownActive = false,
+} = {}) {
+  const open = roundMoney(totalOpenNgn);
+  const reserved = Math.max(0, roundMoney(reservedNgn));
+  const availableNgn = cooldownActive ? 0 : Math.max(0, open - reserved);
+  const heldNgn = Math.max(0, open - availableNgn);
+  return { availableNgn, heldNgn, reservedNgn: Math.min(reserved, open) };
+}
+
 export function mapWithdrawalRow(r) {
+  const status = trim(r.status);
   return {
     id: trim(r.id),
     branchId: trim(r.branch_id),
     amountNgn: roundMoney(r.amount_ngn),
-    status: trim(r.status),
+    status,
     payeeName: trim(r.payee_name),
     payeeBankName: trim(r.payee_bank_name),
     payeeAccountNo: trim(r.payee_account_no),
@@ -183,6 +201,10 @@ export function mapWithdrawalRow(r) {
     cancelledByName: trim(r.cancelled_by_name),
     cancelledAtIso: trim(r.cancelled_at_iso),
     paidAtIso: trim(r.paid_at_iso),
+    paidByName: trim(r.paid_by_name),
+    treasuryMovementId: trim(r.treasury_movement_id),
+    treasuryAccountId: trim(r.treasury_account_id),
+    canCancel: status === 'pending_bm' || status === 'approved',
   };
 }
 
@@ -233,7 +255,7 @@ export function companyRetentionWithdrawalCooldown(db, branchScope = 'ALL', nowI
   };
 }
 
-export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
+export function getCompanyRetentionSummary(db, branchScope = 'ALL', opts = {}) {
   const cooldownDays = refundCompanyCutWithdrawalCooldownDays();
   const tablesReady = refundCompanyRetentionTablesReady(db);
   if (!tablesReady) {
@@ -248,8 +270,11 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
       cooldownActive: false,
       nextWithdrawalAllowedAtIso: null,
       lastWithdrawalPaidAtIso: null,
+      reservedNgn: 0,
+      paidOutNgn: 0,
       credits: [],
       pendingWithdrawals: [],
+      recentWithdrawals: [],
     };
   }
   const { sql, args } = branchScopeSql('e', branchScope);
@@ -280,9 +305,6 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
 
   const totalOpenNgn = credits.reduce((s, c) => s + c.openNgn, 0);
   const cooldown = companyRetentionWithdrawalCooldown(db, branchScope);
-  // During inter-withdrawal cooldown the open balance is locked (not withdrawable yet).
-  const availableNgn = cooldown.cooldownActive ? 0 : totalOpenNgn;
-  const heldNgn = Math.max(0, totalOpenNgn - availableNgn);
 
   const { sql: wSql, args: wArgs } = branchScopeSql('w', branchScope);
   const pendingWithdrawals = db
@@ -296,12 +318,43 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
     .all(...wArgs)
     .map(mapWithdrawalRow);
 
+  const excludeWithdrawalId = trim(opts.excludeWithdrawalId);
+  const reservedRaw = pendingWithdrawals
+    .filter((w) => !excludeWithdrawalId || w.id !== excludeWithdrawalId)
+    .reduce((s, w) => s + w.amountNgn, 0);
+  const availability = companyRetentionAvailability({
+    totalOpenNgn,
+    reservedNgn: reservedRaw,
+    cooldownActive: cooldown.cooldownActive,
+  });
+
+  const recentWithdrawals = db
+    .prepare(
+      `SELECT w.*
+       FROM refund_company_retention_withdrawals w
+       WHERE w.status IN ('paid', 'cancelled', 'rejected')${wSql}
+       ORDER BY w.requested_at_iso DESC
+       LIMIT 20`
+    )
+    .all(...wArgs)
+    .map(mapWithdrawalRow);
+
+  const paidRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(w.amount_ngn), 0) AS s
+       FROM refund_company_retention_withdrawals w
+       WHERE w.status = 'paid'${wSql}`
+    )
+    .get(...wArgs);
+
   return {
     ok: true,
     tablesReady: true,
     totalOpenNgn,
-    availableNgn,
-    heldNgn,
+    availableNgn: availability.availableNgn,
+    heldNgn: availability.heldNgn,
+    reservedNgn: availability.reservedNgn,
+    paidOutNgn: roundMoney(paidRow?.s),
     holdDays: cooldownDays,
     cooldownDays,
     cooldownActive: cooldown.cooldownActive,
@@ -309,5 +362,59 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
     lastWithdrawalPaidAtIso: cooldown.lastWithdrawalPaidAtIso,
     credits,
     pendingWithdrawals,
+    recentWithdrawals,
   };
+}
+
+/**
+ * Paid company-cut withdrawals in a report window, with refund allocations when recorded.
+ */
+export function listPaidCompanyRetentionWithdrawals(db, branchScope = 'ALL', startDate = '', endDate = '') {
+  if (!tableExists(db, 'refund_company_retention_withdrawals')) return [];
+  const { sql, args } = branchScopeSql('w', branchScope);
+  const start = trim(startDate).slice(0, 10);
+  const end = trim(endDate).slice(0, 10);
+  let dateSql = '';
+  const dateArgs = [];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+    dateSql += ` AND SUBSTR(w.paid_at_iso, 1, 10) >= ?`;
+    dateArgs.push(start);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    dateSql += ` AND SUBSTR(w.paid_at_iso, 1, 10) <= ?`;
+    dateArgs.push(end);
+  }
+  const rows = db
+    .prepare(
+      `SELECT w.*
+       FROM refund_company_retention_withdrawals w
+       WHERE w.status = 'paid'${sql}${dateSql}
+       ORDER BY w.paid_at_iso ASC, w.id ASC`
+    )
+    .all(...args, ...dateArgs);
+  if (!rows.length) return [];
+
+  const allocById = new Map();
+  if (tableExists(db, 'refund_company_retention_withdrawal_allocations')) {
+    const ids = rows.map((r) => r.id);
+    const ph = ids.map(() => '?').join(', ');
+    const allocs = db
+      .prepare(
+        `SELECT withdrawal_id, refund_id, amount_ngn
+         FROM refund_company_retention_withdrawal_allocations
+         WHERE withdrawal_id IN (${ph})`
+      )
+      .all(...ids);
+    for (const a of allocs) {
+      const key = trim(a.withdrawal_id);
+      const list = allocById.get(key) || [];
+      list.push({ refundId: trim(a.refund_id), amountNgn: roundMoney(a.amount_ngn) });
+      allocById.set(key, list);
+    }
+  }
+
+  return rows.map((r) => ({
+    ...mapWithdrawalRow(r),
+    allocations: allocById.get(trim(r.id)) || [],
+  }));
 }

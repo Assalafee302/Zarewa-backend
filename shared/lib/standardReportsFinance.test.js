@@ -191,4 +191,30 @@ describe('refundsPackReport', () => {
     expect(creditAppliedInPeriod[0].usageNote).toMatch(/used on/);
     expect(summary.creditAppliedTotalNgn).toBe(40_000);
   });
+
+  it('includes a paid company-cut withdrawal as a refund-report deduction', () => {
+    const { paidInPeriod, summary, companyCutWithdrawalsInPeriod } = refundsPackReport(
+      [],
+      '2026-09-01',
+      '2026-09-30',
+      [],
+      [
+        {
+          id: 'RCW-KD-26-0002',
+          status: 'paid',
+          paidAtIso: '2026-09-20T12:00:00.000Z',
+          amountNgn: 50_000,
+          payeeName: 'Mansur Lawal Matazu',
+          payeeBankName: 'Keystone bank',
+          allocations: [{ refundId: 'RF-KD-26-1001', amountNgn: 50_000 }],
+        },
+      ]
+    );
+    expect(companyCutWithdrawalsInPeriod).toHaveLength(1);
+    expect(paidInPeriod[0].payoutKind).toBe('Company cut');
+    expect(paidInPeriod[0].amountNgn).toBe(50_000);
+    expect(paidInPeriod[0].reference).toContain('RF-KD-26-1001');
+    expect(summary.companyCutWithdrawnNgn).toBe(50_000);
+    expect(summary.paidTotalNgn).toBe(50_000);
+  });
 });

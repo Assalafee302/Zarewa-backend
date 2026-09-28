@@ -156,7 +156,38 @@ export function expensesPackReport(expenses = [], startDate, endDate, treasuryMo
  *   summary: object,
  * }}
  */
-export function refundsPackReport(refunds = [], startDate, endDate, creditApplications = []) {
+function companyCutWithdrawalLines(withdrawals = [], startDate, endDate) {
+  const lines = [];
+  for (const w of withdrawals || []) {
+    const status = String(w.status || 'paid').trim().toLowerCase();
+    if (status && status !== 'paid') continue;
+    const iso = toIsoDate(w.paidAtIso || w.paid_at_iso || w.payoutDateISO);
+    if (!iso) continue;
+    if (startDate && iso < startDate) continue;
+    if (endDate && iso > endDate) continue;
+    const amountNgn = Math.round(Number(w.amountNgn ?? w.amount_ngn) || 0);
+    if (amountNgn <= 0) continue;
+    const id = String(w.id || w.withdrawalId || '').trim();
+    const refundIds = (Array.isArray(w.allocations) ? w.allocations : [])
+      .map((a) => String(a?.refundId || a?.refund_id || '').trim())
+      .filter(Boolean);
+    lines.push({
+      payoutDateISO: iso,
+      refundIdDisplay: displayDocNumber(id) || id || '—',
+      refundIdFull: id || '—',
+      customer: String(w.payeeName || w.payee_name || 'Company').trim() || 'Company',
+      quotationRefDisplay: 'Company cut',
+      amountNgn,
+      bankAccount: String(w.payeeBankName || w.payee_bank_name || '').trim() || '—',
+      reference: refundIds.length ? refundIds.join(', ') : String(w.note || id).trim() || '—',
+      payoutKind: 'Company cut',
+      sourceRefundIds: refundIds,
+    });
+  }
+  return lines;
+}
+
+export function refundsPackReport(refunds = [], startDate, endDate, creditApplications = [], companyCutWithdrawals = []) {
   const paidInPeriod = [];
   for (const r of refunds || []) {
     const id = String(r.refundID ?? r.refund_id ?? '').trim();
@@ -204,6 +235,12 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
       }
     }
   }
+  const companyCutWithdrawalsInPeriod = companyCutWithdrawalLines(
+    companyCutWithdrawals,
+    startDate,
+    endDate
+  );
+  for (const line of companyCutWithdrawalsInPeriod) paidInPeriod.push(line);
   paidInPeriod.sort((a, b) => a.payoutDateISO.localeCompare(b.payoutDateISO));
 
   const creditAppliedInPeriod = [];
@@ -305,7 +342,11 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
     pipelineCreditAppliedNgn: Math.round(
       pipeline.reduce((s, x) => s + (Number(x.creditAppliedNgn) || 0), 0)
     ),
+    companyCutWithdrawalLines: companyCutWithdrawalsInPeriod.length,
+    companyCutWithdrawnNgn: Math.round(
+      companyCutWithdrawalsInPeriod.reduce((s, x) => s + (Number(x.amountNgn) || 0), 0)
+    ),
   };
 
-  return { paidInPeriod, creditAppliedInPeriod, pipeline, summary };
+  return { paidInPeriod, creditAppliedInPeriod, companyCutWithdrawalsInPeriod, pipeline, summary };
 }

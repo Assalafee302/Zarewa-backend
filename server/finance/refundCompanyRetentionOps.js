@@ -8,6 +8,9 @@ import { assertEntityBranchForWorkspaceWrite } from '../branchScope.js';
 import { appendAuditLog, assertPeriodOpen } from '../controlOps.js';
 import { allocateHumanId } from '../humanId.js';
 import { isBranchManagerApprovalAuthority } from '../../shared/workspaceGovernance.js';
+import { tableExists } from '../ap2ReceivedBasisOps.js';
+import { ensureSupplementalGlAccounts, tryPostCompanyCutWithdrawalGlTx } from '../glOps.js';
+import { isGlPostingEnabled } from './glPostingGate.js';
 import { insertTreasuryMovementTx } from '../writeOps.js';
 import {
   getCompanyRetentionSummary,
@@ -243,8 +246,17 @@ export function decideCompanyRetentionWithdrawal(db, payload = {}) {
 
   const row = db.prepare(`SELECT * FROM refund_company_retention_withdrawals WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Withdrawal request not found.' };
-  if (trim(row.status) !== 'pending_bm') {
-    return { ok: false, error: `Request is ${row.status}, not awaiting Branch Manager.` };
+  const status = trim(row.status);
+  if (decision === 'reject') {
+    if (status !== 'pending_bm' && status !== 'approved') {
+      return {
+        ok: false,
+        error: `Only an unpaid request can be rejected. Current status: ${status}.`,
+        code: 'WITHDRAWAL_NOT_CANCELLABLE',
+      };
+    }
+  } else if (status !== 'pending_bm') {
+    return { ok: false, error: `Request is ${status}, not awaiting Branch Manager.` };
   }
 
   const branchGate = assertEntityBranchForWorkspaceWrite(
@@ -257,23 +269,46 @@ export function decideCompanyRetentionWithdrawal(db, payload = {}) {
 
   const at = new Date().toISOString();
   if (decision === 'reject') {
-    const reason = trim(payload.note || payload.reason) || 'Rejected by Branch Manager';
-    db.prepare(
-      `UPDATE refund_company_retention_withdrawals
-       SET status = 'rejected',
-           approved_by_user_id = ?,
-           approved_by_name = ?,
-           approved_at_iso = ?,
-           approval_note = ?,
-           rejected_reason = ?
-       WHERE id = ?`
-    ).run(actorId(payload.actor), actorName(payload.actor), at, reason, reason, id);
-    return {
-      ok: true,
-      withdrawal: mapWithdrawalRow(
-        db.prepare(`SELECT * FROM refund_company_retention_withdrawals WHERE id = ?`).get(id)
-      ),
-    };
+    const reason =
+      trim(payload.note || payload.reason) ||
+      (status === 'approved' ? 'Rejected before payment' : 'Rejected by Branch Manager');
+    if (status === 'approved') {
+      db.prepare(
+        `UPDATE refund_company_retention_withdrawals
+         SET status = 'rejected',
+             rejected_reason = ?
+         WHERE id = ? AND status = 'approved'`
+      ).run(reason, id);
+    } else {
+      db.prepare(
+        `UPDATE refund_company_retention_withdrawals
+         SET status = 'rejected',
+             approved_by_user_id = ?,
+             approved_by_name = ?,
+             approved_at_iso = ?,
+             approval_note = ?,
+             rejected_reason = ?
+         WHERE id = ? AND status = 'pending_bm'`
+      ).run(actorId(payload.actor), actorName(payload.actor), at, reason, reason, id);
+    }
+    const fresh = db.prepare(`SELECT * FROM refund_company_retention_withdrawals WHERE id = ?`).get(id);
+    if (trim(fresh?.status) !== 'rejected') {
+      return { ok: false, error: 'Could not reject — status changed concurrently.' };
+    }
+    try {
+      appendAuditLog(db, {
+        actor: payload.actor,
+        action: 'refund_company_retention.withdraw_reject',
+        entityKind: 'refund_company_retention_withdrawal',
+        entityId: id,
+        status: 'rejected',
+        note: reason,
+        details: { previousStatus: status },
+      });
+    } catch {
+      /* best-effort */
+    }
+    return { ok: true, withdrawal: mapWithdrawalRow(fresh) };
   }
 
   // Cash approval before cashier pay — Branch Manager must confirm cash handoff.
@@ -301,7 +336,7 @@ export function decideCompanyRetentionWithdrawal(db, payload = {}) {
     };
   }
 
-  const summary = getCompanyRetentionSummary(db, trim(row.branch_id));
+  const summary = getCompanyRetentionSummary(db, trim(row.branch_id), { excludeWithdrawalId: id });
   if (summary.cooldownActive) {
     return {
       ok: false,
@@ -437,7 +472,7 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
     if (remaining <= 0) break;
     const take = Math.min(remaining, c.openNgn);
     if (take <= 0) continue;
-    allocations.push({ creditId: c.id, amountNgn: take });
+    allocations.push({ creditId: c.id, refundId: c.refundId, amountNgn: take });
     remaining -= take;
   }
   if (remaining > 0) {
@@ -445,6 +480,14 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
       ok: false,
       error: `Insufficient available company-cut balance to pay ₦${amountNgn.toLocaleString('en-NG')}.`,
     };
+  }
+
+  if (isGlPostingEnabled()) {
+    try {
+      ensureSupplementalGlAccounts(db);
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
+    }
   }
 
   try {
@@ -479,6 +522,24 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
         if (!upd.changes) throw new Error('Concurrent update reduced available company-cut balance.');
       }
 
+      if (tableExists(db, 'refund_company_retention_withdrawal_allocations')) {
+        const insAlloc = db.prepare(
+          `INSERT INTO refund_company_retention_withdrawal_allocations (
+             id, withdrawal_id, credit_entry_id, refund_id, amount_ngn, created_at_iso
+           ) VALUES (?,?,?,?,?,?)`
+        );
+        allocations.forEach((a, index) => {
+          insAlloc.run(
+            `${id}-A${index + 1}`,
+            id,
+            a.creditId,
+            a.refundId || null,
+            a.amountNgn,
+            now
+          );
+        });
+      }
+
       const withdrawEntryId = nextRetentionEntryId(db, branchId);
       db.prepare(
         `INSERT INTO refund_company_retention_entries (
@@ -503,23 +564,35 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
         actorName(payload.actor)
       );
 
-      db.prepare(
-        `UPDATE refund_company_retention_withdrawals
-         SET status = 'paid',
-             paid_by_user_id = ?,
-             paid_by_name = ?,
-             paid_at_iso = ?,
-             treasury_movement_id = ?,
-             treasury_account_id = ?
-         WHERE id = ?`
-      ).run(
-        actorId(payload.actor),
-        actorName(payload.actor),
-        now,
-        movement.id || null,
-        String(treasuryAccountId),
-        id
-      );
+      const paidUpd = db
+        .prepare(
+          `UPDATE refund_company_retention_withdrawals
+           SET status = 'paid',
+               paid_by_user_id = ?,
+               paid_by_name = ?,
+               paid_at_iso = ?,
+               treasury_movement_id = ?,
+               treasury_account_id = ?
+           WHERE id = ? AND status = 'approved'`
+        )
+        .run(
+          actorId(payload.actor),
+          actorName(payload.actor),
+          now,
+          movement.id || null,
+          String(treasuryAccountId),
+          id
+        );
+      if (!paidUpd.changes) throw new Error('Could not mark withdrawal paid — status changed concurrently.');
+
+      const glPay = tryPostCompanyCutWithdrawalGlTx(db, {
+        withdrawalId: id,
+        amountNgn,
+        entryDateISO: paymentDateISO,
+        branchId,
+        createdByUserId: actorId(payload.actor),
+      });
+      if (!glPay.ok) throw new Error(glPay.error || 'Company cut withdrawal GL failed.');
 
       return {
         ok: true,

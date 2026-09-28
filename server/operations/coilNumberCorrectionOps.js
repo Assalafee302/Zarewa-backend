@@ -77,17 +77,48 @@ export function ensureCoilNumberCorrectionTable(db) {
 }
 
 function cleanCoilNo(raw) {
-  const s = String(raw ?? '').trim();
+  const s = String(raw ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!s || s.length > 64) return '';
-  if (/[\r\n\t]/.test(s)) return '';
-  return s;
+  const serial = s.match(/^cl-(\d{2})-(\d+)$/i);
+  if (serial) return `CL-${serial[1]}-${serial[2]}`;
+  return s.toUpperCase();
+}
+
+function findCoil(db, coilNo) {
+  const wanted = cleanCoilNo(coilNo);
+  if (!wanted) return null;
+  const exact = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ? LIMIT 1`).get(wanted);
+  if (exact) return exact;
+  return db.prepare(`SELECT * FROM coil_lots WHERE LOWER(coil_no) = LOWER(?) LIMIT 1`).get(wanted) || null;
 }
 
 function coilExists(db, coilNo) {
-  return Boolean(db.prepare(`SELECT 1 FROM coil_lots WHERE coil_no = ? LIMIT 1`).get(coilNo));
+  return Boolean(findCoil(db, coilNo));
 }
 
-function mapRow(row) {
+function countWhere(db, table, column, coilNo) {
+  if (!tableReady(db, table) || !hasColumn(db, table, column)) return 0;
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${column}\` = ?`).get(coilNo);
+  return Number(row?.n) || 0;
+}
+
+function correctionImpact(db, coilNo) {
+  const lot = findCoil(db, coilNo);
+  const key = String(lot?.coil_no || coilNo || '').trim();
+  const onHand = lot ? Number(lot.qty_remaining ?? lot.current_weight_kg) || 0 : 0;
+  return {
+    onHandKg: onHand,
+    status: lot ? String(lot.current_status || 'Available') : '',
+    gaugeLabel: lot?.gauge_label || '',
+    colour: lot?.colour || '',
+    receivedAtISO: lot?.received_at_iso ? String(lot.received_at_iso).slice(0, 10) : '',
+    jobCount: countWhere(db, 'production_job_coils', 'coil_no', key),
+    movementCount: countWhere(db, 'stock_movements', 'ref', key),
+    controlEventCount: countWhere(db, 'coil_control_events', 'coil_no', key),
+  };
+}
+
+function mapRow(row, extras = {}) {
   if (!row) return null;
   return {
     id: row.id,
@@ -103,6 +134,7 @@ function mapRow(row) {
     decidedByDisplay: row.decided_by_display || '',
     decidedAtISO: row.decided_at_iso || '',
     decisionNote: row.decision_note || '',
+    ...extras,
   };
 }
 
@@ -288,12 +320,16 @@ export function requestCoilNumberCorrection(db, fromCoilNo, body = {}, opts = {}
   }
   if (reason.length < 3) return { ok: false, error: 'Say why this coil number is wrong.' };
 
-  const lot = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(from);
+  const lot = findCoil(db, from);
   if (!lot) return { ok: false, error: 'Coil not found.' };
+  const storedFrom = String(lot.coil_no);
   const workspaceBranchId = String(opts.workspaceBranchId || '').trim();
   const coilBranch = String(lot.branch_id || '').trim();
   if (!workspaceBranchId || !coilBranch || coilBranch !== workspaceBranchId) {
     return { ok: false, error: 'Coil is not in your current workspace branch.' };
+  }
+  if (storedFrom.toLowerCase() === to.toLowerCase()) {
+    return { ok: false, error: 'The correct number must be different from the one on the coil.' };
   }
   if (coilExists(db, to)) {
     return { ok: false, error: `Coil number ${to} is already registered. Use a number that is not in the register.` };
@@ -301,9 +337,9 @@ export function requestCoilNumberCorrection(db, fromCoilNo, body = {}, opts = {}
 
   const pendingFrom = db
     .prepare(
-      `SELECT id FROM coil_number_corrections WHERE from_coil_no = ? AND status = 'pending' LIMIT 1`
+      `SELECT id FROM coil_number_corrections WHERE LOWER(from_coil_no) = LOWER(?) AND status = 'pending' LIMIT 1`
     )
-    .get(from);
+    .get(storedFrom);
   if (pendingFrom) {
     return {
       ok: false,
@@ -313,7 +349,7 @@ export function requestCoilNumberCorrection(db, fromCoilNo, body = {}, opts = {}
   }
   const pendingTo = db
     .prepare(
-      `SELECT id, from_coil_no FROM coil_number_corrections WHERE to_coil_no = ? AND status = 'pending' LIMIT 1`
+      `SELECT id, from_coil_no FROM coil_number_corrections WHERE LOWER(to_coil_no) = LOWER(?) AND status = 'pending' LIMIT 1`
     )
     .get(to);
   if (pendingTo) {
@@ -327,7 +363,7 @@ export function requestCoilNumberCorrection(db, fromCoilNo, body = {}, opts = {}
       id, branch_id, from_coil_no, to_coil_no, reason, status,
       requested_by_user_id, requested_by_display, requested_at_iso
     ) VALUES (?,?,?,?,?,'pending',?,?,?)`
-  ).run(id, coilBranch, from, to, reason, actorId(actor) || null, actorName(actor) || null, nowIso());
+  ).run(id, coilBranch, storedFrom, to, reason, actorId(actor) || null, actorName(actor) || null, nowIso());
 
   const saved = db.prepare(`SELECT * FROM coil_number_corrections WHERE id = ?`).get(id);
   try {
@@ -339,11 +375,11 @@ export function requestCoilNumberCorrection(db, fromCoilNo, body = {}, opts = {}
     actor,
     action: 'coil_number_correction.requested',
     entityKind: 'coil_lot',
-    entityId: from,
-    note: `${from} → ${to}`,
+    entityId: storedFrom,
+    note: `${storedFrom} → ${to}`,
     details: { correctionId: id, toCoilNo: to, reason },
   });
-  return { ok: true, correction: mapRow(saved) };
+  return { ok: true, correction: mapRow(saved, { impact: correctionImpact(db, storedFrom) }) };
 }
 
 /**
@@ -362,11 +398,106 @@ export function listCoilNumberCorrections(db, branchScope = 'ALL', opts = {}) {
     args.push(scope);
   }
   if (fromCoilNo) {
-    sql += ` AND from_coil_no = ?`;
+    sql += ` AND LOWER(from_coil_no) = LOWER(?)`;
     args.push(fromCoilNo);
   }
   sql += ` ORDER BY requested_at_iso DESC LIMIT 100`;
-  return db.prepare(sql).all(...args).map(mapRow);
+  const actor = opts.actor || null;
+  const uid = actorId(actor);
+  const mayApprove = userMayApproveCoilNumberCorrection(actor);
+  return db
+    .prepare(sql)
+    .all(...args)
+    .map((row) => {
+      const own = Boolean(uid) && uid === String(row.requested_by_user_id || '');
+      return mapRow(row, {
+        impact: correctionImpact(db, row.from_coil_no),
+        canApprove: mayApprove && !own && row.status === 'pending',
+        canWithdraw: own && row.status === 'pending',
+      });
+    });
+}
+
+/**
+ * Live check while store types the replacement number. Does not write.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function previewCoilNumberChange(db, fromCoilNo, toRaw, opts = {}) {
+  ensureCoilNumberCorrectionTable(db);
+  const lot = findCoil(db, fromCoilNo);
+  if (!lot) return { ok: false, error: 'Coil not found.' };
+  const workspaceBranchId = String(opts.workspaceBranchId || '').trim();
+  const coilBranch = String(lot.branch_id || '').trim();
+  if (!workspaceBranchId || !coilBranch || coilBranch !== workspaceBranchId) {
+    return { ok: false, error: 'Coil is not in your current workspace branch.' };
+  }
+  const storedFrom = String(lot.coil_no);
+  const to = cleanCoilNo(toRaw);
+  const sameNumber = Boolean(to) && storedFrom.toLowerCase() === to.toLowerCase();
+  const taken = Boolean(to) && !sameNumber && coilExists(db, to);
+  const pendingOnCoil = db
+    .prepare(
+      `SELECT id FROM coil_number_corrections WHERE LOWER(from_coil_no) = LOWER(?) AND status = 'pending' LIMIT 1`
+    )
+    .get(storedFrom);
+  const pendingTarget = to
+    ? db
+        .prepare(
+          `SELECT from_coil_no FROM coil_number_corrections WHERE LOWER(to_coil_no) = LOWER(?) AND status = 'pending' LIMIT 1`
+        )
+        .get(to)
+    : null;
+  return {
+    ok: true,
+    fromCoilNo: storedFrom,
+    toCoilNo: to,
+    sameNumber,
+    taken,
+    reservedByPending: Boolean(pendingTarget),
+    pendingOnCoil: Boolean(pendingOnCoil),
+    available: Boolean(to) && !sameNumber && !taken && !pendingTarget && !pendingOnCoil,
+    impact: correctionImpact(db, storedFrom),
+  };
+}
+
+/**
+ * Store withdraws their own request before a manager decides.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function withdrawCoilNumberCorrection(db, correctionId, opts = {}) {
+  ensureCoilNumberCorrectionTable(db);
+  const actor = opts.actor || null;
+  const id = String(correctionId || '').trim();
+  const row = db.prepare(`SELECT * FROM coil_number_corrections WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Correction request not found.' };
+  if (row.status !== 'pending') return { ok: false, error: 'This correction is no longer waiting.' };
+  if (!actorId(actor) || actorId(actor) !== String(row.requested_by_user_id || '')) {
+    return { ok: false, error: 'Only the person who sent this request can withdraw it.' };
+  }
+  const workspaceBranchId = String(opts.workspaceBranchId || '').trim();
+  if (!workspaceBranchId || String(row.branch_id) !== workspaceBranchId) {
+    return { ok: false, error: 'This correction is for another branch.' };
+  }
+  db.prepare(
+    `UPDATE coil_number_corrections
+     SET status = 'withdrawn', decided_by_user_id = ?, decided_by_display = ?, decided_at_iso = ?, decision_note = ?
+     WHERE id = ? AND status = 'pending'`
+  ).run(actorId(actor), actorName(actor) || null, nowIso(), 'Withdrawn by store', id);
+  const saved = db.prepare(`SELECT * FROM coil_number_corrections WHERE id = ?`).get(id);
+  try {
+    closeNotice(db, saved, actor, 'rejected', 'Withdrawn by store');
+  } catch (e) {
+    console.error(e);
+  }
+  appendAuditLog(db, {
+    actor,
+    action: 'coil_number_correction.withdrawn',
+    entityKind: 'coil_lot',
+    entityId: row.from_coil_no,
+    note: `${row.from_coil_no} left unchanged`,
+    details: { correctionId: id },
+  });
+  return { ok: true, correction: mapRow(saved) };
 }
 
 /**
@@ -385,17 +516,21 @@ export function decideCoilNumberCorrection(db, correctionId, body = {}, opts = {
 
   const workspaceBranchId = String(opts.workspaceBranchId || '').trim();
   const viewAll = Boolean(opts.workspaceViewAll);
-  if (!viewAll && workspaceBranchId && String(row.branch_id) !== workspaceBranchId) {
+  if (!viewAll && (!workspaceBranchId || String(row.branch_id) !== workspaceBranchId)) {
     return { ok: false, error: 'This correction is for another branch.' };
   }
   if (actorId(actor) && actorId(actor) === String(row.requested_by_user_id || '')) {
-    return { ok: false, error: 'You cannot approve your own coil number correction.' };
+    return { ok: false, error: 'You cannot decide your own coil number correction.' };
   }
 
   const decision = String(body.decision || '').trim().toLowerCase();
   const note = String(body.note ?? body.decisionNote ?? '').trim();
   if (decision !== 'approve' && decision !== 'reject') {
     return { ok: false, error: 'Choose approve or reject.' };
+  }
+
+  if (decision === 'reject' && note.length < 3) {
+    return { ok: false, error: 'Write a short reason for rejecting this correction.' };
   }
 
   if (decision === 'reject') {
@@ -421,7 +556,11 @@ export function decideCoilNumberCorrection(db, correctionId, body = {}, opts = {
     return { ok: true, correction: mapRow(saved) };
   }
 
-  const to = String(row.to_coil_no || '').trim();
+  const to = cleanCoilNo(row.to_coil_no);
+  const confirm = cleanCoilNo(body.confirmCoilNo ?? body.confirm_coil_no);
+  if (!confirm || confirm.toLowerCase() !== to.toLowerCase()) {
+    return { ok: false, error: 'Type the new coil number to confirm the approval.' };
+  }
   if (coilExists(db, to)) {
     return { ok: false, error: `Coil number ${to} is already registered. Reject this request and ask store to submit a free number.` };
   }

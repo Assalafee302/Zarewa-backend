@@ -6,8 +6,10 @@ import { resolveBootstrapBranchScope } from '../branchScope.js';
 import {
   decideCoilNumberCorrection,
   listCoilNumberCorrections,
+  previewCoilNumberChange,
   requestCoilNumberCorrection,
   userMayApproveCoilNumberCorrection,
+  withdrawCoilNumberCorrection,
 } from '../operations/coilNumberCorrectionOps.js';
 
 function maySeeCorrections(user) {
@@ -24,6 +26,7 @@ export function registerCoilNumberCorrectionRoutes(app, db) {
       const corrections = listCoilNumberCorrections(db, branchScope, {
         status: req.query?.status || 'pending',
         fromCoilNo: req.query?.fromCoilNo || req.query?.coilNo || '',
+        actor: req.user,
       });
       res.json({ ok: true, corrections });
     } catch (e) {
@@ -31,6 +34,22 @@ export function registerCoilNumberCorrectionRoutes(app, db) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
+
+  app.get(
+    '/api/coil-lots/:coilNo/number-correction/preview',
+    requirePermission('inventory.receive'),
+    (req, res) => {
+      try {
+        const r = previewCoilNumberChange(db, req.params.coilNo, req.query?.toCoilNo || req.query?.to || '', {
+          workspaceBranchId: req.workspaceBranchId,
+        });
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
 
   app.post(
     '/api/coil-lots/:coilNo/number-correction',
@@ -42,6 +61,23 @@ export function registerCoilNumberCorrectionRoutes(app, db) {
           workspaceBranchId: req.workspaceBranchId,
         });
         res.status(r.ok ? 201 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.post(
+    '/api/coil-number-corrections/:id/withdraw',
+    requirePermission('inventory.receive'),
+    (req, res) => {
+      try {
+        const r = withdrawCoilNumberCorrection(db, req.params.id, {
+          actor: req.user,
+          workspaceBranchId: req.workspaceBranchId,
+        });
+        res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });

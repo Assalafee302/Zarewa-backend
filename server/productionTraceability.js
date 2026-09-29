@@ -1508,6 +1508,20 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
   }
 }
 
+function planAccessoriesForJobPreview(db, jobRow, payload) {
+  if (String(jobRow?.status ?? '') === 'Completed') {
+    return planAccessoryCorrectionExcludingJob(db, jobRow, jobRow.job_id, payload);
+  }
+  return planAccessoryCompletion(db, jobRow, payload);
+}
+
+function stoneFlatsheetPreviewOpts(jobRow) {
+  if (String(jobRow?.status ?? '') === 'Completed') {
+    return { excludeJobId: String(jobRow.job_id ?? '') };
+  }
+  return {};
+}
+
 /**
  * Preview four-reference conversion and alert flags without posting stock or job completion.
  */
@@ -1522,7 +1536,7 @@ export function previewProductionConversion(db, jobID, payload = {}) {
     if (metres < 0) {
       return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
     }
-    const acc = planAccessoryCompletion(db, jobRow, payload);
+    const acc = planAccessoriesForJobPreview(db, jobRow, payload);
     if (!acc.ok) return { ok: false, error: acc.error };
     return {
       ok: true,
@@ -1547,9 +1561,9 @@ export function previewProductionConversion(db, jobID, payload = {}) {
     };
   }
   if (jobRow && jobIsStoneMeter(db, jobRow) && !jobExpectsCoilAllocation(db, jobRow)) {
-    const acc = planAccessoryCompletion(db, jobRow, payload);
+    const acc = planAccessoriesForJobPreview(db, jobRow, payload);
     if (!acc.ok) return { ok: false, error: acc.error };
-    const sf = planStoneFlatsheetFulfillment(db, jobRow, payload, {});
+    const sf = planStoneFlatsheetFulfillment(db, jobRow, payload, stoneFlatsheetPreviewOpts(jobRow));
     if (!sf.ok) return { ok: false, error: sf.error };
     return {
       ok: true,
@@ -1570,7 +1584,7 @@ export function previewProductionConversion(db, jobID, payload = {}) {
     partialPreview: true,
   });
   if (!r.ok) return r;
-  const acc = planAccessoryCompletion(db, jobRow, payload);
+  const acc = planAccessoriesForJobPreview(db, jobRow, payload);
   if (!acc.ok) return { ok: false, error: acc.error };
   const offInvPreview = offcutInventoryMetersFromPayload(payload);
   const totalOutputMeters = r.totalMeters + offInvPreview;
@@ -3590,8 +3604,11 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
   if (String(job.status ?? '') !== 'Completed') {
     return { ok: false, error: 'Coil correction applies only to completed jobs.' };
   }
-  if (jobIsStoneMeter(db, job)) {
-    return { ok: false, error: 'Stone-coated jobs have no coil lines to correct.' };
+  if (jobIsStoneMeter(db, job) && !jobExpectsCoilAllocation(db, job)) {
+    return {
+      ok: false,
+      error: 'This stone-coated job has no coil lines. Correct stone metres instead.',
+    };
   }
   const note = String(payload.reason ?? payload.note ?? '').trim();
   if (note.length < 12) {
@@ -3914,9 +3931,19 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     }
 
     const aggregated = aggregateAlertState(alertStates);
-    db.prepare(
-      `UPDATE production_jobs SET actual_meters = ?, actual_weight_kg = ?, conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ? WHERE job_id = ?`
-    ).run(newTotalM + newOff, newTotalKg, aggregated, anyMgr ? 1 : 0, newOff, jobId);
+    const flatsheetOut = newTotalM + newOff;
+    if (jobIsStoneCoilHybrid(db, job)) {
+      db.prepare(
+        `UPDATE production_jobs
+         SET actual_meters = ?, actual_flatsheet_m = ?, actual_weight_kg = ?, conversion_alert_state = ?,
+             manager_review_required = ?, offcut_inventory_meters = ?
+         WHERE job_id = ?`
+      ).run(flatsheetOut, flatsheetOut, newTotalKg, aggregated, anyMgr ? 1 : 0, newOff, jobId);
+    } else {
+      db.prepare(
+        `UPDATE production_jobs SET actual_meters = ?, actual_weight_kg = ?, conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ? WHERE job_id = ?`
+      ).run(flatsheetOut, newTotalKg, aggregated, anyMgr ? 1 : 0, newOff, jobId);
+    }
     refreshJobCoilSpecFlagsTx(db, jobId);
     appendAuditLog(db, {
       actor: opts.actor,

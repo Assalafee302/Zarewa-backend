@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { insertCuttingList, insertProductionJob } from './writeOps.js';
-import { completeProductionJob, startProductionJob } from './productionTraceability.js';
+import { completeProductionJob, startProductionJob, saveProductionJobAllocations, applyCompletedProductionCoilCorrections } from './productionTraceability.js';
 
 /**
  * Regression coverage for the stone-coated production register bugs reported by users:
@@ -117,6 +117,23 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
     expect(Number(finalRow.actual_meters)).toBe(80);
     expect(Number(finalRow.actual_roof_m)).toBe(80);
     expect(Number(finalRow.actual_flatsheet_m)).toBe(0);
+  });
+
+  it('refuses to complete a pure stone job that was never started', () => {
+    insertStoneQuotation('QT-STONE-PURE-SKIP', [{ name: 'Roofing Sheet', qty: '100', unitPrice: '5000' }], 500000);
+    const cl = insertCuttingList(db, {
+      quotationRef: 'QT-STONE-PURE-SKIP',
+      lines: [{ sheets: 20, lengthM: 5, lineType: 'Roof' }],
+    });
+    expect(cl.ok).toBe(true);
+    const job = insertProductionJob(db, { cuttingListId: cl.id });
+    expect(job.ok).toBe(true);
+
+    const done = completeProductionJob(db, job.jobID, { stoneMetersConsumed: 80 });
+    expect(done.ok).toBe(false);
+    expect(done.error).toMatch(/Start the production job/i);
+    const row = db.prepare(`SELECT status FROM production_jobs WHERE job_id = ?`).get(job.jobID);
+    expect(String(row.status)).not.toBe('Completed');
   });
 
   it('a hybrid job (one cutting list carrying both a Roof and a Flatsheet line) requires coil/offcut completion, and records stone-roofing metres separately from coil/offcut flat-sheet output', () => {
@@ -308,5 +325,72 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
       .get(job.jobID);
     expect(stoneMovement).toBeTruthy();
     expect(Number(stoneMovement.qty)).toBe(-100);
+  });
+
+  it('lets a completed hybrid job correct coil closing kg instead of rejecting all stone jobs', () => {
+    insertStoneQuotation(
+      'QT-STONE-HYBRID-COIL',
+      [
+        { name: 'Roofing Sheet', qty: '100', unitPrice: '5000' },
+        { name: 'Flat sheet', qty: '20', unitPrice: '4000' },
+      ],
+      620000
+    );
+    db.prepare(
+      `INSERT INTO coil_lots (
+        coil_no, product_id, qty_received, weight_kg, qty_remaining, qty_reserved,
+        current_weight_kg, current_status, branch_id, received_at_iso, gauge_label, colour, material_type_name
+      ) VALUES ('CL-HY-1', 'COIL-AZ', 3000, 3000, 3000, 0, 3000, 'Available', ?, '2026-05-01', '0.20mm', 'P Red', 'Aluzinc (PPGI)')`
+    ).run(DEFAULT_BRANCH_ID);
+
+    const cl = insertCuttingList(db, {
+      quotationRef: 'QT-STONE-HYBRID-COIL',
+      lines: [
+        { sheets: 20, lengthM: 5, lineType: 'Roof' },
+        { sheets: 2, lengthM: 4, lineType: 'Flatsheet' },
+      ],
+    });
+    expect(cl.ok).toBe(true);
+    const job = insertProductionJob(db, { cuttingListId: cl.id });
+    expect(job.ok).toBe(true);
+
+    const alloc = saveProductionJobAllocations(db, job.jobID, [
+      { coilNo: 'CL-HY-1', openingWeightKg: 2630 },
+    ]);
+    expect(alloc.ok, alloc.error).toBe(true);
+    const started = startProductionJob(db, job.jobID);
+    expect(started.ok, started.error).toBe(true);
+    const done = completeProductionJob(db, job.jobID, {
+      completeMode: 'offcut',
+      offcutMetersProduced: 15,
+      offcutInventoryMeters: 15,
+      stoneMetersConsumed: 100,
+      meterOverrunRemark: 'Yard offcut covers the extra flatsheet metres.',
+    });
+    expect(done.ok, done.error).toBe(true);
+
+    const line = db.prepare(`SELECT * FROM production_job_coils WHERE job_id = ?`).get(job.jobID);
+    const corr = applyCompletedProductionCoilCorrections(db, job.jobID, {
+      reason: 'Closing kg was left equal to opening after offcut completion.',
+      readings: [
+        {
+          allocationId: line.id,
+          coilNo: 'CL-HY-1',
+          openingWeightKg: 2630,
+          closingWeightKg: 2616,
+          metersProduced: 7,
+        },
+      ],
+      offcutInventoryMeters: 16,
+    });
+    expect(corr.ok).toBe(true);
+
+    const row = db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(job.jobID);
+    expect(Number(row.actual_roof_m)).toBe(100);
+    expect(Number(row.actual_flatsheet_m)).toBeCloseTo(23, 3);
+    expect(Number(row.actual_meters)).toBeCloseTo(23, 3);
+    const coil = db.prepare(`SELECT * FROM production_job_coils WHERE job_id = ?`).get(job.jobID);
+    expect(Number(coil.closing_weight_kg)).toBe(2616);
+    expect(Number(coil.consumed_weight_kg)).toBe(14);
   });
 });

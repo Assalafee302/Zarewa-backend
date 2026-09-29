@@ -78,7 +78,7 @@ function findMobileSessionByAccessHash(db, accessHash) {
     .prepare(
       `SELECT s.*, u.id AS uid, u.username, u.display_name, u.email, u.avatar_url, u.role_key,
               u.department, u.status, u.last_login_at_iso, u.created_at_iso, u.workspace_branch_id,
-              u.must_change_password, u.training_completed_at_iso
+              u.must_change_password, u.training_completed_at_iso, u.permissions_json
        FROM mobile_auth_sessions s
        JOIN app_users u ON u.id = s.user_id
        WHERE s.access_token_hash = ? AND s.revoked_at_iso IS NULL`
@@ -91,7 +91,7 @@ function findMobileSessionByRefreshHash(db, refreshHash) {
     .prepare(
       `SELECT s.*, u.id AS uid, u.username, u.display_name, u.email, u.avatar_url, u.role_key,
               u.department, u.status, u.last_login_at_iso, u.created_at_iso, u.workspace_branch_id,
-              u.must_change_password, u.training_completed_at_iso
+              u.must_change_password, u.training_completed_at_iso, u.permissions_json
        FROM mobile_auth_sessions s
        JOIN app_users u ON u.id = s.user_id
        WHERE s.refresh_token_hash = ? AND s.revoked_at_iso IS NULL`
@@ -115,6 +115,7 @@ function userRowFromMobileJoin(row) {
     workspace_branch_id: row.workspace_branch_id,
     must_change_password: row.must_change_password,
     training_completed_at_iso: row.training_completed_at_iso,
+    permissions_json: row.permissions_json,
   };
 }
 

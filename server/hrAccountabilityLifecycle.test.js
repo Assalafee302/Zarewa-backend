@@ -268,7 +268,11 @@ describe.skipIf(!isMysqlAvailableForTests())('HR accountability full lifecycle s
         expect(line.incidentRecoveries?.length).toBeGreaterThan(0);
       }
 
-      patchPayrollRun(db, run.id, { status: 'paid' }, ACTOR);
+      const payer = { ...ACTOR, permissions: ['*'] };
+      const locked = patchPayrollRun(db, run.id, { status: 'locked' }, payer);
+      expect(locked.ok).toBe(true);
+      const paid = patchPayrollRun(db, run.id, { status: 'paid' }, payer);
+      expect(paid.ok).toBe(true);
       for (const uid of staffIds) {
         const row = db
           .prepare(

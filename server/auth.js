@@ -1306,7 +1306,8 @@ function findSessionRow(db, token) {
          u.created_at_iso,
          u.workspace_branch_id,
          u.must_change_password,
-         u.training_completed_at_iso
+         u.training_completed_at_iso,
+         u.permissions_json
        FROM user_sessions s
        JOIN app_users u ON u.id = s.user_id
        WHERE s.session_token = ?`

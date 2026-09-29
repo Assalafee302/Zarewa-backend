@@ -43,8 +43,27 @@ describe.skipIf(!mysqlTestReady)('creditExceptionOps', () => {
     }
   });
 
-  const branchActor = { id: 'u-bm', roleKey: 'sales_manager', displayName: 'Branch Mgr' };
+  const branchActor = {
+    id: 'u-bm',
+    roleKey: 'sales_manager',
+    displayName: 'Branch Mgr',
+    workspaceBranchId: 'BR-KD',
+  };
   const mdActor = { id: 'u-md', roleKey: 'md', displayName: 'MD' };
+
+  it('rejects a credit exception outside the actor workspace', () => {
+    const yola = { ...branchActor, workspaceBranchId: 'BR-YOLA' };
+    const r = createCreditExceptionRequest(db, { quotationRef: 'QT-CRED-1', amountNgn: 1_000_000 }, yola);
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('FORBIDDEN');
+  });
+
+  it('rejects a credit exception when the actor has no workspace branch', () => {
+    const bare = { id: 'u-bm', roleKey: 'sales_manager', displayName: 'Branch Mgr' };
+    const r = createCreditExceptionRequest(db, { quotationRef: 'QT-CRED-1', amountNgn: 1_000_000 }, bare);
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('FORBIDDEN');
+  });
 
   it('creates pending credit exception', () => {
     const r = createCreditExceptionRequest(

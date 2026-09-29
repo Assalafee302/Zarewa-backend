@@ -49,6 +49,12 @@ function scrubProfileExtra(extra, ctx) {
   if (!ctx.canViewDiscipline) {
     delete pe.disciplinaryEvents;
   }
+  // Top-level salary fields are nulled separately. These nested objects still hold actual pay.
+  if (!ctx.canViewSensitive) {
+    delete pe.compensation;
+    delete pe.compensationVariance;
+    delete pe.compensationPackage;
+  }
   return pe;
 }
 

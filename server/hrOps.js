@@ -3111,6 +3111,15 @@ export function gmHrReviewRequest(db, requestId, actor, approve, note, reasonCod
   if (row.status !== 'gm_hr_review') {
     return { ok: false, error: 'Request is not awaiting GM HR approval.' };
   }
+  // Permission lives here, not only on /gm-hr-review. /manager-review also calls this
+  // once status is gm_hr_review, and that route only requires branch endorsement.
+  if (
+    !userHasPermission(actor, 'hr.requests.gm_approve') &&
+    !userHasPermission(actor, 'hr.requests.final_approve') &&
+    !userHasPermission(actor, '*')
+  ) {
+    return { ok: false, error: 'GM HR approval permission required.' };
+  }
   const rc = normalizeReasonCode(reasonCode);
   const noteNorm = String(note || '').trim();
   if (!DECISION_REASON_CODES.has(rc)) {
@@ -4417,6 +4426,15 @@ export function computePayrollRun(db, runId) {
   const run = db.prepare(`SELECT * FROM hr_payroll_runs WHERE id = ?`).get(runId);
   if (!run) return { ok: false, error: 'Payroll run not found.' };
   if (run.status !== 'draft') return { ok: false, error: 'Only draft runs can be recomputed.' };
+  // Recompute rebuilds every line. A prior GM/MD stamp must not stay valid for the new figures.
+  try {
+    db.prepare(
+      `UPDATE hr_payroll_runs SET gm_approved_at_iso = NULL, gm_approved_by_user_id = NULL,
+       md_approved_at_iso = NULL, md_approved_by_user_id = NULL WHERE id = ?`
+    ).run(runId);
+  } catch {
+    /* approval columns optional until migrate */
+  }
   const period = run.period_yyyymm;
   const asOfIso = periodEndIso(period);
   const policy = getHrPolicyPayload(db);
@@ -4922,6 +4940,28 @@ export function patchPayrollRun(db, runId, body, actor) {
           error: 'GM HR or MD must approve this payroll run before it can be locked.',
         };
       }
+    }
+    // Paid is only legal from locked. Draft → paid skips the accrual journal and the approval gate.
+    if (ns === 'paid') {
+      const cur = String(run.status || '').toLowerCase();
+      if (cur !== 'locked' && cur !== 'paid') {
+        return { ok: false, error: 'Only a locked run can be marked paid.' };
+      }
+      if (
+        !userHasPermission(actor, 'hr.payroll.pay') &&
+        !userHasPermission(actor, 'finance.pay') &&
+        !userHasPermission(actor, '*')
+      ) {
+        return { ok: false, error: 'Finance payroll payment permission required.' };
+      }
+    }
+    if (
+      ns === 'locked' &&
+      !userHasPermission(actor, 'hr.payroll.prepare') &&
+      !userHasPermission(actor, 'hr.payroll.manage') &&
+      !userHasPermission(actor, '*')
+    ) {
+      return { ok: false, error: 'Payroll preparation permission required.' };
     }
     const wasPaid = run.status === 'paid';
     let treasuryResult = null;

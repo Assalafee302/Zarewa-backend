@@ -1406,6 +1406,13 @@ export function registerHttpApi(app, db) {
       if (!can) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
+      const existing = getRegisterSettlement(db, req.params.settlementId);
+      if (!existing.ok) return res.status(404).json(existing);
+      const lineGate = assertRegisterLineWorkspaceWrite(req, existing.settlement.registerLineId);
+      if (!lineGate.ok && lineGate.status === 403) {
+        return res.status(403).json({ ok: false, error: lineGate.error });
+      }
+      if (!lineGate.ok) return res.status(404).json({ ok: false, error: lineGate.error });
       const result = decideRegisterSettlement(db, req.params.settlementId, req.body || {}, req.user);
       if (result.ok) {
         try {
@@ -2650,6 +2657,14 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  function creditExceptionActor(req) {
+    return {
+      ...(req.user || {}),
+      workspaceBranchId: req.workspaceBranchId,
+      workspaceViewAll: Boolean(req.workspaceViewAll),
+    };
+  }
+
   app.get('/api/credit-exceptions/policy', requireAuth, (req, res) => {
     try {
       if (!userMayViewCreditExceptions(req.user)) {
@@ -2692,7 +2707,7 @@ export function registerHttpApi(app, db) {
   app.post('/api/credit-exceptions', requireAuth, (req, res) => {
     try {
       const body = req.body || {};
-      const r = createCreditExceptionRequest(db, body, req.user);
+      const r = createCreditExceptionRequest(db, body, creditExceptionActor(req));
       return res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -2703,7 +2718,7 @@ export function registerHttpApi(app, db) {
   app.post('/api/credit-exceptions/:id/decision', requireAuth, (req, res) => {
     try {
       const decision = String(req.body?.decision || '').trim().toLowerCase();
-      const r = decideCreditException(db, req.params.id, decision, req.body || {}, req.user);
+      const r = decideCreditException(db, req.params.id, decision, req.body || {}, creditExceptionActor(req));
       return res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -2713,7 +2728,7 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/credit-exceptions/:id/revoke', requireAuth, (req, res) => {
     try {
-      const r = revokeCreditException(db, req.params.id, req.body || {}, req.user);
+      const r = revokeCreditException(db, req.params.id, req.body || {}, creditExceptionActor(req));
       return res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -13058,6 +13073,17 @@ export function registerHttpApi(app, db) {
         const applicationId = String(req.body?.applicationId || req.body?.application_id || '').trim();
         if (!applicationId) {
           return res.status(400).json({ ok: false, error: 'applicationId is required' });
+        }
+        const appRow = db
+          .prepare(
+            `SELECT target_quotation_ref FROM refund_credit_applications WHERE application_id = ?`
+          )
+          .get(applicationId);
+        if (!appRow) return res.status(400).json({ ok: false, error: 'Refund fund application not found.' });
+        const creditTarget = String(appRow.target_quotation_ref || '').trim();
+        if (creditTarget) {
+          const qGate = assertQuotationIdInWorkspace(db, req, creditTarget);
+          if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
         }
         const reversed = refundCreditApplyOps.reverseRefundCreditApplication(db, applicationId, {
           actor: req.user,

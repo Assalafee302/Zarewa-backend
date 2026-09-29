@@ -63,4 +63,32 @@ describe('hrRedaction', () => {
     expect(out.profileExtra.hrNotes).toBeUndefined();
     expect(out.profileExtra.disciplinaryEvents).toHaveLength(1);
   });
+
+  it('strips nested pay figures from profileExtra when compensation is redacted', () => {
+    const row = {
+      userId: 'U1',
+      baseSalaryNgn: 900000,
+      profileExtra: {
+        compensation: { payAdditionNgn: 200000, matrixTotalNgn: 700000 },
+        compensationVariance: { actualTotalNgn: 900000, varianceNgn: 200000 },
+        compensationPackage: { baseNgn: 900000 },
+        preferredName: 'Ada',
+      },
+    };
+    const out = redactStaffProfile(row, { canViewSensitive: false });
+    expect(out.baseSalaryNgn).toBeNull();
+    expect(out.profileExtra.compensation).toBeUndefined();
+    expect(out.profileExtra.compensationVariance).toBeUndefined();
+    expect(out.profileExtra.compensationPackage).toBeUndefined();
+    expect(out.profileExtra.preferredName).toBe('Ada');
+  });
+
+  it('keeps nested pay figures for viewers who can see compensation', () => {
+    const row = {
+      userId: 'U1',
+      profileExtra: { compensationVariance: { actualTotalNgn: 900000 } },
+    };
+    const out = redactStaffProfile(row, { canViewSensitive: true });
+    expect(out.profileExtra.compensationVariance.actualTotalNgn).toBe(900000);
+  });
 });

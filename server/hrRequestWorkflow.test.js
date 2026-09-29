@@ -2,7 +2,7 @@
  * Leave/loan request workflow — approval chain order and stage transitions.
  */
 import { describe, expect, it } from 'vitest';
-import { branchManagerEndorseRequest, hrReviewRequest } from './hrOps.js';
+import { branchManagerEndorseRequest, hrReviewRequest, managerReviewRequest } from './hrOps.js';
 
 function makeRequestDb(initialRow) {
   const state = { ...initialRow };
@@ -68,5 +68,20 @@ describe('hrRequestWorkflow transitions', () => {
     const r = branchManagerEndorseRequest(db, 'HRR-TEST2', actor, true, 'Endorsed for branch team', 'policy');
     expect(r.ok).toBe(true);
     expect(db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get('HRR-TEST2').status).toBe('gm_hr_review');
+  });
+
+  it('managerReviewRequest refuses GM HR approval without GM permission', () => {
+    const db = makeRequestDb({
+      id: 'HRR-TEST3',
+      user_id: 'U1',
+      branch_id: 'BR-KD',
+      kind: 'loan',
+      status: 'gm_hr_review',
+    });
+    const actor = { id: 'BM1', displayName: 'Branch Manager', roleKey: 'sales_manager' };
+    const r = managerReviewRequest(db, 'HRR-TEST3', actor, true, 'Approved by branch', 'policy');
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/GM HR approval permission/);
+    expect(db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get('HRR-TEST3').status).toBe('gm_hr_review');
   });
 });

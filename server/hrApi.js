@@ -2734,7 +2734,9 @@ export function registerHrApi(app, db) {
     try {
       if (!hrReady(res, db)) return;
       if (denyHqPayIfBranchManager(req, res)) return;
-      const body = req.body || {};
+      const body = { ...(req.body || {}) };
+      // patchPayrollRun lower-cases status. Compare the same value here so "Paid" cannot skip the pay gate.
+      if (body.status != null) body.status = String(body.status).trim().toLowerCase();
       if (body.status === 'paid' && !userCanPayPayroll(req.user)) {
         return res.status(403).json({ ok: false, error: 'Finance payroll payment permission required.' });
       }

@@ -129,8 +129,12 @@ function roleKey(actor) {
 
 function creditExceptionQuotationInWorkspace(actor, quotationBranchId) {
   if (!actor) return false;
+  if (actor.workspaceViewAll) return true;
   if (userHasPermission(actor, '*') || userHasPermission(actor, 'hq.view_all_branches')) return true;
+  // Callers must pass the session branch. An empty value is not "this user's branch";
+  // entityBranchWriteAllowed would otherwise treat it as the default branch (BR-KD).
   const wb = String(actor.workspaceBranchId || actor.homeBranchId || '').trim();
+  if (!wb) return false;
   return entityBranchWriteAllowed(actor, quotationBranchId, wb);
 }
 
@@ -531,6 +535,16 @@ export function revokeCreditException(db, id, payload, actor) {
   if (!row) return { ok: false, error: 'Credit exception not found.' };
   if (row.status !== CREDIT_EXCEPTION_STATUS.APPROVED) {
     return { ok: false, error: 'Only approved credit exceptions can be revoked.' };
+  }
+  const qBranch = db
+    .prepare(`SELECT branch_id FROM quotations WHERE id = ?`)
+    .get(String(row.quotation_ref || '').trim());
+  if (!creditExceptionQuotationInWorkspace(actor, qBranch?.branch_id || row.branch_id)) {
+    return {
+      ok: false,
+      error: 'This credit exception is not in your current workspace branch.',
+      code: 'FORBIDDEN',
+    };
   }
   const t = nowIso();
   db.prepare(

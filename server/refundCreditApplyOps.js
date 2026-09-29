@@ -30,6 +30,7 @@ import {
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
 import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
 import { refundCashOutstandingNgn, repairRefundPayoutStateTx } from './sales/refundPayoutStatus.js';
+import { reducePartnerWalletOpenForRefundCreditTx } from './finance/partnerWalletCredit.js';
 import { assertPeriodOpen, appendAuditLog } from './controlOps.js';
 import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import { quotationPaymentCashBreakdownByRef } from './quotationPaymentCash.js';
@@ -161,6 +162,7 @@ function stampRefundCreditOnRowTx(db, fresh, amt, { target, actor, atIso }) {
     REFUND_CREDIT_CONFIRMATION_STATUS,
     fresh.refund_id
   );
+  reducePartnerWalletOpenForRefundCreditTx(db, fresh.refund_id, amt);
   repairRefundPayoutStateTx(db, fresh.refund_id);
 }
 

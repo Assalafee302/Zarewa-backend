@@ -12,7 +12,11 @@ import { evaluateRefundPayoutGlPolicy } from '../ap1cReversalRefundOps.js';
 import { tryPostCustomerRefundPayoutGlTx, ensureSupplementalGlAccounts } from '../glOps.js';
 import { insertTreasuryMovementTx } from '../writeOps.js';
 import { effectiveOutstandingNgn } from '../../shared/lib/paymentOutstandingTolerance.js';
-import { resolveRefundStatus, assertRefundMoneyOutWithinApproved } from '../sales/refundPayoutStatus.js';
+import {
+  resolveRefundStatus,
+  assertRefundMoneyOutWithinApproved,
+  buildRefundSettlementSummary,
+} from '../sales/refundPayoutStatus.js';
 import {
   listPartnerWalletOpenCredits,
   nextWalletEntryId,
@@ -151,16 +155,37 @@ export function withdrawPartnerWallet(db, payload = {}) {
 
   try {
     const result = db.transaction(() => {
+      const roomByRefund = new Map();
       let left = amountNgn;
       const allocations = [];
       for (const credit of credits) {
         if (left <= 0) break;
-        const take = Math.min(left, credit.openNgn);
+        const rid = String(credit.refundId || '').trim();
+        let room = credit.openNgn;
+        if (rid) {
+          if (!roomByRefund.has(rid)) {
+            const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(rid);
+            roomByRefund.set(
+              rid,
+              refundRow ? buildRefundSettlementSummary(db, refundRow).cashOutstandingNgn : credit.openNgn
+            );
+          }
+          room = roomByRefund.get(rid);
+        }
+        const take = Math.min(left, credit.openNgn, Math.max(0, room));
         if (take <= 0) continue;
+        if (rid) roomByRefund.set(rid, Math.max(0, room - take));
         allocations.push({ credit, amountNgn: take });
         left -= take;
       }
-      if (left > 0) throw new Error('Could not allocate withdrawal across open credits.');
+      if (left > 0) {
+        const payable = amountNgn - left;
+        throw new Error(
+          payable > 0
+            ? `Only ₦${payable.toLocaleString('en-NG')} is still payable after receipt credit already used from this refund.`
+            : 'Nothing is left to pay from partner wallet after receipt credit already used from this refund.'
+        );
+      }
 
       const withdrawalId = nextWithdrawalId(db, branchId);
       const movement = insertTreasuryMovementTx(db, {

@@ -1224,15 +1224,32 @@ export function openAuditQueue(bankReconciliation = [], paymentRequests = [], re
       });
     });
   approvedRefundsAwaitingPayment(refunds).forEach((x) => {
-      items.push({
-        id: x.refundID,
-        customer: x.customer,
-        amount: refundOutstandingAmount(x),
-        bank: 'Refund queue',
-        date: x.approvalDate || x.requestedAtISO?.slice(0, 10) || '',
-        desc: x.reason || 'Approved refund awaiting payment',
+    const lines = Array.isArray(x.cashierPayoutLines) ? x.cashierPayoutLines : [];
+    const openLines = lines.filter((line) => Math.round(Number(line?.tillDueNgn) || 0) > 0);
+    if (openLines.length > 1) {
+      openLines.forEach((line) => {
+        const quoteCustomer = String(x.customer || '').trim();
+        const payee = String(line.payeeName || '').trim() || quoteCustomer;
+        items.push({
+          id: `${x.refundID}:${line.key || payee}`,
+          customer: payee,
+          amount: Math.round(Number(line.tillDueNgn) || 0),
+          bank: 'Refund queue',
+          date: x.approvalDate || x.requestedAtISO?.slice(0, 10) || '',
+          desc: line.cashierLabel || `${line.roleLabel || 'Payee'} · ${x.refundID} · ${x.quotationRef || ''}`,
+        });
       });
+      return;
+    }
+    items.push({
+      id: x.refundID,
+      customer: x.customer,
+      amount: refundOutstandingAmount(x),
+      bank: 'Refund queue',
+      date: x.approvalDate || x.requestedAtISO?.slice(0, 10) || '',
+      desc: x.reason || 'Approved refund awaiting payment',
     });
+  });
   return items.slice(0, 12);
 }
 

@@ -410,6 +410,83 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
     db.prepare(`DELETE FROM treasury_movements WHERE source_id = ?`).run(CONCESSION_ID);
     db.prepare(`DELETE FROM quotations WHERE id = ?`).run(QREF);
   });
+
+  it('leaves only the balance after receipt credit already used from an approved refund', () => {
+    const id = 'RF-BAL-861575';
+    const qref = 'QT-RF-BAL-861575';
+    db.prepare(`DELETE FROM customer_refunds WHERE refund_id = ?`).run(id);
+    db.prepare(`DELETE FROM quotations WHERE id = ?`).run(qref);
+    db.prepare(
+      `INSERT INTO quotations (
+         id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status,
+         lines_json, date_iso, branch_id
+       ) VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).run(qref, CUSTOMER_ID, 'Quote Customer', 861_575, 861_575, 'Paid', 'Finished', '{}', '2026-09-01', 'BR-KD');
+    db.prepare(
+      `INSERT INTO customer_refunds (
+         refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+         amount_ngn, calculation_lines_json, status,
+         payee_name, payee_account_no, payee_bank_name, branch_id, requested_by, requested_at_iso,
+         approved_amount_ngn, paid_amount_ngn, credit_applied_ngn
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      id,
+      CUSTOMER_ID,
+      'Quote Customer',
+      qref,
+      '["Overpayment"]',
+      'Overpayment',
+      861_575,
+      JSON.stringify([{ category: 'Overpayment', amountNgn: 861_575 }]),
+      'Approved',
+      'Quote Customer',
+      '0123456789',
+      'GTBank',
+      'BR-KD',
+      'Sales',
+      '2026-09-20T10:00:00.000Z',
+      861_575,
+      0,
+      555_000 + 72_300
+    );
+    const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+    const summary = buildRefundSettlementSummary(db, row, { walletOpenNgn: 861_575 });
+    expect(summary.creditAppliedNgn).toBe(627_300);
+    expect(summary.cashOutstandingNgn).toBe(234_275);
+    expect(summary.walletOpenNgn).toBe(234_275);
+    expect(summary.tillPayableNgn).toBe(0);
+
+    const tillOnly = buildRefundSettlementSummary(db, row, { walletOpenNgn: 0 });
+    expect(tillOnly.cashOutstandingNgn).toBe(234_275);
+    expect(tillOnly.tillPayableNgn).toBe(234_275);
+
+    const acct = db.prepare(`SELECT id FROM treasury_accounts LIMIT 1`).get();
+    const cashier = db
+      .prepare(
+        `SELECT id, username, role_key AS roleKey, display_name AS displayName
+         FROM app_users WHERE username = 'cashier' LIMIT 1`
+      )
+      .get();
+    const tooMuch = payRefundEntry(db, id, {
+      paymentLines: [{ treasuryAccountId: acct.id, amountNgn: 861_575, dateISO: '2026-09-29' }],
+      actor: { id: cashier.id, displayName: cashier.displayName, roleKey: 'cashier' },
+      paidBy: 'Cashier',
+      dateISO: '2026-09-29',
+    });
+    expect(tooMuch.ok).toBe(false);
+
+    const paid = payRefundEntry(db, id, {
+      paymentLines: [{ treasuryAccountId: acct.id, amountNgn: 234_275, dateISO: '2026-09-29' }],
+      actor: { id: cashier.id, displayName: cashier.displayName, roleKey: 'cashier' },
+      paidBy: 'Cashier',
+      dateISO: '2026-09-29',
+    });
+    expect(paid.ok).toBe(true);
+
+    db.prepare(`DELETE FROM treasury_movements WHERE source_id = ?`).run(id);
+    db.prepare(`DELETE FROM customer_refunds WHERE refund_id = ?`).run(id);
+    db.prepare(`DELETE FROM quotations WHERE id = ?`).run(qref);
+  });
 });
 
 describe('buildRefundSituationBrief', () => {

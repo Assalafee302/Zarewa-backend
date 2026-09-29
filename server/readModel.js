@@ -10,7 +10,7 @@ import {
   PAYMENT_OUTSTANDING_TOLERANCE_NGN,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { repairRefundPayoutStateTx, resolveRefundStatus, buildRefundSettlementSummary } from './sales/refundPayoutStatus.js';
-import { refundCreditAppliedByIds } from './sales/refundCreditLedger.js';
+import { refundCreditAppliedByIds, unlinkedReceiptCreditByRefundId } from './sales/refundCreditLedger.js';
 import { healRefundCreditAppliedFromApplicationsTx } from './sales/refundCreditHeal.js';
 import {
   poTransportQuotedFeeNgn,
@@ -22,7 +22,7 @@ import {
   paymentRequestStatusApiFields,
 } from '../shared/lib/paymentRequestStatus.js';
 import { SQL_PENDING_BELOW_FLOOR_EXCEPTION } from '../shared/lib/quotationPriceException.js';
-import { approvedRefundsAwaitingPayment, applyRefundSplitRemainingTillPayable } from '../shared/lib/refundsStore.js';
+import { approvedRefundsAwaitingPayment, applyRefundSplitRemainingTillPayable, stampRefundPayeeTillDue } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
 import { displayNamesByUserIds } from './sales/receiptActorDisplayNames.js';
@@ -3335,10 +3335,12 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   // One query for the whole page: the settlement summary needs applied credit per row,
   // and looking it up inside the mapper would be a query per refund.
   const creditAppliedByRefundId = refundCreditAppliedByIds(db, refundIds);
+  const extraCreditByRefundId = unlinkedReceiptCreditByRefundId(db, rows);
   const hrKeys = buildHrStaffBankAccountKeySet(db);
   return rows.map((row) =>
     mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId, {
       creditAppliedByRefundId,
+      extraCreditByRefundId,
       hrKeys,
       liveUnclearedEnrich: false,
       includeWalletOpenCredits: false,
@@ -3842,10 +3844,11 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
       ? approvedAmountNgn || Number(row.amount_ngn) || 0
       : approvedAmountNgn;
   const payoutHistory = payoutByRefundId.get(row.refund_id) || [];
-  const walletOpenNgn = walletOpenByRefundId.get(row.refund_id) || 0;
+  const walletOpenLedgerNgn = walletOpenByRefundId.get(row.refund_id) || 0;
   const settleOpts = {
-    walletOpenNgn,
+    walletOpenNgn: walletOpenLedgerNgn,
     creditAppliedByRefundId: mapOpts.creditAppliedByRefundId,
+    extraCreditByRefundId: mapOpts.extraCreditByRefundId,
     hrKeys: mapOpts.hrKeys,
     includeWalletOpenCredits: mapOpts.includeWalletOpenCredits !== false,
   };
@@ -3879,8 +3882,14 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     Number(settlementSummary.creditAppliedNgn) || 0
   );
   const tillPayableNgn = Math.max(0, Math.round(Number(settlementSummary.tillPayableNgn) || 0));
-  // Pay-out UI reads split netPayoutNgn — shrink it to till still owed after credit apply.
-  if (
+  const cashierPayoutLines = Array.isArray(settlementSummary.cashierPayoutLines)
+    ? settlementSummary.cashierPayoutLines
+    : [];
+  // One payee: shrink the stored net to till still owed after credit.
+  // Two payees: each person keeps their own amount. Do not spread one remainder across both.
+  if (cashierPayoutLines.length > 1) {
+    splitDistributions = stampRefundPayeeTillDue(splitDistributions, cashierPayoutLines);
+  } else if (
     (resolvedStatus === 'Approved' || resolvedStatus === 'Partially paid') &&
     Array.isArray(splitDistributions) &&
     splitDistributions.length
@@ -3901,6 +3910,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     suggestedLines,
     previewSnapshot,
     splitDistributions,
+    cashierPayoutLines,
     calculationNotes: row.calculation_notes,
     status: resolvedStatus,
     requestedBy: row.requested_by,
@@ -3918,7 +3928,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     payeeAccountNo: row.payee_account_no ?? '',
     payeeBankName: row.payee_bank_name ?? '',
     payoutHistory,
-    walletOpenNgn,
+    walletOpenNgn: Math.max(0, Math.round(Number(settlementSummary.walletOpenNgn) || 0)),
     walletOpenCredits,
     heldNetNgn: settlementSummary.heldUnclearedNgn,
     companyCutNgn: settlementSummary.companyCutNgn,

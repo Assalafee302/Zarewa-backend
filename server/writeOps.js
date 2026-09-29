@@ -9421,20 +9421,21 @@ export function payRefundEntry(db, refundId, payload) {
   }
   const approvedAmountNgn = roundMoney(row.approved_amount_ngn || row.amount_ngn);
   const paidAmountNgn = roundMoney(row.paid_amount_ngn);
-  const cashOutstandingNgn = refundCashOutstandingNgn(db, row);
-  if (cashOutstandingNgn <= 0 && !refundHasOpenWalletCredit(db, refundId)) {
-    return { ok: false, error: 'Refund has already been fully paid.' };
-  }
   const hasPerm = (p) => userHasPermission(payload.actor, p);
   const payRelaxed = refundCashierPayRelaxed();
   const holdOpts = payRelaxed ? { skipUnclearedFloat: true } : {};
+  const payoutView = buildRefundSettlementSummary(db, row, holdOpts);
+  const cashOutstandingNgn = payoutView.cashOutstandingNgn;
+  if (cashOutstandingNgn <= 0 && !refundHasOpenWalletCredit(db, refundId)) {
+    return { ok: false, error: 'Refund has already been fully paid.' };
+  }
   const heldNetNgn = refundHeldNetCashDueNgn(db, row, approvedAmountNgn, holdOpts);
   const mayOverrideUncleared = actorMayOverrideRefundUnclearedPayoutHold(payload.actor, hasPerm, {
     heldNetNgn,
   });
   // Relaxed desk mode: treat uncleared as overridable without a mandatory note.
   const adminMayPayUncleared = payRelaxed ? true : mayOverrideUncleared;
-  const openWalletNgn = partnerWalletEnabled() ? openWalletCreditNgnForRefund(db, refundId) : 0;
+  const openWalletNgn = payoutView.walletOpenNgn;
   const tillPayableNgn = refundTillPayableNgn({
     cashOutstandingNgn,
     heldNetNgn,
@@ -9642,12 +9643,13 @@ export function payRefundEntry(db, refundId, payload) {
       }
       const approvedFresh = roundMoney(fresh.approved_amount_ngn || fresh.amount_ngn);
       const paidFresh = roundMoney(fresh.paid_amount_ngn);
-      const cashOutstandingFresh = refundCashOutstandingNgn(db, fresh);
+      const payoutFresh = buildRefundSettlementSummary(db, fresh, holdOpts);
+      const cashOutstandingFresh = payoutFresh.cashOutstandingNgn;
       if (cashOutstandingFresh <= 0 && !refundHasOpenWalletCredit(db, refundId)) {
         throw new Error('Refund has already been fully paid.');
       }
       const heldFresh = refundHeldNetCashDueNgn(db, fresh, approvedFresh, holdOpts);
-      const openWalletFresh = partnerWalletEnabled() ? openWalletCreditNgnForRefund(db, refundId) : 0;
+      const openWalletFresh = payoutFresh.walletOpenNgn;
       const tillPayableFresh = refundTillPayableNgn({
         cashOutstandingNgn: cashOutstandingFresh,
         heldNetNgn: heldFresh,

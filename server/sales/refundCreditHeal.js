@@ -12,6 +12,7 @@ import { quotationOverpaymentExcessNgn } from '../../shared/lib/refundQuotationM
 import { quotationPaymentCashBreakdownByRef } from '../quotationPaymentCash.js';
 import { refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
 import { refundCashOutstandingNgn, repairRefundPayoutStateTx } from './refundPayoutStatus.js';
+import { reducePartnerWalletOpenForRefundCreditTx } from '../finance/partnerWalletCredit.js';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -236,6 +237,8 @@ export function healRefundCreditAppliedFromApplicationsTx(db, refundId) {
     rid
   );
 
+  // The accrual was the full approval. Shrink it by the credit this heal just recognized.
+  reducePartnerWalletOpenForRefundCreditTx(db, rid, delta);
   repairRefundPayoutStateTx(db, rid);
 
   const after = db

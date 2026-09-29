@@ -17,7 +17,7 @@ import { refundCashierPayRelaxed } from '../financeFeatureFlags.js';
 import { refundTillPayableNgn } from '../refundHandlers.js';
 import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../../shared/lib/refundUnclearedPayoutHold.js';
 import { listActiveRefundCreditApplicationsBySourceQuotation, refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
-import { refundCreditSettledNgn } from './refundCreditLedger.js';
+import { refundCreditSettledNgn, unlinkedReceiptCreditAttributedNgn } from './refundCreditLedger.js';
 import {
   listCancelableConflictingOverpayRefunds,
   quotationOverpayResidualExcludingRefund,
@@ -26,6 +26,10 @@ import {
   overpayResidualNeededForPayoutNgn,
   sumRefundCalculationLinesByCategoryNgn,
 } from '../../shared/lib/refundQuotationMoney.js';
+import {
+  buildRefundCashierPayoutLines,
+  refundCashierPayeeHeadline,
+} from '../../shared/lib/refundsStore.js';
 
 export const REFUND_STATUS_PARTIALLY_PAID = 'Partially paid';
 
@@ -78,6 +82,8 @@ function fmtNgn(n) {
  *   publicLabel?: string,
  *   canCancelBeforePay?: boolean,
  *   creditAppliedToQuotationRef?: string,
+ *   cashierPayoutLines?: object[],
+ *   quotationRef?: string,
  * }} s
  */
 export function buildRefundSituationBrief(s = {}) {
@@ -206,8 +212,18 @@ export function buildRefundSituationBrief(s = {}) {
     howToResolve.push('No further cashier action — refund is settled.');
   }
 
+  const payeeHeadline = refundCashierPayeeHeadline(s.cashierPayoutLines, s.quotationRef);
+  if (payeeHeadline) {
+    whatHappened.unshift(payeeHeadline);
+    howToResolve.unshift(
+      'Pay each person their own amount. The other amount on this quotation is a different payee, not a change to the figure you just paid.'
+    );
+  }
+
   let headline = publicLabel || 'Refund payout';
-  if (s.willReleaseOverpayCreditOnPay && tillPayableNgn > 0) {
+  if (payeeHeadline) {
+    headline = payeeHeadline;
+  } else if (s.willReleaseOverpayCreditOnPay && tillPayableNgn > 0) {
     headline = `Ready to pay ${fmtNgn(tillPayableNgn)} — will undo confirm-payment credit first`;
   } else if (creditAppliedNgn > 0 && tillPayableNgn > 0) {
     headline = 'Part of this refund was already used on a quotation — only the leftover is payable';
@@ -237,8 +253,27 @@ export function buildRefundSituationBrief(s = {}) {
 }
 
 /**
- * Net till/bank/wallet/credit still owed to payees (after company cut).
+ * Credit that has already left this refund, including receipt confirms that spent the
+ * refund's cash without stamping `credit_applied_ngn`.
+ * @param {Record<string, unknown>} row
+ * @param {{
+ *   creditAppliedByRefundId?: Map<string, number> | null,
+ *   extraCreditByRefundId?: Map<string, number> | null,
+ *   skipUnlinkedReceiptCredit?: boolean,
+ * }} [opts]
  */
+export function refundPayoutCreditNgn(db, row, opts = {}) {
+  const base = refundCreditSettledNgn(db, row, opts.creditAppliedByRefundId ?? null);
+  const refundId = String(row?.refund_id || row?.refundID || '').trim();
+  let extra = 0;
+  if (opts.extraCreditByRefundId instanceof Map) {
+    extra = Math.max(0, roundMoney(opts.extraCreditByRefundId.get(refundId)));
+  } else if (!opts.skipUnlinkedReceiptCredit) {
+    extra = unlinkedReceiptCreditAttributedNgn(db, row);
+  }
+  return base + extra;
+}
+
 export function refundCashOutstandingNgn(db, row, creditAppliedByRefundId = null, resolveOpts = {}) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   if (!refundId) return 0;
@@ -394,7 +429,11 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   } else {
     targets = targets || [];
   }
-  const targetOpts = { ...resolveOpts, targets };
+  const targetOpts = {
+    ...resolveOpts,
+    targets,
+    extraCreditByRefundId: opts.extraCreditByRefundId,
+  };
   const companyCutNgn =
     needsOpenTargets || needsPaidTargets
       ? refundSettledAtApprovalNgn(db, row, approvedNgn, targetOpts)
@@ -405,18 +444,21 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       : Math.max(0, approvedNgn);
   const treasuryPaidNgn = refundId ? refundTreasuryPaidNgn(db, refundId) : 0;
   const walletWithdrawnNgn = refundId ? refundWalletWithdrawnNgn(db, refundId) : 0;
-  const creditAppliedNgn = refundCreditSettledNgn(db, row, opts.creditAppliedByRefundId ?? null);
+  const creditAppliedNgn = refundPayoutCreditNgn(db, row, opts);
   const payeeSettledNgn = Math.max(0, treasuryPaidNgn + walletWithdrawnNgn + creditAppliedNgn);
   const cashOutstandingNgn = Math.max(0, netCashDueNgn - payeeSettledNgn);
   const heldUnclearedNgn = needsOpenTargets
     ? refundHeldNetCashDueNgn(db, row, approvedNgn, targetOpts)
     : 0;
-  const walletOpenNgn =
+  const walletOpenRaw =
     opts.walletOpenNgn != null
       ? Math.max(0, roundMoney(opts.walletOpenNgn))
       : partnerWalletEnabled() && refundId
         ? openWalletCreditNgnForRefund(db, refundId)
         : 0;
+  // Receipt credit already left this refund. Do not still offer the original wallet
+  // accrual (approved ₦861,575 with ₦627,300 used as receipts must pay ₦234,275).
+  const walletOpenNgn = Math.min(walletOpenRaw, cashOutstandingNgn);
 
   let unclearedReceipts = [];
   let unclearedReceiptIds = [];
@@ -662,6 +704,26 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     });
   }
 
+  const cashierPayoutLines = buildRefundCashierPayoutLines(
+    (targets || []).map((t) => ({
+      payeeName: t.payeeName || t.partyName,
+      partyName: t.partyName,
+      recipientKind: t.partyKind,
+      recipientAssociatedStaffID: t.partyKind === 'associated_staff' ? t.partyId : '',
+      staffBankAccountMatch: t.staffBankAccountMatch,
+      forceClaimingStaffCut: t.staffBankAccountMatch,
+      companyDeductionNgn: t.companyDeductionNgn,
+      grossNgn: t.grossNgn,
+      amountNgn: t.grossNgn ?? t.amountNgn,
+      netPayoutNgn: t.amountNgn,
+    })),
+    {
+      quotationCustomer: String(row.customer_name || row.customer || '').trim(),
+      quotationRef: String(row.quotation_ref || row.quotationRef || '').trim(),
+      paidNgn: payeeSettledNgn,
+    }
+  );
+
   const situationBrief = buildRefundSituationBrief({
     approvedNgn,
     companyCutNgn,
@@ -675,6 +737,8 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     heldUnclearedNgn,
     unclearedReceiptIds,
     publicLabel,
+    quotationRef: String(row.quotation_ref || row.quotationRef || '').trim(),
+    cashierPayoutLines,
     creditAppliedToQuotationRef:
       row?.credit_applied_to_quotation_ref || row?.creditAppliedToQuotationRef || '',
     canCancelBeforePay:
@@ -696,6 +760,21 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     } catch {
       walletOpenCredits = [];
     }
+  }
+  // Ledger rows can still hold the original accrual. Show only what is still payable
+  // after receipt credit (₦861,575 approved, ₦627,300 used → ₦234,275).
+  const creditSum = walletOpenCredits.reduce((sum, c) => sum + roundMoney(c.openNgn), 0);
+  if (walletOpenCredits.length && creditSum > walletOpenNgn) {
+    let left = walletOpenNgn;
+    const cappedCredits = [];
+    for (const credit of walletOpenCredits) {
+      if (left <= 0) break;
+      const open = Math.min(roundMoney(credit.openNgn), left);
+      if (open <= 0) continue;
+      cappedCredits.push({ ...credit, openNgn: open });
+      left -= open;
+    }
+    walletOpenCredits = cappedCredits;
   }
 
   return {
@@ -727,6 +806,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     payoutBlockers,
     nextActions,
     situationBrief,
+    cashierPayoutLines,
     cashierOverrideHoldMaxNgn: CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN,
     canCancelBeforePay: Boolean(
       (lifecycleStatus === 'Approved' || storedStatus === 'Approved') &&

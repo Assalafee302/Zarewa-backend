@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   approvedRefundsAwaitingPayment,
   applyRefundSplitRemainingTillPayable,
+  buildRefundCashierPayoutLines,
   isRefundPayable,
+  refundCashierPayeeHeadline,
   refundOutstandingAmount,
 } from './refundsStore.js';
 
@@ -96,5 +98,57 @@ describe('refundsStore payable filters', () => {
         settlementSummary: { tillPayableNgn: 751_480, cashOutstandingNgn: 751_480 },
       })
     ).toBe(751_480);
+  });
+
+  it('keeps customer ₦250,000 and staff ₦67,840 as two payees on one quotation (RF-KD-26-9678)', () => {
+    const splits = [
+      {
+        recipientKind: 'customer',
+        payeeName: 'Yau Haruna',
+        amountNgn: 250_000,
+        netPayoutNgn: 250_000,
+        companyDeductionNgn: 0,
+      },
+      {
+        recipientKind: 'customer',
+        payeeName: 'Sulieman Abdullahi Liman',
+        amountNgn: 84_800,
+        grossNgn: 84_800,
+        companyDeductionNgn: 16_960,
+        netPayoutNgn: 67_840,
+        staffBankAccountMatch: true,
+      },
+    ];
+    expect(applyRefundSplitRemainingTillPayable(splits, 46_480)).toEqual(splits);
+
+    const beforePay = buildRefundCashierPayoutLines(splits, {
+      quotationCustomer: 'Usman Tijjani',
+      quotationRef: 'QT-KD-26-1648',
+      paidNgn: 0,
+    });
+    expect(beforePay.map((l) => [l.payeeName, l.roleLabel, l.tillDueNgn])).toEqual([
+      ['Yau Haruna', 'Customer share', 250_000],
+      ['Sulieman Abdullahi Liman', 'Staff share', 67_840],
+    ]);
+    expect(beforePay[0].cashierLabel).toContain('quotation customer Usman Tijjani');
+    expect(beforePay[1].cashierLabel).not.toContain('Usman Tijjani is');
+
+    const afterStaffPay = buildRefundCashierPayoutLines(splits, {
+      quotationCustomer: 'Usman Tijjani',
+      quotationRef: 'QT-KD-26-1648',
+      paidNgn: 67_840,
+    });
+    expect(afterStaffPay.find((l) => l.staffShare)?.tillDueNgn).toBe(0);
+    expect(afterStaffPay.find((l) => !l.staffShare)?.tillDueNgn).toBe(250_000);
+
+    const afterBoth = buildRefundCashierPayoutLines(splits, {
+      quotationCustomer: 'Usman Tijjani',
+      quotationRef: 'QT-KD-26-1648',
+      paidNgn: 271_360,
+    });
+    expect(afterBoth.find((l) => l.staffShare)?.tillDueNgn).toBe(0);
+    expect(afterBoth.find((l) => !l.staffShare)?.tillDueNgn).toBe(46_480);
+    expect(refundCashierPayeeHeadline(afterStaffPay, 'QT-KD-26-1648')).toMatch(/Yau Haruna/);
+    expect(refundCashierPayeeHeadline(afterStaffPay, 'QT-KD-26-1648')).toMatch(/does not change the other/);
   });
 });

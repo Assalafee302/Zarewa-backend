@@ -6,7 +6,13 @@
  * need this figure, and routing it through refundCreditApplyOps would put a cycle between
  * that module and controlOps.
  */
-import { REFUND_CREDIT_REVERSED_STATUS } from '../../shared/lib/refundCreditApply.js';
+import {
+  REFUND_CREDIT_REVERSED_STATUS,
+  refundCreditOpenAmountFromStoredRefund,
+  refundOverpayConsumedNgn,
+} from '../../shared/lib/refundCreditApply.js';
+import { quotationOverpaymentExcessNgn } from '../../shared/lib/refundQuotationMoney.js';
+import { quotationPaymentCashBreakdownByRef } from '../quotationPaymentCash.js';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -148,6 +154,183 @@ export function refundCreditTargetsFor(db, refundId) {
  * @param {import('better-sqlite3').Database} db
  * @param {Record<string, unknown>} row a customer_refunds row, snake or camel case
  */
+function refundRowForOverpayConsumed(row) {
+  let calculationLines = row?.calculationLines;
+  if (!Array.isArray(calculationLines)) {
+    try {
+      calculationLines = JSON.parse(String(row?.calculation_lines_json || '[]'));
+    } catch {
+      calculationLines = [];
+    }
+  }
+  return {
+    ...row,
+    reasonCategory: row?.reasonCategory ?? row?.reason_category,
+    calculationLines,
+    amountNgn: row?.amountNgn ?? row?.amount_ngn,
+    paidAmountNgn: row?.paidAmountNgn ?? row?.paid_amount_ngn,
+    paidAtISO: row?.paidAtISO ?? row?.paid_at_iso,
+    paidBy: row?.paidBy ?? row?.paid_by,
+  };
+}
+
+function treasuryPaidNgn(db, refundId) {
+  const rid = String(refundId || '').trim();
+  if (!rid) return 0;
+  try {
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(
+           CASE
+             WHEN type = 'REFUND_PAYOUT' THEN ABS(amount_ngn)
+             WHEN type = 'REFUND_PAYOUT_REVERSAL_IN' THEN -ABS(amount_ngn)
+             ELSE 0
+           END
+         ), 0) AS s
+         FROM treasury_movements
+         WHERE source_kind = 'REFUND' AND source_id = ?`
+      )
+      .get(rid);
+    return Math.max(0, roundMoney(row?.s));
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Unlinked confirm-payment credit on this quotation that spent cash an open refund still
+ * shows as payable. Genuine leftover beyond the refund open is not included.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ */
+function unlinkedOverpayOvershootNgn(db, quotationRef) {
+  const qid = String(quotationRef || '').trim();
+  if (!qid) return 0;
+  let q;
+  try {
+    q = db.prepare(`SELECT id, total_ngn FROM quotations WHERE id = ?`).get(qid);
+  } catch {
+    return 0;
+  }
+  if (!q) return 0;
+
+  let unlinkedOut = 0;
+  try {
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s
+         FROM refund_credit_applications
+         WHERE source_quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')
+           AND TRIM(IFNULL(refund_id, '')) = ''`
+      )
+      .get(qid);
+    unlinkedOut = roundMoney(row?.s);
+  } catch {
+    return 0;
+  }
+  if (!(unlinkedOut > 0)) return 0;
+
+  let economic = 0;
+  try {
+    const cash = quotationPaymentCashBreakdownByRef(db, [qid]).get(qid);
+    economic = quotationOverpaymentExcessNgn({
+      cashInNgn: cash?.cashInNgn || 0,
+      quoteTotalNgn: q.total_ngn,
+    });
+  } catch {
+    economic = 0;
+  }
+
+  let refundOpen = 0;
+  let refundConsumed = 0;
+  try {
+    const refunds = db
+      .prepare(
+        `SELECT * FROM customer_refunds
+         WHERE quotation_ref = ?
+           AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
+      )
+      .all(qid);
+    for (const row of refunds) {
+      refundOpen += refundCreditOpenAmountFromStoredRefund(row);
+      refundConsumed += refundOverpayConsumedNgn(
+        refundRowForOverpayConsumed(row),
+        treasuryPaidNgn(db, row.refund_id)
+      );
+    }
+  } catch {
+    return 0;
+  }
+  const capacity = Math.max(0, economic - refundOpen - refundConsumed);
+  return Math.max(0, unlinkedOut - capacity);
+}
+
+function openPayoutBeforeUnlinkedNgn(db, row) {
+  const approved = Math.max(
+    0,
+    roundMoney(row?.approved_amount_ngn ?? row?.approvedAmountNgn ?? row?.amount_ngn ?? row?.amountNgn)
+  );
+  const stored = Math.max(0, roundMoney(row?.credit_applied_ngn ?? row?.creditAppliedNgn));
+  const linked = refundCreditAppliedNgn(db, row?.refund_id || row?.refundID);
+  const credit = Math.max(stored, linked);
+  const treasury = treasuryPaidNgn(db, row?.refund_id || row?.refundID);
+  return Math.max(0, approved - treasury - credit);
+}
+
+/**
+ * How much unlinked receipt credit should come off each open refund, oldest first.
+ * Empty when nothing on the page needs it. Safe to call once per list.
+ * @param {import('better-sqlite3').Database} db
+ * @param {Array<Record<string, unknown>>} rows
+ * @returns {Map<string, number>}
+ */
+export function unlinkedReceiptCreditByRefundId(db, rows) {
+  const map = new Map();
+  const quotes = new Set();
+  for (const row of rows || []) {
+    const status = String(row?.status || '').trim();
+    if (status !== 'Approved' && status !== 'Partially paid') continue;
+    const qref = String(row?.quotation_ref || row?.quotationRef || '').trim();
+    if (qref) quotes.add(qref);
+  }
+  for (const qref of quotes) {
+    const overshoot = unlinkedOverpayOvershootNgn(db, qref);
+    if (!(overshoot > 0)) continue;
+    let siblings = [];
+    try {
+      siblings = db
+        .prepare(
+          `SELECT * FROM customer_refunds
+           WHERE quotation_ref = ?
+             AND LOWER(TRIM(COALESCE(status, ''))) IN ('approved', 'partially paid')
+           ORDER BY requested_at_iso ASC, refund_id ASC`
+        )
+        .all(qref);
+    } catch {
+      siblings = [];
+    }
+    let left = overshoot;
+    for (const sib of siblings) {
+      if (left <= 0) break;
+      const open = openPayoutBeforeUnlinkedNgn(db, sib);
+      const take = Math.min(left, open);
+      if (take > 0) map.set(String(sib.refund_id), take);
+      left -= take;
+    }
+  }
+  return map;
+}
+
+/** Unlinked receipt credit that should reduce this one refund's payout. */
+export function unlinkedReceiptCreditAttributedNgn(db, row) {
+  const refundId = String(row?.refund_id || row?.refundID || '').trim();
+  if (!refundId) return 0;
+  const status = String(row?.status || '').trim();
+  if (status !== 'Approved' && status !== 'Partially paid') return 0;
+  return unlinkedReceiptCreditByRefundId(db, [row]).get(refundId) || 0;
+}
+
 export function refundCreditSettledNgn(db, row, ledgerByRefundId = null) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   const stored = Math.max(0, roundMoney(row?.credit_applied_ngn ?? row?.creditAppliedNgn));

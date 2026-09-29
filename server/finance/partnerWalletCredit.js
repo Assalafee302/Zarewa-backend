@@ -823,6 +823,44 @@ export function refundHasOpenWalletCredit(db, refundId) {
   return roundMoney(row?.s) > 0;
 }
 
+/**
+ * Receipt credit already spent this refund. Shrink open wallet accruals so the
+ * cashier cannot still release the original approved total.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} refundId
+ * @param {number} amountNgn
+ */
+export function reducePartnerWalletOpenForRefundCreditTx(db, refundId, amountNgn) {
+  const rid = String(refundId || '').trim();
+  let left = roundMoney(amountNgn);
+  if (!rid || left <= 0) return { ok: true, reducedNgn: 0 };
+  if (!partnerWalletTablesReady(db)) return { ok: true, reducedNgn: 0, skipped: true };
+  let rows = [];
+  try {
+    rows = db
+      .prepare(
+        `SELECT id, open_ngn FROM partner_wallet_entries
+         WHERE entry_type = 'credit' AND refund_id = ? AND open_ngn > 0
+         ORDER BY created_at_iso ASC, id ASC`
+      )
+      .all(rid);
+  } catch {
+    return { ok: true, reducedNgn: 0, skipped: true };
+  }
+  let reduced = 0;
+  const upd = db.prepare(`UPDATE partner_wallet_entries SET open_ngn = open_ngn - ? WHERE id = ? AND open_ngn >= ?`);
+  for (const row of rows) {
+    if (left <= 0) break;
+    const open = roundMoney(row.open_ngn);
+    const take = Math.min(left, open);
+    if (take <= 0) continue;
+    upd.run(take, row.id, take);
+    reduced += take;
+    left -= take;
+  }
+  return { ok: true, reducedNgn: reduced };
+}
+
 export function openWalletCreditNgnForRefund(db, refundId) {
   if (!partnerWalletTablesReady(db)) return 0;
   const rid = String(refundId || '').trim();

@@ -67,10 +67,165 @@ export function refundOutstandingAmount(r) {
   return fromMath;
 }
 
+function roundRefundPayeeNgn(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n);
+}
+
+/** Name on the payee's own bank line — not the quotation customer. */
+export function refundSplitPayeeLabel(split) {
+  return String(
+    split?.payoutAccount?.payeeName ??
+      split?.payeeName ??
+      split?.payee_name ??
+      split?.partyName ??
+      split?.recipientName ??
+      ''
+  ).trim();
+}
+
 /**
- * Shrink split `netPayoutNgn` so Pay-out desk amounts match till still owed after credit
- * apply / partial till pay — not the original approved net (RF-KD-26-9636: show ₦751,480
- * not ₦959,380 after ₦207,900 credit).
+ * Staff share even when the split is stored as recipientKind "customer"
+ * (claiming-staff bank on the quotation). Company cut is that marker.
+ */
+export function refundSplitIsStaffShare(split) {
+  const kind = String(split?.recipientKind ?? split?.recipient_kind ?? '')
+    .trim()
+    .toLowerCase();
+  if (kind === 'associated_staff' || kind === 'staff') return true;
+  if (String(split?.recipientAssociatedStaffID ?? split?.recipient_associated_staff_id ?? '').trim()) {
+    return true;
+  }
+  if (split?.staffBankAccountMatch === true || split?.forceClaimingStaffCut === true) return true;
+  if (roundRefundPayeeNgn(split?.companyDeductionNgn) > 0) return true;
+  return false;
+}
+
+function refundSplitOwnNetNgn(split) {
+  const net = split?.netPayoutNgn;
+  if (net != null && Number.isFinite(Number(net))) return Math.max(0, roundRefundPayeeNgn(net));
+  const gross = roundRefundPayeeNgn(split?.grossNgn ?? split?.amountNgn);
+  const cut = roundRefundPayeeNgn(split?.companyDeductionNgn);
+  return Math.max(0, gross - cut);
+}
+
+/**
+ * One cashier line per payee. Amounts stay on that person.
+ * Cash already paid is taken from the smaller net first (the staff share, e.g. ₦67,840)
+ * so it does not rewrite the other payee's ₦250,000 into a new figure on the same quotation.
+ *
+ * @param {Array<object>|null|undefined} splits
+ * @param {{ quotationCustomer?: string, quotationRef?: string, paidNgn?: number }} [opts]
+ */
+export function buildRefundCashierPayoutLines(splits, opts = {}) {
+  const list = Array.isArray(splits) ? splits : [];
+  const quoteCustomer = String(opts.quotationCustomer || '').trim();
+  const quotationRef = String(opts.quotationRef || '').trim();
+  const draft = [];
+  list.forEach((split, index) => {
+    const netNgn = refundSplitOwnNetNgn(split);
+    const grossNgn = roundRefundPayeeNgn(split?.grossNgn ?? split?.amountNgn) || netNgn;
+    if (netNgn <= 0 && grossNgn <= 0) return;
+    const staffShare = refundSplitIsStaffShare(split);
+    const payeeName =
+      refundSplitPayeeLabel(split) || (staffShare ? 'Staff payee' : quoteCustomer || 'Customer payee');
+    draft.push({
+      index,
+      key: `${staffShare ? 'staff' : 'customer'}:${index}:${payeeName}`,
+      payeeName,
+      staffShare,
+      roleLabel: staffShare ? 'Staff share' : 'Customer share',
+      grossNgn,
+      companyDeductionNgn: roundRefundPayeeNgn(split?.companyDeductionNgn),
+      netNgn,
+      quotationRef,
+      quotationCustomer: quoteCustomer,
+    });
+  });
+  if (!draft.length) return [];
+
+  let left = Math.max(0, roundRefundPayeeNgn(opts.paidNgn));
+  const paidByIndex = new Map();
+  if (draft.length === 2) {
+    const [small, large] = [...draft].sort((a, b) => a.netNgn - b.netNgn || a.index - b.index);
+    const smallNet = small.netNgn;
+    const largeNet = large.netNgn;
+    if (left >= smallNet + largeNet) {
+      paidByIndex.set(small.index, smallNet);
+      paidByIndex.set(large.index, largeNet);
+    } else if (left === smallNet) {
+      paidByIndex.set(small.index, smallNet);
+      paidByIndex.set(large.index, 0);
+    } else if (left === largeNet) {
+      paidByIndex.set(small.index, 0);
+      paidByIndex.set(large.index, largeNet);
+    } else if (left > largeNet) {
+      // More than the customer share has left the till, so the staff share is inside that payment.
+      paidByIndex.set(small.index, smallNet);
+      paidByIndex.set(large.index, Math.min(largeNet, left - smallNet));
+    } else if (left > smallNet) {
+      // Between the two nets: treat it as part of the larger share, leave the staff amount intact.
+      paidByIndex.set(small.index, 0);
+      paidByIndex.set(large.index, left);
+    } else {
+      paidByIndex.set(small.index, left);
+      paidByIndex.set(large.index, 0);
+    }
+  } else if (draft.length > 2) {
+    const order = [...draft].sort((a, b) => a.netNgn - b.netNgn || a.index - b.index);
+    for (const row of order) {
+      const take = Math.min(row.netNgn, left);
+      paidByIndex.set(row.index, take);
+      left -= take;
+    }
+  } else {
+    paidByIndex.set(draft[0].index, Math.min(draft[0].netNgn, left));
+  }
+
+  return draft.map((row) => {
+    const paidToPayeeNgn = paidByIndex.get(row.index) || 0;
+    const tillDueNgn = Math.max(0, row.netNgn - paidToPayeeNgn);
+    const quoteBit =
+      quoteCustomer && quoteCustomer !== row.payeeName ? ` · quotation customer ${quoteCustomer}` : '';
+    const refBit = quotationRef ? ` · ${quotationRef}` : '';
+    return {
+      ...row,
+      paidToPayeeNgn,
+      tillDueNgn,
+      cashierLabel: `${row.roleLabel} · ${row.payeeName} · ₦${row.netNgn.toLocaleString('en-NG')}${refBit}${quoteBit}`,
+    };
+  });
+}
+
+/**
+ * One sentence so the cashier does not read two payees as one changing balance.
+ * @param {Array<{ payeeName?: string, roleLabel?: string, netNgn?: number, tillDueNgn?: number, staffShare?: boolean }>|null|undefined} lines
+ * @param {string} [quotationRef]
+ */
+export function refundCashierPayeeHeadline(lines, quotationRef = '') {
+  const list = Array.isArray(lines) ? lines.filter((l) => roundRefundPayeeNgn(l?.netNgn) > 0) : [];
+  if (list.length < 2) return '';
+  const ref = String(quotationRef || list[0]?.quotationRef || '').trim();
+  const bits = list.map((l) => {
+    const due = roundRefundPayeeNgn(l.tillDueNgn);
+    const net = roundRefundPayeeNgn(l.netNgn);
+    const who = `${l.payeeName} (${String(l.roleLabel || '').toLowerCase()})`;
+    if (due <= 0) return `${who} ₦${net.toLocaleString('en-NG')} already paid`;
+    if (due !== net) {
+      return `${who} ₦${net.toLocaleString('en-NG')}, till due ₦${due.toLocaleString('en-NG')}`;
+    }
+    return `${who} ₦${net.toLocaleString('en-NG')}`;
+  });
+  const where = ref ? ` on ${ref}` : '';
+  return `Two payees${where}: ${bits.join('; ')}. Same quotation, different people — paying one does not change the other.`;
+}
+
+/**
+ * Shrink a single payee's `netPayoutNgn` so the Pay-out desk matches till still owed after
+ * credit apply (RF-KD-26-9636: show ₦751,480 not ₦959,380 after ₦207,900 credit).
+ * Two or more payees are left alone — spreading one remainder across them makes the
+ * staff ₦67,840 and the customer ₦250,000 look like one figure that changed.
  *
  * @param {Array<object>|null|undefined} splits
  * @param {number} tillPayableNgn
@@ -80,11 +235,9 @@ export function applyRefundSplitRemainingTillPayable(splits, tillPayableNgn) {
   const list = Array.isArray(splits) ? splits : [];
   if (!list.length) return list;
   const remaining = Math.max(0, Math.round(Number(tillPayableNgn) || 0));
-  const nets = list.map((s) => {
-    const n = s?.netPayoutNgn;
-    if (n != null && Number.isFinite(Number(n))) return Math.max(0, Math.round(Number(n) || 0));
-    return Math.max(0, Math.round(Number(s?.amountNgn) || 0));
-  });
+  const nets = list.map((s) => refundSplitOwnNetNgn(s));
+  const positive = nets.filter((n) => n > 0).length;
+  if (positive > 1) return list;
   const sum = nets.reduce((a, b) => a + b, 0);
   if (sum <= 0 || remaining >= sum) return list;
 
@@ -102,6 +255,33 @@ export function applyRefundSplitRemainingTillPayable(splits, tillPayableNgn) {
       netPayoutNgn: take,
       originalNetPayoutNgn: original,
       remainingTillPayableNgn: take,
+    };
+  });
+}
+
+/**
+ * Write each payee's own till due onto the split. Does not give one payee a slice of the other's money.
+ * @param {Array<object>} splits
+ * @param {Array<{ index?: number, tillDueNgn?: number, netNgn?: number, payeeName?: string, cashierLabel?: string, roleLabel?: string }>} lines
+ */
+export function stampRefundPayeeTillDue(splits, lines) {
+  const list = Array.isArray(splits) ? splits : [];
+  const rows = Array.isArray(lines) ? lines : [];
+  if (rows.length < 2 || !list.length) return list;
+  return list.map((split, i) => {
+    const label = refundSplitPayeeLabel(split);
+    const line =
+      (label && rows.find((l) => l.payeeName === label)) ||
+      (rows.length === list.length ? rows[i] : null);
+    if (!line) return split;
+    return {
+      ...split,
+      payeeName: refundSplitPayeeLabel(split) || line.payeeName,
+      payeeRoleLabel: line.roleLabel,
+      cashierLabel: line.cashierLabel,
+      originalNetPayoutNgn: line.netNgn,
+      netPayoutNgn: line.tillDueNgn,
+      remainingTillPayableNgn: line.tillDueNgn,
     };
   });
 }
@@ -148,6 +328,8 @@ export function normalizeRefund(r) {
     paidBy: r.paidBy ?? '',
     paymentNote: r.paymentNote ?? '',
     payoutHistory: Array.isArray(r.payoutHistory) ? r.payoutHistory.map(normalizePayoutLine) : [],
+    splitDistributions: Array.isArray(r.splitDistributions) ? r.splitDistributions : [],
+    cashierPayoutLines: Array.isArray(r.cashierPayoutLines) ? r.cashierPayoutLines : [],
     creditAppliedNgn: Math.round(Number(r.creditAppliedNgn ?? r.credit_applied_ngn) || 0),
     settlementSummary:
       r.settlementSummary != null && typeof r.settlementSummary === 'object' ? r.settlementSummary : null,

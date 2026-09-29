@@ -517,7 +517,7 @@ export function collectEnteredDataPack(db, branchScope = 'ALL') {
   const stockMovements = safeList('stockMovements', () => listStockMovements(db, branchScope, UNLIMITED));
   const expenses = safeList('expenses', () => listExpenses(db, branchScope, UNLIMITED));
   const paymentRequests = safeList('paymentRequests', () => listPaymentRequests(db, branchScope, UNLIMITED));
-  const ledger = safeList('ledger', () => listLedgerEntries(db, branchScope));
+  const ledger = safeList('ledger', () => listLedgerEntries(db, branchScope, UNLIMITED));
   const treasuryAccounts = safeList('treasuryAccounts', () => listTreasuryAccounts(db, branchScope));
   const treasuryMovements = safeList('treasuryMovements', () => listTreasuryMovements(db, branchScope, UNLIMITED));
   const bankRecon = safeList('bankRecon', () => listBankReconciliation(db, branchScope));

@@ -3120,6 +3120,15 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
   };
 }
 
+/** Cash-out sign for refund treasury history. Reversals are negative so period totals net. */
+function signedRefundPayoutHistoryAmount(type, amountNgn) {
+  const raw = Number(amountNgn) || 0;
+  const kind = String(type || '');
+  if (kind === 'REFUND_PAYOUT') return Math.abs(raw);
+  if (kind === 'REFUND_PAYOUT_REVERSAL_IN') return -Math.abs(raw);
+  return raw;
+}
+
 function refundPayoutHistoryByIds(db, refundIds) {
   const ids = [...new Set(refundIds.map((id) => String(id || '').trim()).filter(Boolean))];
   const map = new Map();
@@ -3144,7 +3153,10 @@ function refundPayoutHistoryByIds(db, refundIds) {
       accountName: movement.account_name ?? '',
       accountType: movement.account_type ?? '',
       bankName: movement.bank_name ?? '',
-      amountNgn: Math.abs(Number(movement.amount_ngn) || 0),
+      movementType: movement.type ?? '',
+      // Payouts are cash out (positive). Reversals reduce that cash out (negative).
+      // Do not Math.abs every row — a reversal inflow would be counted as a second payout.
+      amountNgn: signedRefundPayoutHistoryAmount(movement.type, movement.amount_ngn),
       reference: movement.reference ?? '',
       note: movement.note ?? '',
     });

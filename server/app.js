@@ -6,6 +6,7 @@ import cors from 'cors';
 import compression from 'compression';
 import { registerHttpApi } from './httpApi.js';
 import { registerExpenseMemoFilingRoutes } from './http/expenseMemoFilingRoutes.js';
+import { registerSalesMonthEndPackRoutes } from './http/salesMonthEndPackRoutes.js';
 import { registerBranchRefundFreezePage } from './http/branchRefundFreezePage.js';
 import { registerExpenseCashCatchupPage } from './http/expenseCashCatchupPage.js';
 import { registerCashierStatementPage } from './http/cashierStatementPage.js';
@@ -153,6 +154,7 @@ export function createApp(db) {
 
   registerHttpApi(app, db);
   registerExpenseMemoFilingRoutes(app, db);
+  registerSalesMonthEndPackRoutes(app, db);
   registerBranchRefundFreezePage(app, db);
   registerExpenseCashCatchupPage(app, db);
   registerCashierStatementPage(app, db);

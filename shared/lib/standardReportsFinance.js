@@ -192,15 +192,15 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
   for (const r of refunds || []) {
     const id = String(r.refundID ?? r.refund_id ?? '').trim();
     const hist = Array.isArray(r.payoutHistory) ? r.payoutHistory : [];
-    let linesFromHistory = 0;
     for (const p of hist) {
       const iso = toIsoDate(p.postedAtISO || p.posted_at_iso || p.paidAtISO || p.atISO);
       if (!iso) continue;
       if (startDate && iso < startDate) continue;
       if (endDate && iso > endDate) continue;
       const amountNgn = Math.round(Number(p.amountNgn) || 0);
-      if (amountNgn <= 0) continue;
-      linesFromHistory += 1;
+      if (!amountNgn) continue;
+      const movementType = String(p.movementType || p.type || '');
+      const isReversal = amountNgn < 0 || movementType === 'REFUND_PAYOUT_REVERSAL_IN';
       const isCash = String(p.accountType || '').trim().toLowerCase() === 'cash';
       paidInPeriod.push({
         payoutDateISO: iso,
@@ -213,27 +213,11 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
           ? 'Cash'
           : abbreviateBankName(p.bankName) || String(p.accountName || '').trim() || '—',
         reference: String(p.reference || '').trim() || '—',
-        payoutKind: 'Till/Bank',
+        payoutKind: isReversal ? 'Reversal' : 'Till/Bank',
       });
     }
-    if (linesFromHistory > 0) continue;
-    const iso = toIsoDate(r.paidAtISO || r.paid_at_iso);
-    if (iso && (!startDate || iso >= startDate) && (!endDate || iso <= endDate)) {
-      const paid = Math.round(Number(r.paidAmountNgn) || 0);
-      if (paid > 0) {
-        paidInPeriod.push({
-          payoutDateISO: iso,
-          refundIdDisplay: displayDocNumber(id) || '—',
-          refundIdFull: id || '—',
-          customer: String(r.customer || '').trim() || '—',
-          quotationRefDisplay: displayDocNumber(r.quotationRef) || '—',
-          amountNgn: paid,
-          bankAccount: '—',
-          reference: String(r.paymentNote || '').trim() || '—',
-          payoutKind: 'Till/Bank',
-        });
-      }
-    }
+    // No treasury history: do not invent a Till/Bank line from paidAmountNgn.
+    // That field mixes till/bank cash with credit applied to another receipt.
   }
   const companyCutWithdrawalsInPeriod = companyCutWithdrawalLines(
     companyCutWithdrawals,

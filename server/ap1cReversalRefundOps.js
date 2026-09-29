@@ -163,8 +163,8 @@ export function evaluateRefundPayoutGlPolicy(db, ctx = {}) {
   const out = refundPayoutDepositGl();
   if (!qref) return out;
 
-  const jobs = listProductionJobs(db, 'ALL').filter(
-    (j) => String(j.quotationRef || '').trim() === qref
+  const jobs = (Array.isArray(ctx.productionJobs) ? ctx.productionJobs : listProductionJobs(db, 'ALL')).filter(
+    (j) => String(j.quotationRef || j.quotation_ref || '').trim() === qref
   );
   const hasProduction = quotationHasCompletedProduction(qref, jobs);
 

@@ -217,4 +217,58 @@ describe('refundsPackReport', () => {
     expect(summary.companyCutWithdrawnNgn).toBe(50_000);
     expect(summary.paidTotalNgn).toBe(50_000);
   });
+
+  it('does not turn a credit-settled refund into a till payout when there is no treasury history', () => {
+    const { paidInPeriod, creditAppliedInPeriod, summary } = refundsPackReport(
+      [
+        {
+          refundID: 'RF-CREDIT-ONLY',
+          customer: 'Ada',
+          quotationRef: 'QT-SRC',
+          status: 'Paid',
+          paidAmountNgn: 70_500,
+          paidAtISO: '2026-09-24',
+          creditAppliedNgn: 70_500,
+        },
+      ],
+      '2026-09-01',
+      '2026-09-30',
+      [
+        {
+          applicationId: 'RCA-1',
+          refundId: 'RF-CREDIT-ONLY',
+          createdAtISO: '2026-09-24T12:00:00.000Z',
+          amountNgn: 70_500,
+          sourceQuotationRef: 'QT-SRC',
+          targetQuotationRef: 'QT-DST',
+          status: 'Credit confirmation',
+        },
+      ]
+    );
+    expect(paidInPeriod).toHaveLength(0);
+    expect(creditAppliedInPeriod).toHaveLength(1);
+    expect(summary.paidTotalNgn).toBe(0);
+    expect(summary.creditAppliedTotalNgn).toBe(70_500);
+  });
+
+  it('nets a reversed payout against the original cash out', () => {
+    const { paidInPeriod, summary } = refundsPackReport(
+      [
+        {
+          refundID: 'RF-REV',
+          customer: 'Ada',
+          quotationRef: 'QT-1',
+          status: 'Approved',
+          payoutHistory: [
+            { postedAtISO: '2026-09-02', amountNgn: 10_000, movementType: 'REFUND_PAYOUT', accountName: 'Bank' },
+            { postedAtISO: '2026-09-03', amountNgn: -10_000, movementType: 'REFUND_PAYOUT_REVERSAL_IN', accountName: 'Bank' },
+          ],
+        },
+      ],
+      '2026-09-01',
+      '2026-09-30'
+    );
+    expect(paidInPeriod.map((r) => r.payoutKind)).toEqual(['Till/Bank', 'Reversal']);
+    expect(summary.paidTotalNgn).toBe(0);
+  });
 });

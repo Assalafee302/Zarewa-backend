@@ -694,35 +694,19 @@ export function salesPeriodCashBridgeExportRows(
         if (startDate && iso < startDate) continue;
         if (endDate && iso > endDate) continue;
         const amt = Math.round(Number(p.amountNgn) || 0);
-        if (amt <= 0) continue;
+        if (!amt) continue;
+        const movementType = String(p.movementType || p.type || '');
+        const isReversal = amt < 0 || movementType === 'REFUND_PAYOUT_REVERSAL_IN';
         rows.push({
           reportSection: 'Refund payouts (period)',
-          category: 'Refund cash paid',
-          ledgerType: 'REFUND_PAYOUT',
+          category: isReversal ? 'Refund cash reversal' : 'Refund cash paid',
+          ledgerType: isReversal ? 'REFUND_PAYOUT_REVERSAL_IN' : 'REFUND_PAYOUT',
           dateISO: iso,
           recordId: p.id || r.refundID,
           customer: r.customer || '',
           quotationRef: r.quotationRef || '',
           quoteCustomer: '',
           amountNgn: amt,
-          metresProduced: '',
-          remarks: r.refundID || '',
-        });
-      }
-    } else {
-      const paidIso = toIsoDate(r.paidAtISO);
-      const paidAmt = Math.round(Number(r.paidAmountNgn) || 0);
-      if (paidAmt > 0 && paidIso && (!startDate || paidIso >= startDate) && (!endDate || paidIso <= endDate)) {
-        rows.push({
-          reportSection: 'Refund payouts (period)',
-          category: 'Refund cash paid (single paid date)',
-          ledgerType: 'REFUND_PAYOUT',
-          dateISO: paidIso,
-          recordId: r.refundID,
-          customer: r.customer || '',
-          quotationRef: r.quotationRef || '',
-          quoteCustomer: '',
-          amountNgn: paidAmt,
           metresProduced: '',
           remarks: r.refundID || '',
         });
@@ -754,7 +738,7 @@ export function salesPeriodCashBridgeExportRows(
     const out = refundOutstandingAmount(r);
     if (out <= 0) continue;
     if (st === 'Approved' && !isRefundPayable(r)) continue;
-    if (st === 'Approved' || st === 'Paid') {
+    if (st === 'Approved' || st === 'Paid' || st === 'Partially paid') {
       rows.push({
         reportSection: 'Refunds awaiting payout',
         category: 'Approved — balance not yet paid',

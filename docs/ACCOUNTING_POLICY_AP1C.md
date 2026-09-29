@@ -23,9 +23,12 @@ Uses `resolveReceiptReversalAccountFromMetaOrJournalLines`:
 
 | Situation | GL (AP1c-4) | Revenue reversal |
 |-----------|-------------|------------------|
-| Refund before production on quote | Dr **2500** / Cr **1000** | Not automated |
-| Overpayment / advance refund | Dr **2500** / Cr **1000** | Not automated |
-| Refund after production (revenue recognized) | Dr **2500** / Cr **1000** + audit warning | **Manual** — no automatic Dr **4000** |
+| Refund before production on quote | Dr **2500** / Cr **1000** | Not a sales reduction |
+| Overpayment / unproduced meterage / other non-concession | Dr **2500** / Cr **1000** | Not a sales reduction. `needsRevenueReview` when production revenue was already journalled |
+| Commission, MD discount, or floor-price difference after production | Dr **4000** / Cr **1000** | Reduces sales |
+| Those same concessions before production is complete | Dr **2500** / Cr **1000** | Not a sales reduction yet |
+
+Live books (health `accountingPolicyV1ReceiptGl: off`, `glPostingEnabled: on`): customer receipts credit **1200**, while the refund payouts above still debit **2500**. Those two accounts do not meet. The month-end sales pack reads debtors and customer money from quotations, refunds, and treasury, and prints 1200 and 2500 beside them as a check.
 
 Treasury refund flow unchanged; ledger `REFUND_ADVANCE` / `REFUND_OVERPAY` still reduce subledger pools.
 

@@ -103,7 +103,7 @@ function sumRefundCommitmentNgnForQuotation(db, quotationRef) {
     const st = String(row.status || '').trim();
     if (st === 'Pending') {
       sum += roundMoney(row.amount_ngn);
-    } else if (st === 'Approved') {
+    } else if (st === 'Approved' || st === 'Partially paid') {
       const approved = roundMoney(row.approved_amount_ngn || row.amount_ngn);
       const paid = roundMoney(row.paid_amount_ngn);
       sum += effectiveOutstandingNgn(approved, paid);
@@ -217,7 +217,7 @@ function buildCustomerDepositQuoteItemSegments(db, branchScope) {
 }
 
 function buildCustomerRefundCommitmentItems(db, branchScope) {
-  const refunds = listRefunds(db, branchScope);
+  const refunds = listRefunds(db, branchScope, { unlimited: true });
   const quotations = new Map(listQuotations(db, branchScope).map((q) => [q.id, q]));
   const items = [];
   for (const r of refunds) {
@@ -266,6 +266,29 @@ function buildCustomerRefundCommitmentItems(db, branchScope) {
             asAtDateIso: String(r.approvalDate || r.requestedAtISO || '').slice(0, 10) || null,
             detail: 'Refund approved — committed liability, not yet paid from treasury',
             refundStatus: 'Approved',
+          },
+          'customer',
+          r.customerID || q.customerID
+        )
+      );
+      continue;
+    }
+    if (st === 'Partially paid') {
+      const amountNgn = refundOutstandingAmount(r);
+      if (amountNgn <= 0) continue;
+      items.push(
+        withEntity(
+          {
+            id: r.refundID,
+            partyName: r.customer || q.customer || r.customerID || 'Customer',
+            partyRef: r.customerID || q.customerID || '',
+            branchId: r.branchId || q.branchId || '',
+            amountNgn,
+            reference: r.refundID,
+            quotationRef: qref,
+            asAtDateIso: String(r.paidAtISO || r.approvalDate || r.requestedAtISO || '').slice(0, 10) || null,
+            detail: 'Refund partially paid — unpaid remainder is still owed',
+            refundStatus: 'Partially paid',
           },
           'customer',
           r.customerID || q.customerID

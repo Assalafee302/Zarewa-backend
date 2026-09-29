@@ -578,7 +578,9 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
         .run(
           actorId(payload.actor),
           actorName(payload.actor),
-          now,
+          // Payment date, same instant as the treasury movement. `now` would put the
+          // withdrawal in the month it was clicked, not the month the bank was charged.
+          `${paymentDateISO}T12:00:00.000Z`,
           movement.id || null,
           String(treasuryAccountId),
           id

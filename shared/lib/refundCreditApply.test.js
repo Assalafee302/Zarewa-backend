@@ -161,6 +161,14 @@ describe('refundCreditApply pure helpers', () => {
       ],
     };
     expect(refundIsEligibleCreditSourceKind(overpayToQuoteCustomer)).toBe(true);
+    expect(
+      refundIsEligibleCreditSourceKind({
+        ...overpayToQuoteCustomer,
+        status: 'Partially paid',
+        paidAmountNgn: 5_000,
+        creditAppliedNgn: 5_000,
+      })
+    ).toBe(true);
   });
 
   it('computes open credit and plans partial apply leaving remainder', () => {

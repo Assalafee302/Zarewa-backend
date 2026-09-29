@@ -600,6 +600,7 @@ import * as write from './writeOps.js';
 import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWalletOps.js';
 import { recordBankCharge } from './bankChargeOps.js';
 import * as refundCreditApplyOps from './refundCreditApplyOps.js';
+import { healReceiptsNeedingOverpayConfirm } from './sales/receiptOverpayConfirmHeal.js';
 import {
   allocateBankDepositTx,
   findSimilarOpenBankDeposits,
@@ -10406,7 +10407,22 @@ export function registerHttpApi(app, db) {
       }
       const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
       if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
-      const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
+      const refundId = String(req.params.refundId || '').trim();
+      const healMeta = db
+        .prepare(`SELECT customer_id, requested_at_iso FROM customer_refunds WHERE refund_id = ?`)
+        .get(refundId);
+      if (healMeta?.customer_id) {
+        try {
+          healReceiptsNeedingOverpayConfirm(db, req.user, {
+            customerId: healMeta.customer_id,
+            afterIso: healMeta.requested_at_iso,
+            limit: 40,
+          });
+        } catch (healErr) {
+          console.error('[refund-receipt-credit-heal]', healErr);
+        }
+      }
+      const refund = getCustomerRefundDetail(db, refundId);
       if (!refund) {
         res.status(404).json({ ok: false, error: 'Refund not found.' });
         return;

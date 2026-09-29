@@ -158,7 +158,9 @@ export function refundIsEligibleCreditSourceKind(refund) {
   if (!refundCreditPayeeIsQuoteCustomerOnly(refund)) {
     return false;
   }
-  return status === 'Pending' || status === 'Approved';
+  // Leftover after the first receipt credit is Partially paid and must still cover the next job
+  // (RF-KD-26-9693: ₦555,000 then ₦72,300).
+  return status === 'Pending' || status === 'Approved' || status === 'Partially paid';
 }
 
 /** True when a ledger/credit error is the quotation-has-open-refund payment lock. */
@@ -537,6 +539,63 @@ export function planCashierRefundOffset({ receiptCashNgn, availableNgn }) {
     cashToConfirmNgn: Math.max(0, receipt - offsetNgn),
     leftoverRefundNgn: Math.max(0, available - offsetNgn),
   };
+}
+
+/** Minimum characters a cashier must write to confirm cash while refund fund sits unused. */
+export const REFUND_FUND_SKIP_REASON_MIN_LENGTH = 6;
+
+/**
+ * Money guard for Confirm payment: booking new bank cash while this customer still has an open
+ * refund waiting on the payout queue leaves that refund fully payable AND overstates treasury by
+ * the same ₦ — the same money goes out twice (RF-KD-26-9693: ₦627,300 booked as bank cash while
+ * ₦861,575 stayed payable). The cashier must either apply the fund or put in writing why cash
+ * was genuinely received.
+ *
+ * `availableNgn` counts only refund-backed fund. Plain overpay leftover is nobody's queued
+ * payout, so leaving it unused is a choice, not a double pay, and must not block finance.
+ *
+ * Skipped when the target quotation blocks external credit — there the product already tells the
+ * cashier to confirm the real cash and settle that job's own refund from the till.
+ *
+ * @param {{
+ *   availableNgn?: number,
+ *   creditApplyNgn?: number,
+ *   bankReceivedNgn?: number,
+ *   targetBlocksExternalCredit?: boolean,
+ *   alreadyFinalized?: boolean,
+ *   skipReason?: unknown,
+ * }} p
+ */
+export function refundFundDecisionRequiredOnConfirm(p = {}) {
+  if (p.alreadyFinalized === true) return false;
+  if (p.targetBlocksExternalCredit === true) return false;
+  const available = Math.max(0, Math.round(Number(p.availableNgn) || 0));
+  if (available <= 0) return false;
+  const bank = Math.max(0, Math.round(Number(p.bankReceivedNgn) || 0));
+  if (bank <= 0) return false;
+  // Any deliberate apply (even partial) is already an answer.
+  if (Math.max(0, Math.round(Number(p.creditApplyNgn) || 0)) > 0) return false;
+  return !refundFundSkipReasonIsValid(p.skipReason);
+}
+
+/** @param {unknown} reason */
+export function refundFundSkipReasonIsValid(reason) {
+  return String(reason ?? '').trim().length >= REFUND_FUND_SKIP_REASON_MIN_LENGTH;
+}
+
+/**
+ * Cashier-facing wording for {@link refundFundDecisionRequiredOnConfirm}.
+ * @param {{ availableNgn?: number, bankReceivedNgn?: number }} p
+ */
+export function refundFundDecisionRequiredMessage(p = {}) {
+  const available = Math.max(0, Math.round(Number(p.availableNgn) || 0));
+  const bank = Math.max(0, Math.round(Number(p.bankReceivedNgn) || 0));
+  return (
+    `This customer has ₦${available.toLocaleString('en-NG')} on an open refund still waiting to be paid out. ` +
+    `Confirming ₦${bank.toLocaleString('en-NG')} as new bank cash leaves that refund fully payable, ` +
+    'so the same money leaves twice. Tick the refund fund to cover this receipt, ' +
+    'or say why the customer really paid fresh cash.'
+  );
 }
 
 /**

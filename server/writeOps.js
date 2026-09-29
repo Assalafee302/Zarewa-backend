@@ -186,9 +186,15 @@ import {
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
-import { isQuotationActiveRefundLockError } from '../shared/lib/refundCreditApply.js';
+import {
+  isQuotationActiveRefundLockError,
+  refundFundDecisionRequiredMessage,
+  refundFundDecisionRequiredOnConfirm,
+  refundFundSkipReasonIsValid,
+} from '../shared/lib/refundCreditApply.js';
 import {
   applyRefundCreditToQuotation,
+  listEligibleRefundCredits,
   reverseRefundCreditApplication,
   listActiveRefundCreditApplicationsBySourceReceipt,
 } from './refundCreditApplyOps.js';
@@ -11994,6 +12000,46 @@ function clearTreasuryMovementFinanceConfirmedDb(db, movementId) {
  * }} payload
  * @param {object | null} actor
  */
+const EMPTY_RECEIPT_REFUND_FUND = {
+  availableNgn: 0,
+  sources: [],
+  targetBlocksExternalCredit: false,
+};
+
+/**
+ * Refund-backed fund this customer can still put on the receipt's own quotation.
+ * Only `kind: 'refund'` sources count — plain overpay leftover is on nobody's payout queue.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ customer_id?: string, quotation_ref?: string }} row sales_receipts row
+ */
+function usableRefundFundForReceiptConfirm(db, row) {
+  const cid = String(row?.customer_id || '').trim();
+  const qref = String(row?.quotation_ref || '').trim();
+  if (!cid || !qref) return EMPTY_RECEIPT_REFUND_FUND;
+  let listed = null;
+  try {
+    listed = listEligibleRefundCredits(db, cid, qref);
+  } catch {
+    // A lookup failure must not block finance from confirming real cash.
+    return EMPTY_RECEIPT_REFUND_FUND;
+  }
+  if (!listed?.ok) return EMPTY_RECEIPT_REFUND_FUND;
+  const sources = (listed.sources || []).filter(
+    (s) => s?.kind === 'refund' && roundMoney(s?.availableNgn) > 0
+  );
+  return {
+    availableNgn: sources.reduce((sum, s) => sum + roundMoney(s.availableNgn), 0),
+    sources: sources.map((s) => ({
+      id: s.id,
+      label: s.label,
+      refundId: s.refundId ?? null,
+      sourceQuotationRef: s.sourceQuotationRef,
+      availableNgn: roundMoney(s.availableNgn),
+    })),
+    targetBlocksExternalCredit: Boolean(listed.targetBlocksExternalCredit),
+  };
+}
+
 export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor = null) {
   const id = String(receiptId || '').trim();
   if (!id) return { ok: false, error: 'Receipt id required.' };
@@ -12054,6 +12100,40 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
   if (applyingRefundFund && nextBankReceived == null) {
     nextBankReceived = 0;
   }
+
+  // Money guard: never let new bank cash be booked while this customer's refund fund is still
+  // payable — that pays the same ₦ out twice (once as an unreduced refund, once as bank cash
+  // that never arrived). Cashier must apply the fund or record why cash was genuinely received.
+  const refundFundSkipReason = String(payload?.refundFundNotUsedReason ?? '').trim();
+  const usableFund = finalized
+    ? EMPTY_RECEIPT_REFUND_FUND
+    : usableRefundFundForReceiptConfirm(db, row);
+  if (
+    refundFundDecisionRequiredOnConfirm({
+      availableNgn: usableFund.availableNgn,
+      creditApplyNgn,
+      bankReceivedNgn: nextBankReceived,
+      targetBlocksExternalCredit: usableFund.targetBlocksExternalCredit,
+      alreadyFinalized: finalized,
+      skipReason: refundFundSkipReason,
+    })
+  ) {
+    return {
+      ok: false,
+      code: 'REFUND_FUND_DECISION_REQUIRED',
+      error: refundFundDecisionRequiredMessage({
+        availableNgn: usableFund.availableNgn,
+        bankReceivedNgn: nextBankReceived,
+      }),
+      refundFundAvailableNgn: usableFund.availableNgn,
+      refundFundSources: usableFund.sources,
+    };
+  }
+  const tookCashOverRefundFund =
+    usableFund.availableNgn > 0 &&
+    !(creditApplyNgn > 0) &&
+    nextBankReceived > 0 &&
+    refundFundSkipReasonIsValid(refundFundSkipReason);
 
   const now = new Date().toISOString();
   const uid = actor?.id ?? null;
@@ -12224,8 +12304,29 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
       paymentLineCorrectionCount: corrections.length,
       refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
       partialSplitConfirm: usesSplitConfirm && !finalizedNow,
+      ...(tookCashOverRefundFund
+        ? {
+            refundFundAvailableNgn: usableFund.availableNgn,
+            refundFundNotUsedReason: refundFundSkipReason,
+          }
+        : {}),
     },
   });
+  if (tookCashOverRefundFund) {
+    appendAuditLog(db, {
+      actor,
+      action: 'receipt.refund_fund_not_used',
+      entityKind: 'sales_receipt',
+      entityId: id,
+      note: `Confirmed ₦${nextBankReceived} as bank cash while ₦${usableFund.availableNgn} refund fund stayed payable: ${refundFundSkipReason}`,
+      details: {
+        bankReceivedAmountNgn: nextBankReceived,
+        refundFundAvailableNgn: usableFund.availableNgn,
+        refundFundSources: usableFund.sources,
+        reason: refundFundSkipReason,
+      },
+    });
+  }
   return {
     ok: true,
     partialSplitConfirm: usesSplitConfirm && !finalizedNow,

@@ -382,8 +382,10 @@ function normalizeIsoTimestamp(value) {
  * @param {{ allowPerRowBranchId?: boolean, allowActiveRefundQuotationRefs?: Set<string> | string[], allowManagerClearedQuotationRefs?: Set<string> | string[] }} [opts]
  *   When false (default), ignore `branchId` on each row so callers cannot override booking branch.
  *   `allowActiveRefundQuotationRefs` permits internal credit-transfer rows on source quotes that still have Pending/Approved refunds.
- *   `allowManagerClearedQuotationRefs` permits finance confirmation / credit-apply rows on quotes that were manager-cleared while receipts were still unconfirmed.
- *   Manager-cleared closes the quote for further customer cash-in; refund payout bookkeeping
+ *   `allowManagerClearedQuotationRefs` permits rows on quotes already manager-cleared: finance
+ *   confirmation / credit-apply, and a new customer receipt. The receipt route then clears
+ *   `manager_cleared_at_iso` so the quote returns to the clearance queue.
+ *   Other customer cash-in stays blocked. Refund payout bookkeeping
  *   (`REFUND_ADVANCE` / `REFUND_OVERPAY` / `REFUND_CONCESSION`) still posts — approval often auto-clears the quote.
  */
 export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
@@ -485,6 +487,30 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
   }
 
   return saved;
+}
+
+/**
+ * A new customer receipt on a manager-cleared quotation returns it to the clearance queue.
+ * A manager flag is left in place (flagged quotes stay closed for payments).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationId
+ * @returns {{ reopened: boolean }}
+ */
+export function reopenQuotationManagerClearanceAfterReceipt(db, quotationId) {
+  const id = String(quotationId || '').trim();
+  if (!id) return { reopened: false };
+  const row = db
+    .prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`)
+    .get(id);
+  if (!row?.manager_cleared_at_iso || row.manager_flagged_at_iso) return { reopened: false };
+  const info = db
+    .prepare(
+      `UPDATE quotations
+       SET manager_cleared_at_iso = NULL
+       WHERE id = ? AND manager_cleared_at_iso IS NOT NULL AND manager_flagged_at_iso IS NULL`
+    )
+    .run(id);
+  return { reopened: Number(info?.changes) > 0 };
 }
 
 /**

@@ -13297,7 +13297,7 @@ export function registerHttpApi(app, db) {
         });
       }
 
-      const { saved, receipt, overpay, bankDepositAllocation } = db.transaction(() => {
+      const { saved, receipt, overpay, bankDepositAllocation, managerClearanceReopened } = db.transaction(() => {
         const wb = req.workspaceBranchId || DEFAULT_BRANCH_ID;
         const posted = insertLedgerRows(
           db,
@@ -13306,13 +13306,16 @@ export function registerHttpApi(app, db) {
             createdByUserId: req.user.id,
             createdByName: req.user.displayName,
           })),
-          wb
+          wb,
+          // Cleared quotes may take another receipt; clearance is reopened below.
+          { allowManagerClearedQuotationRefs: [quotationId] }
         );
         for (const row of posted) {
           if (row.type === 'RECEIPT') {
             write.upsertSalesReceiptForLedgerEntry(db, row, qtSynced, wb);
           }
         }
+        const clearanceReopen = write.reopenQuotationManagerClearanceAfterReceipt(db, quotationId);
         const parsed = receiptResultFromSavedRows(posted);
         let bankDepositAllocation = null;
         if (parsed.receipt?.id && bankDepositId && depositCoverNgn > 0) {
@@ -13362,12 +13365,15 @@ export function registerHttpApi(app, db) {
           action: 'ledger.receipt',
           entityKind: 'quotation',
           entityId: quotationId,
-          note: `Receipt posted against ${quotationId}`,
+          note: clearanceReopen.reopened
+            ? `Receipt posted against ${quotationId}; returned to manager clearance`
+            : `Receipt posted against ${quotationId}`,
           details: {
             receiptEntryId: parsed.receipt?.id ?? '',
             overpayEntryId: parsed.overpay?.id ?? '',
             amountNgn: Math.round(Number(amountNgn) || 0),
             fullAmountAsReceipt,
+            managerClearanceReopened: Boolean(clearanceReopen.reopened),
             duplicateOverride:
               duplicateSignals.length > 0
                 ? {
@@ -13382,7 +13388,13 @@ export function registerHttpApi(app, db) {
           },
         });
         write.syncQuotationPaidFromLedger(db, quotationId);
-        return { saved: posted, receipt: parsed.receipt, overpay: parsed.overpay, bankDepositAllocation };
+        return {
+          saved: posted,
+          receipt: parsed.receipt,
+          overpay: parsed.overpay,
+          bankDepositAllocation,
+          managerClearanceReopened: Boolean(clearanceReopen.reopened),
+        };
       })();
       const similarUnlinkedDeposits =
         !bankDepositId && !forceUnlinkedBankPost && postAmountNgn > 0
@@ -13403,6 +13415,7 @@ export function registerHttpApi(app, db) {
           entries: saved,
           bankDepositAllocation: bankDepositAllocation ?? null,
           similarUnlinkedDeposits,
+          managerClearanceReopened: Boolean(managerClearanceReopened),
         },
         {
           receipts: deskReceipt ? [deskReceipt] : [],

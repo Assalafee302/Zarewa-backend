@@ -31,6 +31,11 @@ function openDb() {
     `INSERT INTO products (product_id, name, stock_level, unit, branch_id)
      VALUES ('COIL-ALU', 'Aluminium coil', 0, 'kg', '')`
   ).run();
+  db.prepare(
+    `INSERT INTO app_users (id, username, display_name, password_hash, role_key, created_at_iso)
+     VALUES ('u-store', 'yola.store', 'Yola Store', 'x', 'operations_officer', '2026-09-28T12:00:00'),
+            ('u-bm', 'yola.manager', 'Yola Manager', 'x', 'sales_manager', '2026-09-28T12:00:00')`
+  ).run();
   return db;
 }
 

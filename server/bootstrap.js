@@ -32,6 +32,7 @@ import {
   getJsonBlob,
   listAdvanceInEvents,
   listProductionJobs,
+  completeProductionDeskJoin,
   listProductionCompletionAdjustments,
   listProductionJobAccessoryUsage,
   listProductionJobStoneFlatsheetUsage,
@@ -316,9 +317,18 @@ export function buildBootstrap(db, opts = {}) {
     opts.listLimits?.customers != null ? listOpts('customers') : salesCustomersListOpts();
   const receiptsHistoryOpts =
     opts.listLimits?.receipts != null ? listOpts('receipts') : receiptsHistoryListOpts();
-  const productionJobsList = prodRollupOk
+  let productionJobsList = prodRollupOk
     ? listProductionJobs(db, branchScope, productionJobsHistoryOpts)
     : [];
+  let cuttingLists =
+    opsOk || salesOk ? listCuttingLists(db, branchScope, cuttingListHistoryOpts) : [];
+  if (prodRollupOk) {
+    const joined = completeProductionDeskJoin(db, branchScope, cuttingLists, productionJobsList, {
+      includeCuttingLists: Boolean(opsOk || salesOk),
+    });
+    cuttingLists = joined.cuttingLists;
+    productionJobsList = joined.productionJobs;
+  }
   const productionJobIds = productionJobsList.map((j) => j.jobID).filter(Boolean);
   const productionJobCoilsList =
     prodRollupOk && !omitDesk.productionJobCoils
@@ -373,7 +383,7 @@ export function buildBootstrap(db, opts = {}) {
     receipts: salesOk || finOk || treasuryMovementsOk
       ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryOpts)
       : [],
-    cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope, cuttingListHistoryOpts) : [],
+    cuttingLists,
     productionJobs: productionJobsList,
     productionJobAccessoryUsage: prodRollupOk
       ? listProductionJobAccessoryUsage(db, branchScope, { jobIds: productionJobIds })

@@ -7331,6 +7331,8 @@ function migrateOpsDeskPerformanceIndexes(db) {
       CREATE INDEX IF NOT EXISTS idx_stock_movements_branch_at ON stock_movements(branch_id, at_iso DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_cutting_lists_branch_date ON cutting_lists(branch_id, date_iso DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_production_jobs_branch_created ON production_jobs(branch_id, created_at_iso DESC, job_id DESC);
+      CREATE INDEX IF NOT EXISTS idx_production_jobs_cutting_list ON production_jobs(cutting_list_id);
+      CREATE INDEX IF NOT EXISTS idx_production_jobs_branch_status ON production_jobs(branch_id, status);
       CREATE INDEX IF NOT EXISTS idx_coil_lots_branch_received ON coil_lots(branch_id, received_at_iso DESC, coil_no DESC);
       CREATE INDEX IF NOT EXISTS idx_coil_lots_branch_status_received
         ON coil_lots(branch_id, current_status, received_at_iso, coil_no);

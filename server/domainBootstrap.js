@@ -33,6 +33,7 @@ import {
   getJsonBlob,
   listAdvanceInEvents,
   listProductionJobs,
+  completeProductionDeskJoin,
   listProductionCompletionAdjustments,
   listProductionJobAccessoryUsage,
   listProductionJobStoneFlatsheetUsage,
@@ -329,7 +330,17 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
       branchScope === 'ALL' ? DEFAULT_BRANCH_ID : String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
   };
   const historyOpts = productionHistoryListOpts();
-  const productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope, historyOpts) : [];
+  // Lists sort by date_iso and jobs by created_at_iso. Join before coils so a visible
+  // list (including Produced rows) always has its job, and the live Planned/Running queue is complete.
+  let cuttingLists = opsOk ? listCuttingLists(db, branchScope, historyOpts) : [];
+  let productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope, historyOpts) : [];
+  if (prodRollupOk) {
+    const joined = completeProductionDeskJoin(db, branchScope, cuttingLists, productionJobsList, {
+      includeCuttingLists: opsOk,
+    });
+    cuttingLists = joined.cuttingLists;
+    productionJobsList = joined.productionJobs;
+  }
   const productionJobIds = productionJobsList.map((j) => j.jobID).filter(Boolean);
   const productionJobCoilsList = prodRollupOk
     ? repairProductionJobCoilIntegrity(
@@ -343,7 +354,6 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     ? listCoilLotsForDesk(db, branchScope, coilDeskListOpts())
     : { coilLots: [], truncated: false, mode: 'active' };
   const historyLim = historyOpts.unlimited ? 0 : Number(historyOpts.limit) || deskPageLimit();
-  const cuttingLists = opsOk ? listCuttingLists(db, branchScope, historyOpts) : [];
   const deliveries = opsOk ? listDeliveries(db, branchScope, historyOpts) : [];
   const movements = coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [];
   const coilControlEvents = coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [];

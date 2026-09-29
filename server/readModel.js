@@ -2688,6 +2688,40 @@ export function getCuttingList(db, id) {
   return mapCuttingListRow(db, row);
 }
 
+/**
+ * Cutting lists by id (desk join). Not history-capped — callers pass the ids they already need.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string[]} ids
+ * @param {'ALL' | string} [branchScope]
+ */
+export function listCuttingListsByIds(db, ids, branchScope = 'ALL') {
+  const listIds = [...new Set((ids || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!listIds.length) return [];
+  const b = branchWhere(db, 'cutting_lists', branchScope);
+  const out = [];
+  for (let i = 0; i < listIds.length; i += 200) {
+    const chunk = listIds.slice(i, i + 200);
+    const ph = chunk.map(() => '?').join(',');
+    const rows = db
+      .prepare(`SELECT * FROM cutting_lists WHERE id IN (${ph})${b.sql}`)
+      .all(...chunk, ...b.args);
+    const linesById = cuttingListLinesByListIds(
+      db,
+      rows.map((row) => row.id)
+    );
+    const lockedIds = cuttingListProductionLockedIds(db, rows);
+    for (const row of rows) {
+      out.push(
+        mapCuttingListRow(db, row, {
+          lines: linesById.get(String(row.id || '').trim()) || [],
+          productionEditLocked: lockedIds.has(String(row.id || '').trim()),
+        })
+      );
+    }
+  }
+  return out;
+}
+
 function fgAdjustmentTotalsByJobId(db, branchScope) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_completion_adjustments'`).get()) {
     return new Map();
@@ -2857,6 +2891,96 @@ export function searchProductionJobs(db, branchScope = 'ALL', rawQuery = '', lim
     offset: 0,
     useDefaultLimit: true,
   });
+}
+
+/** Visible register row still needs its production job (status labels differ from job status). */
+function cuttingListExpectsProductionJob(cl) {
+  if (!cl) return false;
+  if (cl.productionRegistered) return true;
+  if (String(cl.productionRegisterRef || '').trim()) return true;
+  const st = String(cl.status || '')
+    .trim()
+    .toLowerCase();
+  return st === 'in production' || st === 'finished' || st === 'ready for dispatch' || st === 'produced';
+}
+
+function isOpenProductionQueueStatus(status) {
+  const st = String(status || '')
+    .trim()
+    .toLowerCase();
+  return st === 'planned' || st === 'running';
+}
+
+/**
+ * Cutting lists and production jobs are paged on different sort keys (`date_iso` vs
+ * `created_at_iso`). A list on the desk page can otherwise ship without its job, and the
+ * register stays on "syncing". Also keep every Planned/Running job — that queue is the
+ * live floor, not a recent-N history page.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ * @param {object[]} cuttingLists
+ * @param {object[]} productionJobs
+ * @param {{ includeCuttingLists?: boolean }} [opts]
+ */
+export function completeProductionDeskJoin(db, branchScope, cuttingLists, productionJobs, opts = {}) {
+  const lists = Array.isArray(cuttingLists) ? [...cuttingLists] : [];
+  const jobs = Array.isArray(productionJobs) ? [...productionJobs] : [];
+  const includeCuttingLists = opts.includeCuttingLists !== false;
+  const jobIds = new Set(jobs.map((j) => String(j.jobID || '').trim()).filter(Boolean));
+  const coveredLists = new Set(jobs.map((j) => String(j.cuttingListId || '').trim()).filter(Boolean));
+  const missingListIds = [];
+  for (const cl of lists) {
+    if (!cuttingListExpectsProductionJob(cl)) continue;
+    const id = String(cl.id || '').trim();
+    if (id && !coveredLists.has(id)) missingListIds.push(id);
+  }
+
+  const b = branchWhere(db, 'production_jobs', branchScope);
+  const pendingRows = [];
+  const seenExtra = new Set();
+  const consider = (row) => {
+    const id = String(row?.job_id || '').trim();
+    if (!id || jobIds.has(id) || seenExtra.has(id)) return;
+    seenExtra.add(id);
+    pendingRows.push(row);
+  };
+  for (let i = 0; i < missingListIds.length; i += 200) {
+    const chunk = missingListIds.slice(i, i + 200);
+    const ph = chunk.map(() => '?').join(',');
+    const rows = db
+      .prepare(`SELECT * FROM production_jobs WHERE cutting_list_id IN (${ph})${b.sql}`)
+      .all(...chunk, ...b.args);
+    for (const row of rows) consider(row);
+  }
+  const openRows = db
+    .prepare(
+      `SELECT * FROM production_jobs WHERE status IN ('Planned', 'Running')${b.sql} ORDER BY created_at_iso DESC, job_id DESC`
+    )
+    .all(...b.args);
+  for (const row of openRows) consider(row);
+
+  if (pendingRows.length) {
+    const adjByJob = fgAdjustmentTotalsByJobId(db, branchScope);
+    for (const row of pendingRows) {
+      const mapped = mapProductionJobRow(row, adjByJob.get(row.job_id) || 0);
+      jobs.push(mapped);
+      if (mapped.jobID) jobIds.add(mapped.jobID);
+    }
+  }
+
+  if (includeCuttingLists) {
+    const clIds = new Set(lists.map((cl) => String(cl.id || '').trim()).filter(Boolean));
+    const needLists = [];
+    for (const j of jobs) {
+      if (!isOpenProductionQueueStatus(j.status)) continue;
+      const cid = String(j.cuttingListId || '').trim();
+      if (cid && !clIds.has(cid)) needLists.push(cid);
+    }
+    if (needLists.length) lists.push(...listCuttingListsByIds(db, needLists, branchScope));
+  }
+
+  return { cuttingLists: lists, productionJobs: jobs };
 }
 
 export function listProductionCompletionAdjustments(db, branchScope = 'ALL', opts = {}) {

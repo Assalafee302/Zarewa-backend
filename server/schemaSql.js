@@ -436,6 +436,9 @@ CREATE TABLE IF NOT EXISTS production_jobs (
   FOREIGN KEY (cutting_list_id) REFERENCES cutting_lists(id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_production_jobs_cutting_list ON production_jobs(cutting_list_id);
+CREATE INDEX IF NOT EXISTS idx_production_jobs_status ON production_jobs(status);
+
 CREATE TABLE IF NOT EXISTS material_incidents (
   id TEXT PRIMARY KEY,
   branch_id TEXT NOT NULL,

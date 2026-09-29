@@ -1330,6 +1330,7 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
   }
   try {
     const conversionRows = [];
+    let zeroConsumptionWithMetres = false;
     const existingById = new Map(existingAllocations.map((a) => [String(a.id ?? '').trim(), a]));
     for (const allocation of existingAllocations) {
       const coilKey = String(allocation.coil_no ?? '').trim();
@@ -1384,7 +1385,10 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       }
       const consumedWeightKg = openingWeightKg - closingWeightKg;
       if (consumedWeightKg <= 0) {
-        if (partialPreview) continue;
+        if (partialPreview) {
+          zeroConsumptionWithMetres = true;
+          continue;
+        }
         throw new Error(`Coil ${rowLabel} shows no consumed kg.`);
       }
       const actualConversionKgPerM = roundConv2(consumedWeightKg / metersProduced);
@@ -1440,7 +1444,10 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         if (finishCoil && closingWeightKg >= COIL_TAIL_FINISH_MAX_KG) continue;
         if (metersProduced <= 0) continue;
         const consumedWeightKg = openingWeightKg - closingWeightKg;
-        if (consumedWeightKg <= 0) continue;
+        if (consumedWeightKg <= 0) {
+          if (metersProduced > 0) zeroConsumptionWithMetres = true;
+          continue;
+        }
         const coil = coilRow(db, cn);
         if (!coil) continue;
         const qtyRemaining = clampNonNegative(
@@ -1471,7 +1478,9 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       return {
         ok: false,
         error: partialPreview
-          ? 'Enter closing kg and metres on at least one coil to preview conversion (other coils can stay open until you finish each roll).'
+          ? zeroConsumptionWithMetres
+            ? 'Closing kg equals opening kg, so this coil used no steel. Enter a lower closing kg to preview conversion.'
+            : 'Enter closing kg and metres on at least one coil to preview conversion (other coils can stay open until you finish each roll).'
           : 'No valid conversion rows — check coil readings.',
       };
     }
@@ -1863,6 +1872,11 @@ function applyHybridStoneMetreAndSfTx(db, job, jobID, payload, completedAtISO, s
 }
 
 function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
+  // Same gate as the offcut path: Planned → Completed never runs startProductionJob, so the payment re-gate is skipped.
+  const jobStatusStone = String(job.status ?? 'Planned');
+  if (jobStatusStone !== 'Running') {
+    return { ok: false, error: 'Start the production job before completing it.' };
+  }
   const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());
   const metresRaw = safeNumber(
     payload.stoneMetersConsumed ?? payload.stoneMeters ?? payload.metersConsumed ?? payload.totalMeters

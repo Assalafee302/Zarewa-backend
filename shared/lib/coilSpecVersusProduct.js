@@ -58,18 +58,44 @@ export function quotationIsStoneMeterHeader(quotation) {
   return mid === 'MAT-005' || mid === 'stone-coated';
 }
 
+function sameSpecToken(a, b) {
+  const left = String(a ?? '').trim().toLowerCase();
+  const right = String(b ?? '').trim().toLowerCase();
+  return Boolean(left) && left === right;
+}
+
 /**
  * Coil expected spec for stone-coated hybrid jobs (Flat sheet / gutter / Coil).
  * Those portions are fulfilled as aluzinc coil — never the stone roofing header
  * (gauge / colour / "Stone coated"), which would false-flag every matching aluzinc lot.
+ *
+ * Quotation save stamps the stone header gauge, chip colour, and profile onto every
+ * product line. Only a flatsheet `lineGauge` (or a gauge/colour that differs from that
+ * header) is the aluzinc coil spec. "Red patch black" is the stone chip, not PPGI "P Red".
  */
 export function buildExpectedCoilSpecForStoneHybridFlatsheet(quotation, jobProductAttrs) {
+  const q = quotation || {};
   const p = jobProductAttrs || {};
   const products = quotationProductsFromQuotation(quotation);
   const coilLine = products.find((row) => isStoneCoilBackedQuotationLine(row?.name));
-  const gauge = String(coilLine?.materialGauge || coilLine?.gauge || p.gauge || '').trim();
-  const colour = String(coilLine?.colour || coilLine?.materialColor || p.colour || '').trim();
-  const design = String(coilLine?.materialDesign || coilLine?.design || '').trim();
+  const headerGauge = String(q.materialGauge || '').trim();
+  const headerColour = String(q.materialColor || q.materialColour || '').trim();
+  const headerDesign = String(q.materialDesign || '').trim();
+
+  const lineGauge = String(coilLine?.lineGauge || '').trim();
+  const rawGauge = String(coilLine?.materialGauge || coilLine?.gauge || '').trim();
+  let gauge = lineGauge;
+  if (!gauge && rawGauge && !sameSpecToken(rawGauge, headerGauge)) gauge = rawGauge;
+  if (!gauge && !headerGauge) gauge = String(p.gauge || '').trim();
+
+  const rawColour = String(coilLine?.colour || coilLine?.materialColor || '').trim();
+  let colour = '';
+  if (rawColour && !sameSpecToken(rawColour, headerColour)) colour = rawColour;
+  else if (!rawColour && !headerColour) colour = String(p.colour || '').trim();
+
+  const rawDesign = String(coilLine?.materialDesign || coilLine?.design || coilLine?.profile || '').trim();
+  const design = rawDesign && !sameSpecToken(rawDesign, headerDesign) ? rawDesign : '';
+
   return {
     gauge: gauge || null,
     colour: colour || null,

@@ -114,6 +114,53 @@ describe('coilSpecVersusProduct', () => {
     expect(coilVersusQuotationAndProductWarning(lot, q, null)).toBeNull();
   });
 
+  it('stone hybrid ignores header colour stamped onto the flatsheet line', () => {
+    const q = {
+      stoneMeterQuote: true,
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.24mm',
+      materialColor: 'Red patch black',
+      materialDesign: 'Single',
+      quotationLines: {
+        products: [
+          { name: 'Roofing Sheet', qty: '423', gauge: '0.24mm', colour: 'Red patch black', design: 'Single' },
+          {
+            name: 'Flat sheet',
+            qty: '20',
+            gauge: '0.20mm',
+            lineGauge: '0.20mm',
+            colour: 'Red patch black',
+            design: 'Single',
+          },
+        ],
+      },
+    };
+    const e = buildExpectedCoilSpecFromQuotation(q, { gauge: '0.24mm', colour: 'Red patch black' });
+    expect(e.materialType).toBe('Aluzinc');
+    expect(e.gauge).toBe('0.20mm');
+    expect(e.colour).toBeNull();
+    expect(e.design).toBeNull();
+    const lot = { gaugeLabel: '0.20mm', colour: 'P Red', materialTypeName: 'Aluzinc (PPGI)' };
+    expect(coilVersusQuotationAndProductWarning(lot, q, null)).toBeNull();
+    expect(coilMatchesQuotationSpec(lot, q, null)).toBe(true);
+  });
+
+  it('stone hybrid still flags a coil gauge that misses the flatsheet lineGauge', () => {
+    const q = {
+      stoneMeterQuote: true,
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.24mm',
+      materialColor: 'Red patch black',
+      quotationLines: {
+        products: [{ name: 'Flat sheet', qty: '20', gauge: '0.20mm', lineGauge: '0.20mm', colour: 'Red patch black' }],
+      },
+    };
+    const lot = { gaugeLabel: '0.40mm', colour: 'P Red', materialTypeName: 'Aluzinc (PPGI)' };
+    const warning = coilVersusQuotationAndProductWarning(lot, q, null);
+    expect(warning).toMatch(/gauge/);
+    expect(warning).not.toMatch(/colour/);
+  });
+
   it('stain quotations expect parent-family coil allocation', () => {
     expect(
       quotationExpectsCoilAllocation({

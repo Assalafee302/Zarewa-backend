@@ -18,6 +18,7 @@ import {
   buildRefundSettlementSummary,
 } from '../sales/refundPayoutStatus.js';
 import {
+  listPartnerWalletBalancesDue,
   listPartnerWalletOpenCredits,
   nextWalletEntryId,
   partnerWalletEnabled,
@@ -40,6 +41,48 @@ function roundMoney(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n);
+}
+
+/**
+ * Open wallet rows can still hold the original approval after receipt credit.
+ * Share each refund's cash still outstanding across its credits, oldest first.
+ */
+export function listPartnerWalletOpenCreditsPayable(db, partyKind, partyId, branchScope = 'ALL') {
+  const credits = listPartnerWalletOpenCredits(db, partyKind, partyId, branchScope);
+  const roomLeft = new Map();
+  const capped = [];
+  for (const credit of credits) {
+    const rid = String(credit.refundId || '').trim();
+    let open = roundMoney(credit.openNgn);
+    if (rid) {
+      if (!roomLeft.has(rid)) {
+        const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(rid);
+        roomLeft.set(rid, row ? buildRefundSettlementSummary(db, row).cashOutstandingNgn : open);
+      }
+      const room = roomLeft.get(rid);
+      open = Math.min(open, Math.max(0, room));
+      roomLeft.set(rid, Math.max(0, room - open));
+    }
+    if (open <= 0) continue;
+    capped.push({ ...credit, openNgn: open });
+  }
+  return capped;
+}
+
+/** Party balances after receipt credit already used from each refund. */
+export function listPartnerWalletBalancesPayable(db, branchScope = 'ALL') {
+  return listPartnerWalletBalancesDue(db, branchScope)
+    .map((balance) => {
+      const credits = listPartnerWalletOpenCreditsPayable(
+        db,
+        balance.partyKind,
+        balance.partyId,
+        branchScope
+      );
+      const balanceNgn = credits.reduce((sum, credit) => sum + roundMoney(credit.openNgn), 0);
+      return { ...balance, balanceNgn, openCreditCount: credits.length };
+    })
+    .filter((balance) => balance.balanceNgn > 0);
 }
 
 function nextWithdrawalId(db, branchId) {

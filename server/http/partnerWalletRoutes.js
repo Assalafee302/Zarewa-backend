@@ -4,8 +4,8 @@
 import { requirePermission } from '../auth.js';
 import { resolveBootstrapBranchScope } from '../branchScope.js';
 import {
-  listPartnerWalletBalancesDue,
-  listPartnerWalletOpenCredits,
+  listPartnerWalletBalancesPayable,
+  listPartnerWalletOpenCreditsPayable,
   partnerWalletEnabled,
   withdrawPartnerWallet,
 } from '../finance/partnerWalletOps.js';
@@ -24,7 +24,7 @@ export function registerPartnerWalletRoutes(app, db) {
         res.json({
           ok: true,
           enabled: partnerWalletEnabled(),
-          balances: listPartnerWalletBalancesDue(db, branchScope),
+          balances: listPartnerWalletBalancesPayable(db, branchScope),
         });
       } catch (e) {
         console.error('[partner-wallets]', e);
@@ -39,7 +39,7 @@ export function registerPartnerWalletRoutes(app, db) {
     (req, res) => {
       try {
         const branchScope = resolveBootstrapBranchScope(req);
-        const credits = listPartnerWalletOpenCredits(
+        const credits = listPartnerWalletOpenCreditsPayable(
           db,
           req.params.partyKind,
           req.params.partyId,

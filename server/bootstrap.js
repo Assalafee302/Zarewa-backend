@@ -97,9 +97,9 @@ import { listBankDeposits } from './bankDepositOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import {
-  listPartnerWalletBalancesDue,
+  listPartnerWalletBalancesPayable,
   partnerWalletEnabled,
-} from './finance/partnerWalletCredit.js';
+} from './finance/partnerWalletOps.js';
 import { workspaceProductBootstrap } from './workspace/chatFlags.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
@@ -443,7 +443,7 @@ export function buildBootstrap(db, opts = {}) {
       finOk ||
       (user &&
         (userHasPermission(user, 'finance.pay') || userHasPermission(user, 'cashier.desk.view')))
-        ? listPartnerWalletBalancesDue(db, branchScope)
+        ? listPartnerWalletBalancesPayable(db, branchScope)
         : [],
     registerSettlementsAwaitingPayment:
       payReqOk || userHasPermission(user, 'finance.pay')

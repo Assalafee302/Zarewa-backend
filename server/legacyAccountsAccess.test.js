@@ -21,8 +21,8 @@ describe('legacyAccountsAccess', () => {
     expect(getAllowedLegacyAccountTabs(bm)).toEqual(
       expect.arrayContaining(['desk', 'receipts', 'movements', 'disbursements'])
     );
-    expect(getAllowedLegacyAccountTabs(bm)).not.toContain('audit');
-    expect(resolveLegacyAccountsRedirect(bm, 'audit')?.to).toBe('/accounts?tab=desk');
+    expect(getAllowedLegacyAccountTabs(bm)).toContain('audit');
+    expect(resolveLegacyAccountsRedirect(bm, 'audit')).toBeNull();
   });
 
   it('cashier role can open Finance desk even without desk permission keys', () => {
@@ -30,11 +30,11 @@ describe('legacyAccountsAccess', () => {
     expect(resolveLegacyAccountsRedirect({ roleKey: 'cashier', permissions: [] })).toBeNull();
   });
 
-  it('cashier can access route with desk tab but not audit', () => {
+  it('cashier can access route with desk tab and daily close', () => {
     expect(userMayAccessLegacyAccountsRoute(cashier)).toBe(true);
     expect(getAllowedLegacyAccountTabs(cashier)).toContain('desk');
-    expect(getAllowedLegacyAccountTabs(cashier)).not.toContain('audit');
-    expect(resolveLegacyAccountsRedirect(cashier, 'audit')?.to).toBe('/accounts?tab=desk');
+    expect(getAllowedLegacyAccountTabs(cashier)).toContain('audit');
+    expect(resolveLegacyAccountsRedirect(cashier, 'audit')).toBeNull();
     expect(getAllowedLegacyAccountTabs(cashier)).toContain('disbursements');
   });
 

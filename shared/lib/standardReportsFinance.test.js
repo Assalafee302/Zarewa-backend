@@ -152,6 +152,7 @@ describe('refundsPackReport', () => {
     );
     expect(paidInPeriod).toHaveLength(1);
     expect(paidInPeriod[0].amountNgn).toBe(500);
+    expect(paidInPeriod[0].howPaid).toBe('Bank');
   });
 
   it('shows credit used on pipeline and creditAppliedInPeriod for audit', () => {
@@ -212,6 +213,7 @@ describe('refundsPackReport', () => {
     );
     expect(companyCutWithdrawalsInPeriod).toHaveLength(1);
     expect(paidInPeriod[0].payoutKind).toBe('Company cut');
+    expect(paidInPeriod[0].howPaid).toBe('KEYSTONE');
     expect(paidInPeriod[0].amountNgn).toBe(50_000);
     expect(paidInPeriod[0].reference).toContain('RF-KD-26-1001');
     expect(summary.companyCutWithdrawnNgn).toBe(50_000);
@@ -269,6 +271,7 @@ describe('refundsPackReport', () => {
       '2026-09-30'
     );
     expect(paidInPeriod.map((r) => r.payoutKind)).toEqual(['Till/Bank', 'Reversal']);
+    expect(paidInPeriod.map((r) => r.howPaid)).toEqual(['Bank', 'Reversal · Bank']);
     expect(summary.paidTotalNgn).toBe(0);
   });
 });

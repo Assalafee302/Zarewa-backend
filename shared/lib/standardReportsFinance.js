@@ -171,6 +171,7 @@ function companyCutWithdrawalLines(withdrawals = [], startDate, endDate) {
     const refundIds = (Array.isArray(w.allocations) ? w.allocations : [])
       .map((a) => String(a?.refundId || a?.refund_id || '').trim())
       .filter(Boolean);
+    const bankAccount = String(w.payeeBankName || w.payee_bank_name || '').trim() || '—';
     lines.push({
       payoutDateISO: iso,
       refundIdDisplay: displayDocNumber(id) || id || '—',
@@ -178,7 +179,8 @@ function companyCutWithdrawalLines(withdrawals = [], startDate, endDate) {
       customer: String(w.payeeName || w.payee_name || 'Company').trim() || 'Company',
       quotationRefDisplay: 'Company cut',
       amountNgn,
-      bankAccount: String(w.payeeBankName || w.payee_bank_name || '').trim() || '—',
+      bankAccount,
+      howPaid: abbreviateBankName(bankAccount) || (bankAccount === '—' ? 'Company cut' : bankAccount),
       reference: refundIds.length ? refundIds.join(', ') : String(w.note || id).trim() || '—',
       payoutKind: 'Company cut',
       sourceRefundIds: refundIds,
@@ -202,6 +204,9 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
       const movementType = String(p.movementType || p.type || '');
       const isReversal = amountNgn < 0 || movementType === 'REFUND_PAYOUT_REVERSAL_IN';
       const isCash = String(p.accountType || '').trim().toLowerCase() === 'cash';
+      const bankAccount = isCash
+        ? 'Cash'
+        : abbreviateBankName(p.bankName) || String(p.accountName || '').trim() || '—';
       paidInPeriod.push({
         payoutDateISO: iso,
         refundIdDisplay: displayDocNumber(id) || '—',
@@ -209,9 +214,8 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
         customer: String(r.customer || '').trim() || '—',
         quotationRefDisplay: displayDocNumber(r.quotationRef) || '—',
         amountNgn,
-        bankAccount: isCash
-          ? 'Cash'
-          : abbreviateBankName(p.bankName) || String(p.accountName || '').trim() || '—',
+        bankAccount,
+        howPaid: isReversal ? `Reversal · ${bankAccount}` : bankAccount,
         reference: String(p.reference || '').trim() || '—',
         payoutKind: isReversal ? 'Reversal' : 'Till/Bank',
       });

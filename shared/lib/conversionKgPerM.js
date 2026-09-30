@@ -32,3 +32,31 @@ export function fmtConv2(n, opts = {}) {
   const s = v.toFixed(2);
   return opts.suffix ? `${s} ${opts.suffix}` : s;
 }
+
+/**
+ * Signed % of actual vs a reference kg/m (same formula as production conversion checks).
+ * @param {number | string | null | undefined} actual
+ * @param {number | string | null | undefined} reference
+ * @returns {number | null}
+ */
+export function conversionVariancePct(actual, reference) {
+  const a = Number(actual);
+  const r = Number(reference);
+  if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(r) || r <= 0) return null;
+  return ((a - r) / r) * 100;
+}
+
+/**
+ * @param {number | null | undefined} pct
+ * @param {{ digits?: number }} [opts]
+ * @returns {string}
+ */
+export function formatConversionVariancePct(pct, opts = {}) {
+  const digits = opts.digits == null ? 1 : opts.digits;
+  if (pct == null || !Number.isFinite(Number(pct))) return '—';
+  const n = Number(pct);
+  const abs = Math.abs(n).toFixed(digits);
+  if (n > 0.05) return `+${abs}%`;
+  if (n < -0.05) return `−${abs}%`;
+  return `${(0).toFixed(digits)}%`;
+}

@@ -1002,17 +1002,26 @@ export function listManagerQuotationAudit(db, quotationRef) {
 
   const cuttingListMetersSum = cuttingLists.reduce((s, cl) => s + (Number(cl.total_meters) || 0), 0);
 
-  const productionLogs = db
-    .prepare(
-      `SELECT job_id, cutting_list_id, product_name, planned_meters, actual_meters, actual_weight_kg, status,
+  const productionLogSql = (withVarianceReason) =>
+    `SELECT job_id, cutting_list_id, product_name, planned_meters, actual_meters, actual_weight_kg, status,
         conversion_alert_state, manager_review_required, completed_at_iso, operator_name,
         manager_review_signed_at_iso, manager_review_signed_by_name, manager_review_remark,
+        ${
+          withVarianceReason
+            ? 'conversion_variance_reason_code, conversion_variance_reason_text, conversion_variance_band,'
+            : ''
+        }
         start_date_iso, end_date_iso, machine_name, materials_note, created_at_iso
        FROM production_jobs
        WHERE quotation_ref = ?
-       ORDER BY (completed_at_iso IS NULL), completed_at_iso DESC, created_at_iso DESC`
-    )
-    .all(qid);
+       ORDER BY (completed_at_iso IS NULL), completed_at_iso DESC, created_at_iso DESC`;
+
+  let productionLogs;
+  try {
+    productionLogs = db.prepare(productionLogSql(true)).all(qid);
+  } catch {
+    productionLogs = db.prepare(productionLogSql(false)).all(qid);
+  }
 
   const salesReceipts = db
     .prepare(
@@ -1028,16 +1037,50 @@ export function listManagerQuotationAudit(db, quotationRef) {
   let jobCoils = [];
   if (jobIds.length) {
     const ph = jobIds.map(() => '?').join(',');
-    conversionChecks = db
-      .prepare(
-        `SELECT job_id, coil_no, alert_state, actual_conversion_kg_per_m, standard_conversion_kg_per_m,
+    const mapConversionRow = (row) => {
+      let varianceSummary = {};
+      try {
+        varianceSummary = JSON.parse(row.variance_summary_json || '{}') || {};
+      } catch {
+        varianceSummary = {};
+      }
+      const nested = varianceSummary.variances;
+      const variances =
+        nested && typeof nested === 'object'
+          ? nested
+          : varianceSummary.standardPct != null || varianceSummary.supplierPct != null
+            ? varianceSummary
+            : {};
+      return {
+        ...row,
+        variance_summary: { ...varianceSummary, variances },
+      };
+    };
+    try {
+      conversionChecks = db
+        .prepare(
+          `SELECT job_id, coil_no, alert_state, actual_conversion_kg_per_m, standard_conversion_kg_per_m,
+          supplier_conversion_kg_per_m, gauge_history_avg_kg_per_m, coil_history_avg_kg_per_m,
+          variance_summary_json, checked_at_iso, note, gauge_label, material_type_name
+         FROM production_conversion_checks
+         WHERE job_id IN (${ph})
+         ORDER BY checked_at_iso DESC`
+        )
+        .all(...jobIds)
+        .map(mapConversionRow);
+    } catch {
+      conversionChecks = db
+        .prepare(
+          `SELECT job_id, coil_no, alert_state, actual_conversion_kg_per_m, standard_conversion_kg_per_m,
           supplier_conversion_kg_per_m, gauge_history_avg_kg_per_m, coil_history_avg_kg_per_m,
           checked_at_iso, note, gauge_label, material_type_name
          FROM production_conversion_checks
          WHERE job_id IN (${ph})
          ORDER BY checked_at_iso DESC`
-      )
-      .all(...jobIds);
+        )
+        .all(...jobIds)
+        .map(mapConversionRow);
+    }
     jobCoils = db
       .prepare(
         `SELECT pjc.job_id, pjc.coil_no, pjc.meters_produced, pjc.consumed_weight_kg, pjc.opening_weight_kg,

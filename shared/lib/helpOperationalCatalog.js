@@ -386,14 +386,18 @@ const OPERATIONAL_TOPICS = [
     module: 'finance',
     action: 'correct which bank account was used for payout',
     title: 'Pay-from account correction',
-    answer: 'Finance roles with access may correct pay-from on posted treasury lines.',
+    answer:
+      'Finance can move a posted expense onto the account that actually paid, including when that account’s book balance is short or the original month is locked. Open Correct expense payouts for that. The same page removes a Refund expense so it can be raised again as a normal refund.',
     steps: [
-      'Open posted outflow in **Payments** register.',
-      'Use **Pay-from** or edit action if enabled.',
-      'Document reason per audit policy.',
+      'Open **Correct expense payouts** (`/expense-payout-corrections`).',
+      'Tick the payout and choose the account that paid, then move it.',
+      'To undo a refund posted as an expense, tick it under expense refunds and remove it, then raise it in Sales → Refunds.',
     ],
-    links: [{ label: 'Finance — Payments', to: '/accounts', state: { accountsTab: 'disbursements' } }],
-    extraKeywords: ['pay from', 'wrong bank account', 'treasury correction'],
+    links: [
+      { label: 'Finance — Payments', to: '/accounts', state: { accountsTab: 'disbursements' } },
+      { label: 'Correct expense payouts', to: '/expense-payout-corrections' },
+    ],
+    extraKeywords: ['pay from', 'wrong bank account', 'treasury correction', 'moniepoint', 'expense refund'],
   },
   {
     module: 'finance',

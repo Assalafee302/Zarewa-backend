@@ -11302,9 +11302,10 @@ function assertExpenseOutflowBranchGate(db, row, workspaceBranchId, workspaceVie
 /**
  * Finance: change bank/cash account (and optionally amount/date/note) for an expense or payment-request payout line.
  * Outflows are stored as negative `amount_ngn`. Accepts positive amounts in payload as magnitude of spend.
+ * `allowDestinationShortfall` lets the destination account go negative — only for a payout that already left that bank.
  * @param {import('better-sqlite3').Database} db
  * @param {string} movementId
- * @param {{ treasuryAccountId?: number, amountNgn?: number, postedAtISO?: string, note?: string, workspaceBranchId?: string, workspaceViewAll?: boolean }} payload
+ * @param {{ treasuryAccountId?: number, amountNgn?: number, postedAtISO?: string, note?: string, workspaceBranchId?: string, workspaceViewAll?: boolean, allowDestinationShortfall?: boolean }} payload
  * @param {object | null} actor
  */
 export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload, actor = null) {
@@ -11412,8 +11413,12 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
       adjustTreasuryBalanceTx(db, oldAcc, delta, { allowNegativeBalance: false });
     }
   } else {
+    // Returning cash to the account that was charged in error. The destination may go
+    // negative only when the caller is correcting a payout that already left that bank.
     adjustTreasuryBalanceTx(db, oldAcc, -oldAmt, { allowNegativeBalance: false });
-    adjustTreasuryBalanceTx(db, nextAcc, nextAmt, { allowNegativeBalance: false });
+    adjustTreasuryBalanceTx(db, nextAcc, nextAmt, {
+      allowNegativeBalance: Boolean(payload?.allowDestinationShortfall),
+    });
   }
 
   db.prepare(

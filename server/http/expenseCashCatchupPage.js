@@ -233,7 +233,7 @@ export function renderExpenseCashCatchupPage(model = {}) {
       </form>`
           : ''
       }
-      <p><a href="/expense-cash-catchup?view=statement">Print full Cash/POS statement (1–18 Sep)</a> · <a href="/">Back to Zarewa</a></p>`;
+      <p><a href="/expense-payout-corrections">Move a payout to the right account, or remove an expense refund</a> · <a href="/expense-cash-catchup?view=statement">Print full Cash/POS statement (1–18 Sep)</a> · <a href="/">Back to Zarewa</a></p>`;
   }
 
   return `<!DOCTYPE html>

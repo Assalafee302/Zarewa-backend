@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getEligibleRefundQuotations } from './controlOps.js';
 
-function overpaymentDb({ totalRefunded = 0 } = {}) {
+function overpaymentDb({ totalRefunded = 0, receiptStatus = 'Confirmed' } = {}) {
   const quote = {
     id: 'QT-FAST-1',
     customer_id: 'CUS-1',
@@ -29,7 +29,7 @@ function overpaymentDb({ totalRefunded = 0 } = {}) {
                 ledger_entry_id: null,
                 finance_reconciliation_saved_at_iso: null,
                 bank_received_amount_ngn: null,
-                status: 'Confirmed',
+                status: receiptStatus,
               },
             ];
           }
@@ -83,6 +83,18 @@ describe('getEligibleRefundQuotations fast list', () => {
     expect(rows[0].eligible_refund_categories).toEqual(['Overpayment']);
     expect(rows[0].suggested_preview_amount_ngn).toBe(20_000);
     expect(rows[0].remaining_ngn).toBe(120_000);
+    expect(rows[0].receipts_pending_clearance).toBe(false);
+    expect(rows[0].uncleared_receipt_count).toBe(0);
+  });
+
+  it('flags quotations whose payment has not been cleared', () => {
+    const rows = getEligibleRefundQuotations(
+      overpaymentDb({ receiptStatus: 'Pending clearance' }),
+      { candidateLimit: 20, resultLimit: 20 }
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].receipts_pending_clearance).toBe(true);
+    expect(rows[0].uncleared_receipt_count).toBe(1);
   });
 
   it('scopes the candidate SQL to the workspace branch (Kaduna must not pull Yola quotes)', () => {

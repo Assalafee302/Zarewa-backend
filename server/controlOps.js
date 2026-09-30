@@ -183,7 +183,7 @@ import {
   quotationPaymentCashBreakdownByRef,
 } from './quotationPaymentCash.js';
 import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
-import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
+import { isReceiptPendingClearance, receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 import {
   assertCashierMayNotApproveRefund,
   assertCashierMayNotApprovePaymentRequest,
@@ -3049,15 +3049,39 @@ export function cancelApprovedPaymentRequestBeforePay(db, requestID, payload, ac
 function quotationHasUnclearedReceipts(db, quotationRef) {
   const qid = String(quotationRef || '').trim();
   if (!qid) return false;
-  const row = db
+  return unclearedReceiptRowsForRefundIndicator(db, [qid]).length > 0;
+}
+
+/**
+ * Sales receipts on these quotations that Finance has not cleared.
+ * Refund requests are blocked until these are confirmed — the refund form shows them up front.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string[]} quotationIds
+ */
+function unclearedReceiptRowsForRefundIndicator(db, quotationIds) {
+  const ids = [...new Set((quotationIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+  const ph = ids.map(() => '?').join(',');
+  const rows = db
     .prepare(
-      `SELECT COUNT(*) AS c FROM sales_receipts
-       WHERE quotation_ref = ?
+      `SELECT id, quotation_ref, amount_ngn, status, date_iso, finance_reconciliation_saved_at_iso
+       FROM sales_receipts
+       WHERE quotation_ref IN (${ph})
          AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
-         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
+         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')
+       ORDER BY date_iso ASC, id ASC`
     )
-    .get(qid);
-  return Number(row?.c) > 0;
+    .all(...ids);
+  return (Array.isArray(rows) ? rows : []).filter((r) => isReceiptPendingClearance(r));
+}
+
+function mapUnclearedReceiptsForRefundIndicator(rows) {
+  return (Array.isArray(rows) ? rows : []).map((r) => ({
+    id: String(r.id || '').trim(),
+    amountNgn: roundMoney(r.amount_ngn),
+    status: String(r.status || '').trim() || 'Pending clearance',
+    dateIso: String(r.date_iso || '').trim(),
+  }));
 }
 
 export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANCH_ID) {
@@ -4387,8 +4411,12 @@ export function previewRefundRequest(db, payload) {
     : null;
 
   const warnings = [];
-  if (quotationRef && quotationHasUnclearedReceipts(db, quotationRef)) {
-    warnings.push(
+  const unclearedReceiptRows = quotationRef
+    ? unclearedReceiptRowsForRefundIndicator(db, [quotationRef])
+    : [];
+  const unclearedReceipts = mapUnclearedReceiptsForRefundIndicator(unclearedReceiptRows);
+  if (unclearedReceipts.length) {
+    warnings.unshift(
       'One or more receipts on this quotation are pending Finance clearance. Clear them on Finance & accounts before requesting a refund.'
     );
   }
@@ -5544,6 +5572,8 @@ export function previewRefundRequest(db, payload) {
       categorySuggestedMaxNgn: effectiveCategorySuggestedMaxNgn,
       derivedCategoryMaxNgn,
       warnings,
+      receiptClearanceRequired: unclearedReceipts.length > 0,
+      unclearedReceipts,
       alreadyRefundedCategories: Array.from(refundedCategories),
       paidRefundsOnQuotationNgn,
       priorRefundsOnQuotationNgn,
@@ -6211,6 +6241,15 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     db,
     candidates.map((r) => r.id)
   );
+  const unclearedCountByRef = new Map();
+  for (const receipt of unclearedReceiptRowsForRefundIndicator(
+    db,
+    candidates.map((r) => r.id)
+  )) {
+    const qid = String(receipt.quotation_ref || '').trim();
+    if (!qid) continue;
+    unclearedCountByRef.set(qid, (unclearedCountByRef.get(qid) || 0) + 1);
+  }
 
   const out = [];
   for (const row of candidates) {
@@ -6276,6 +6315,8 @@ export function getEligibleRefundQuotations(db, opts = {}) {
       remaining_ngn: remainingNgn,
       fresh_refund_opportunity: freshRefundOpportunity,
       prior_refund_count: priorRefunds.length,
+      receipts_pending_clearance: (unclearedCountByRef.get(row.id) || 0) > 0,
+      uncleared_receipt_count: unclearedCountByRef.get(row.id) || 0,
     };
     if (!quotationMeetsRefundPickerFloor(pickRow)) continue;
     out.push(pickRow);

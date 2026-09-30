@@ -5024,6 +5024,84 @@ export function recalculateAllCoilProductionJobStock(db, coilNo, opts = {}) {
   };
 }
 
+/**
+ * Rebuild on-hand kg for every coil in the workspace branch that has production allocations.
+ * Each coil: job kg used is synced from opening − closing, then stock = received − that
+ * consumption − splits + scrap/returns. Stock is not increased (no silent kg restore).
+ *
+ * @param {{ workspaceBranchId?: string; actor?: object; dateISO?: string }} [opts]
+ */
+export function recalculateWorkspaceCoilProductionStock(db, opts = {}) {
+  const branchId = String(opts.workspaceBranchId ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const coilNos = db
+    .prepare(
+      `SELECT DISTINCT cl.coil_no AS coil_no
+       FROM coil_lots cl
+       INNER JOIN production_job_coils pjc ON pjc.coil_no = cl.coil_no
+       WHERE cl.branch_id = ?
+       ORDER BY cl.coil_no`
+    )
+    .all(branchId)
+    .map((r) => String(r.coil_no ?? '').trim())
+    .filter(Boolean);
+
+  let adjusted = 0;
+  let unchanged = 0;
+  let restoreBlocked = 0;
+  const failures = [];
+  const adjustedCoils = [];
+
+  for (const cn of coilNos) {
+    let result;
+    try {
+      result = recalculateAllCoilProductionJobStock(db, cn, { ...opts, workspaceBranchId: branchId });
+    } catch (e) {
+      failures.push({ coilNo: cn, error: String(e?.message || e) });
+      continue;
+    }
+    if (!result?.ok) {
+      failures.push({ coilNo: cn, error: result?.error || 'Recalculate failed.' });
+      continue;
+    }
+    const book = result.bookReconcile || {};
+    const delta = safeNumber(book.onHandDeltaKg);
+    if (book.restoreBlocked) {
+      restoreBlocked += 1;
+    } else if (Math.abs(delta) > 0.05) {
+      adjusted += 1;
+      if (adjustedCoils.length < 40) {
+        adjustedCoils.push({
+          coilNo: cn,
+          onHandDeltaKg: delta,
+          afterOnHandKg: safeNumber(book.afterOnHandKg),
+        });
+      }
+    } else {
+      unchanged += 1;
+    }
+  }
+
+  appendAuditLog(db, {
+    actor: opts.actor,
+    action: 'production.recalculate_branch_coil_stock',
+    entityKind: 'branch',
+    entityId: branchId,
+    note: `Coil stock recalculated for ${coilNos.length} coil(s) in ${branchId}: ${adjusted} adjusted, ${unchanged} unchanged, ${restoreBlocked} restore blocked`,
+    details: { branchId, coilCount: coilNos.length, adjusted, unchanged, restoreBlocked, failures },
+  });
+
+  return {
+    ok: true,
+    branchId,
+    coilCount: coilNos.length,
+    adjusted,
+    unchanged,
+    restoreBlocked,
+    adjustedCoils,
+    failures: failures.length ? failures : undefined,
+  };
+}
+
 /** Sum of opening_weight_kg on Planned + Running jobs for one coil. */
 export function expectedCoilReservedKgFromJobs(db, coilNo) {
   const cn = String(coilNo ?? '').trim();

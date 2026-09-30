@@ -3,6 +3,7 @@ import { createDatabase } from './db.js';
 import {
   recalculateAllCoilProductionJobStock,
   recalculateProductionJobCoilStock,
+  recalculateWorkspaceCoilProductionStock,
   saveProductionJobAllocations,
 } from './productionTraceability.js';
 
@@ -90,5 +91,59 @@ describe('recalculateAllCoilProductionJobStock', () => {
 
     const lot = db.prepare(`SELECT qty_remaining FROM coil_lots WHERE coil_no = 'CL-RECON'`).get();
     expect(lot.qty_remaining).toBeCloseTo(1618, 1);
+  });
+});
+
+describe('recalculateWorkspaceCoilProductionStock', () => {
+  let db;
+
+  beforeEach(() => {
+    db = createDatabase(':memory:');
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, branch_id) VALUES ('COIL-ALU', 'Aluzinc', 0, 'BR1')`
+    ).run();
+    db.prepare(
+      `INSERT INTO coil_lots (
+        coil_no, product_id, qty_received, weight_kg, qty_remaining, qty_reserved,
+        current_weight_kg, current_status, branch_id, received_at_iso
+      ) VALUES
+        ('CL-GAP', 'COIL-ALU', 1000, 1000, 800, 0, 800, 'Available', 'BR1', '2026-08-01'),
+        ('CL-OK', 'COIL-ALU', 500, 500, 400, 0, 400, 'Available', 'BR1', '2026-08-01'),
+        ('CL-OTHER', 'COIL-ALU', 900, 900, 100, 0, 100, 'Available', 'BR2', '2026-08-01')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_jobs (job_id, status, branch_id, created_at_iso)
+       VALUES ('JOB-GAP', 'Completed', 'BR1', '2026-08-02'),
+              ('JOB-OK', 'Completed', 'BR1', '2026-08-02'),
+              ('JOB-OTHER', 'Completed', 'BR2', '2026-08-02')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_job_coils (
+        id, job_id, sequence_no, coil_no, product_id, opening_weight_kg, closing_weight_kg,
+        consumed_weight_kg, meters_produced, allocation_status, allocated_at_iso
+      ) VALUES
+        ('PJC-GAP', 'JOB-GAP', 1, 'CL-GAP', 'COIL-ALU', 1000, 700, 300, 100, 'Completed', '2026-08-02'),
+        ('PJC-OK', 'JOB-OK', 1, 'CL-OK', 'COIL-ALU', 500, 400, 100, 40, 'Completed', '2026-08-02'),
+        ('PJC-OTHER', 'JOB-OTHER', 1, 'CL-OTHER', 'COIL-ALU', 900, 200, 700, 200, 'Completed', '2026-08-02')`
+    ).run();
+  });
+
+  afterEach(() => {
+    db?.close();
+  });
+
+  it('rebuilds on-hand for this branch only and leaves a balanced coil unchanged', () => {
+    const r = recalculateWorkspaceCoilProductionStock(db, { workspaceBranchId: 'BR1' });
+    expect(r.ok).toBe(true);
+    expect(r.coilCount).toBe(2);
+    expect(r.adjusted).toBe(1);
+    expect(r.unchanged).toBe(1);
+
+    const gap = db.prepare(`SELECT qty_remaining FROM coil_lots WHERE coil_no = 'CL-GAP'`).get();
+    const ok = db.prepare(`SELECT qty_remaining FROM coil_lots WHERE coil_no = 'CL-OK'`).get();
+    const other = db.prepare(`SELECT qty_remaining FROM coil_lots WHERE coil_no = 'CL-OTHER'`).get();
+    expect(Number(gap.qty_remaining)).toBeCloseTo(700, 1);
+    expect(Number(ok.qty_remaining)).toBeCloseTo(400, 1);
+    expect(Number(other.qty_remaining)).toBeCloseTo(100, 1);
   });
 });

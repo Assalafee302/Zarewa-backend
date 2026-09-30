@@ -473,6 +473,7 @@ import {
   listCoilProductionBookReconciliationIssues,
   summarizeCoilProductionHoldersBook,
   recalculateAllCoilProductionJobStock,
+  recalculateWorkspaceCoilProductionStock,
   reconcileCoilReservationFromProductionJobs,
   recalculateProductionJobCoilStock,
   syncProductionJobCoilConsumedWeightsForCoil,
@@ -8622,6 +8623,20 @@ export function registerHttpApi(app, db) {
       const r = reconcileCoilReservationFromProductionJobs(db, coilNo, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/coil-lots/recalculate-production-stock', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const r = recalculateWorkspaceCoilProductionStock(db, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+        dateISO: req.body?.dateISO,
       });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {

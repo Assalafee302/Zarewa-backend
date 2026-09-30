@@ -3146,6 +3146,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const boot = await agent.get('/api/bootstrap');
     const pj = boot.body.productionJobs.find((j) => j.jobID === jobId);
     expect(pj.actualMeters).toBeCloseTo(92, 3);
+    expect(pj.actualFlatsheetM).toBeCloseTo(92, 3);
     expect(pj.offcutInventoryMeters).toBeCloseTo(2, 3);
 
     const listAfter = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
@@ -3168,6 +3169,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const boot2 = await agent.get('/api/bootstrap');
     const pj2 = boot2.body.productionJobs.find((j) => j.jobID === jobId);
     expect(pj2.actualMeters).toBeCloseTo(94, 3);
+    expect(pj2.actualFlatsheetM).toBeCloseTo(94, 3);
     expect(pj2.offcutInventoryMeters).toBeCloseTo(4, 3);
   });
 

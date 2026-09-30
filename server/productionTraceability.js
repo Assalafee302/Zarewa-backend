@@ -3937,18 +3937,16 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
 
     const aggregated = aggregateAlertState(alertStates);
     const flatsheetOut = newTotalM + newOff;
-    if (jobIsStoneCoilHybrid(db, job)) {
-      db.prepare(
-        `UPDATE production_jobs
-         SET actual_meters = ?, actual_flatsheet_m = ?, actual_weight_kg = ?, conversion_alert_state = ?,
-             manager_review_required = ?, offcut_inventory_meters = ?
-         WHERE job_id = ?`
-      ).run(flatsheetOut, flatsheetOut, newTotalKg, aggregated, anyMgr ? 1 : 0, newOff, jobId);
-    } else {
-      db.prepare(
-        `UPDATE production_jobs SET actual_meters = ?, actual_weight_kg = ?, conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ? WHERE job_id = ?`
-      ).run(flatsheetOut, newTotalKg, aggregated, anyMgr ? 1 : 0, newOff, jobId);
-    }
+    // Completion copies coil output into actual_flatsheet_m even on a plain coil job.
+    // Refunds take the higher of actual metres and that column, so a later coil correction
+    // must rewrite it too — otherwise the refund stays on the old higher figure.
+    // Stone hybrids keep roof metres in actual_roof_m; this column is the coil portion only.
+    db.prepare(
+      `UPDATE production_jobs
+       SET actual_meters = ?, actual_flatsheet_m = ?, actual_weight_kg = ?, conversion_alert_state = ?,
+           manager_review_required = ?, offcut_inventory_meters = ?
+       WHERE job_id = ?`
+    ).run(flatsheetOut, flatsheetOut, newTotalKg, aggregated, anyMgr ? 1 : 0, newOff, jobId);
     refreshJobCoilSpecFlagsTx(db, jobId);
     appendAuditLog(db, {
       actor: opts.actor,

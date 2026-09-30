@@ -532,6 +532,49 @@ describe('refundProductionAlignment', () => {
     expect(md.some((i) => String(i.code || '').startsWith('cutting_list_'))).toBe(false);
   });
 
+  it('does not treat stone flatsheet metres as unproduced roofing', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q-STONE-SF-ROOF',
+      lines_json: JSON.stringify({
+        materialTypeId: 'MAT-005',
+        products: [
+          { name: 'Roofing Sheet', qty: '198' },
+          { name: 'Stone flatsheet 2', qty: '7' },
+        ],
+      }),
+    });
+    db.data.cutting_lists.push({ id: 'CL-SF-ROOF', quotation_ref: 'Q-STONE-SF-ROOF' });
+    db.data.cutting_list_lines.push(
+      {
+        cutting_list_id: 'CL-SF-ROOF',
+        sheets: 1,
+        length_m: 205,
+        total_m: 205,
+        line_type: 'Roof',
+      },
+      {
+        cutting_list_id: 'CL-SF-ROOF',
+        sheets: 1,
+        length_m: 7,
+        total_m: 7,
+        line_type: 'Flatsheet',
+      }
+    );
+    db.data.production_jobs.push({
+      job_id: 'J-SF-ROOF',
+      quotation_ref: 'Q-STONE-SF-ROOF',
+      status: 'Completed',
+      planned_meters: 198,
+      actual_meters: 198,
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q-STONE-SF-ROOF', [
+      'Overpayment',
+      'Accessory shortfall',
+    ]);
+    expect(issues.some((i) => i.code === 'cutting_list_exceeds_produced')).toBe(false);
+  });
+
   it('stone SF quote with CL metres does not raise no_quoted_roofing when materialTypeId is in lines_json string', () => {
     const db = memDb();
     db.data.quotations.push({

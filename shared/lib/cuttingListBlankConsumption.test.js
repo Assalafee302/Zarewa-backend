@@ -169,6 +169,38 @@ describe('cuttingListBlankConsumption', () => {
     expect(right.ok).toBe(true);
     expect(right.code).toBe('stone_sf_cl_skip_coil_alignment');
     expect(right.clFlatsheetM).toBe(0);
+    expect(right.producedComparableM).toBe(120);
+    expect(right.cuttingListTotalM).toBe(136);
+  });
+
+  it('keeps stone flatsheet out of the metres compared to produced roofing', () => {
+    const lines = {
+      products: [
+        { name: 'Roofing Sheet', qty: 198 },
+        { name: 'Stone flatsheet 2', qty: 7 },
+      ],
+    };
+    const filedAsSheets = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 1, lengthM: 198 },
+        { lineType: 'StoneFlatsheet', sheets: 7, lengthM: 2 },
+      ],
+      stoneMeterQuote: true,
+    });
+    expect(filedAsSheets.cuttingListTotalM).toBe(212);
+    expect(filedAsSheets.producedComparableM).toBe(198);
+
+    const typedIntoRoofAndCoilFlatsheet = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 1, lengthM: 205 },
+        { lineType: 'Flatsheet', sheets: 1, lengthM: 7 },
+      ],
+      stoneMeterQuote: true,
+    });
+    expect(typedIntoRoofAndCoilFlatsheet.cuttingListTotalM).toBe(212);
+    expect(typedIntoRoofAndCoilFlatsheet.producedComparableM).toBe(198);
   });
 
   it('stone quote with gutter requires flatsheet section to cover coil blank (SF sheets may be extra)', () => {

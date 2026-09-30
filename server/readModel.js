@@ -1127,7 +1127,10 @@ export function listManagerQuotationAudit(db, quotationRef) {
       expectedCoilConsumptionM: clConsumption?.expectedTotalM ?? quotedRoofingMetres,
       clFlatsheetM: clConsumption?.clFlatsheetM ?? 0,
       trimBlankGapM: clConsumption?.trimBlankGapM ?? 0,
-      cuttingListMetersSum: clConsumption?.cuttingListTotalM ?? cuttingListMetersSum,
+      cuttingListMetersSum:
+        clConsumption?.producedComparableM != null
+          ? clConsumption.producedComparableM
+          : (clConsumption?.cuttingListTotalM ?? cuttingListMetersSum),
       completedProductionMetersSum: completedMeters,
       productionJobsMetersSum: allJobMeters,
     },

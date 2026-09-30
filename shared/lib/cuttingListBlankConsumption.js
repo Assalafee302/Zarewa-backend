@@ -8,6 +8,7 @@ import {
   isStoneBargeboardQuotationLine,
   isStoneCoilBackedQuotationLine,
   isStoneFlatsheetQuotationLine,
+  isStoneMetreRoofingQuotationLine,
   isStoneRidgeQuotationLine,
   quotationRequiresStoneCoilCuttingListAlignment,
 } from './stoneCoatedQuotationPolicy.js';
@@ -219,6 +220,68 @@ export function cuttingListFlatsheetMetresFromLines(lines) {
   return cuttingListTotalMetresFromLines(lines, { lineTypes: ['Flatsheet'] });
 }
 
+function quotedStoneRoofingSheetMetres(linesJson) {
+  return roundCuttingListMetres2(
+    parseQuotationLinesPayload(linesJson).reduce((sum, line) => {
+      if (!isStoneMetreRoofingQuotationLine(line?.name)) return sum;
+      return sum + quotationLineQtyNumber(line);
+    }, 0)
+  );
+}
+
+function quotedStoneFlatsheetQuantity(linesJson) {
+  return roundCuttingListMetres2(
+    parseQuotationLinesPayload(linesJson).reduce((sum, line) => {
+      if (!isStoneFlatsheetQuotationLine(line?.name)) return sum;
+      return sum + quotationLineQtyNumber(line);
+    }, 0)
+  );
+}
+
+/**
+ * Cutting-list metres that are the same stock as produced roofing output.
+ *
+ * Stone flatsheet is sheet stock (m²), not coil flatsheet and not stone roofing metres.
+ * Quantity typed into the Roof section is removed up to the quoted stone-flatsheet
+ * quantity. Stone production output is roofing metres only, so coil Flatsheet and
+ * StoneFlatsheet lines are left out of this figure.
+ *
+ * @param {{
+ *   quotationLinesJson?: unknown,
+ *   cuttingListLines?: object[],
+ *   cuttingListMetres?: number,
+ *   stoneMeterQuote?: boolean,
+ *   sheetToleranceM?: number,
+ * }} [p]
+ */
+export function cuttingListMetresComparableToProducedOutput({
+  quotationLinesJson,
+  cuttingListLines,
+  cuttingListMetres,
+  stoneMeterQuote = false,
+  sheetToleranceM = CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M,
+} = {}) {
+  const lines = Array.isArray(cuttingListLines) ? cuttingListLines : [];
+  if (!lines.length) return roundCuttingListMetres2(cuttingListMetres ?? 0);
+
+  const roofM = cuttingListTotalMetresFromLines(lines, { lineTypes: ['Roof'] });
+  const claddingM = cuttingListTotalMetresFromLines(lines, { lineTypes: ['Cladding'] });
+  const flatsheetM = cuttingListTotalMetresFromLines(lines, { lineTypes: ['Flatsheet'] });
+  if (!stoneMeterQuote) {
+    return roundCuttingListMetres2(roofM + claddingM + flatsheetM);
+  }
+
+  let metres = roofM;
+  const quotedRoof = quotedStoneRoofingSheetMetres(quotationLinesJson);
+  const stoneFlatsheetQty = quotedStoneFlatsheetQuantity(quotationLinesJson);
+  const tol = Math.max(0, Number(sheetToleranceM) || 0);
+  if (quotedRoof > 0.001 && stoneFlatsheetQty > 0.001 && roofM > quotedRoof + tol) {
+    const excess = roundCuttingListMetres2(roofM - quotedRoof);
+    metres = roundCuttingListMetres2(metres - Math.min(excess, stoneFlatsheetQty));
+  }
+  return roundCuttingListMetres2(Math.max(0, metres));
+}
+
 /**
  * Full quote ↔ cutting-list consumption check (sheet pool + trim blank).
  * @param {{
@@ -263,7 +326,7 @@ function quotationLinesAreLoaded(linesJson) {
   );
 }
 
-export function assessCuttingListQuotationConsumption({
+function assessCuttingListQuotationConsumptionCore({
   quotationLinesJson,
   cuttingListLines,
   cuttingListMetres,
@@ -536,6 +599,17 @@ export function assessCuttingListQuotationConsumption({
     trimBlankProductionBlocked,
     deltaMetres: expectedTotalM > 0 ? deltaMetres : 0,
     signedDeltaM: expectedTotalM > 0 ? signedDeltaM : 0,
+  };
+}
+
+export function assessCuttingListQuotationConsumption(args) {
+  const result = assessCuttingListQuotationConsumptionCore(args);
+  if (!result) return result;
+  return {
+    ...result,
+    producedComparableM: args?.accessoriesOnly
+      ? 0
+      : cuttingListMetresComparableToProducedOutput(args),
   };
 }
 

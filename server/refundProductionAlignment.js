@@ -371,7 +371,12 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     }
 
     const clAssessment = assessQuotationCuttingListConsumptionForRef(db, quotationRef);
-    const cuttingListM = Number(clAssessment?.cuttingListTotalM) || 0;
+    // Stone flatsheet (m² / sheet) is not produced roofing metres. `producedComparableM`
+    // drops that stock, and drops stone-flatsheet quantity typed into the Roof section.
+    const cuttingListM =
+      clAssessment?.producedComparableM != null
+        ? Number(clAssessment.producedComparableM) || 0
+        : Number(clAssessment?.cuttingListTotalM) || 0;
     const expectedClM =
       Number(clAssessment?.expectedTotalM) > 0.001
         ? Number(clAssessment.expectedTotalM)
@@ -417,9 +422,9 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
         code: 'cutting_list_exceeds_produced',
         severity: 'warning',
         title: 'Cutting list exceeds production',
-        message: `Cutting list total (${cuttingListM.toFixed(2)} m) exceeds produced output (${producedM.toFixed(2)} m) by ${(
+        message: `Roof metres on the cutting list (${cuttingListM.toFixed(2)} m) exceed produced output (${producedM.toFixed(2)} m) by ${(
           cuttingListM - producedM
-        ).toFixed(2)} m. Confirm unfinished metres (Unproduced meterage) or correct the cutting list before refund.`,
+        ).toFixed(2)} m. Stone flatsheet is not included. Confirm unfinished roof metres, or correct the cutting list, before refund.`,
       });
     }
   }

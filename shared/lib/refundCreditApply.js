@@ -386,17 +386,28 @@ export function planRefundCreditApplyAmount({ targetDueNgn, availableNgn, reques
 }
 
 /**
+ * Confirm payment does not offer refund-fund slices under this amount.
+ * Same band as a Branch Manager minor receivable: company-cut dust and sub-₦1,000
+ * leftovers were opening receipt approval with nothing the cashier should apply.
+ */
+export const CONFIRM_REFUND_FUND_MIN_NGN = 1_000;
+
+/**
  * Leftover overpayment that can cover another receipt without a refund request.
  * Sales posts full cash as one RECEIPT (no OVERPAY_ADVANCE split), so economic excess
  * (cash in minus quote total) must be pooled even when the ledger overpay bucket is empty.
- * Named refund opens, till/wallet payouts, and credit already moved off this quote are subtracted
- * so the same ₦ is not listed twice (e.g. RF-KD-26-9456 already paid out must not reappear on confirm).
+ * Named refund opens, till/wallet payouts, credit already moved off this quote, company
+ * cut already retained, and duplicate “already settled” overpay ledger rows are subtracted
+ * so the same ₦ is not listed twice (e.g. RF-KD-26-9456 already paid out, or the
+ * QT-KD-26-0224 settled-quote duplicate, must not reappear on confirm).
  * @param {{
  *   ledgerPoolNgn?: number,
  *   economicExcessNgn?: number,
  *   refundOpenNgn?: number,
  *   refundConsumedNgn?: number,
  *   creditAppliedOutNgn?: number,
+ *   settledDuplicateOverpayNgn?: number,
+ *   companyKeptNgn?: number,
  * }} p
  */
 export function unclaimedOverpayCreditNgn({
@@ -405,13 +416,17 @@ export function unclaimedOverpayCreditNgn({
   refundOpenNgn = 0,
   refundConsumedNgn = 0,
   creditAppliedOutNgn = 0,
+  settledDuplicateOverpayNgn = 0,
+  companyKeptNgn = 0,
 } = {}) {
-  const ledger = Math.max(0, Math.round(Number(ledgerPoolNgn) || 0));
+  const settledDuplicate = Math.max(0, Math.round(Number(settledDuplicateOverpayNgn) || 0));
+  const ledger = Math.max(0, Math.round(Number(ledgerPoolNgn) || 0) - settledDuplicate);
   const economic = Math.max(0, Math.round(Number(economicExcessNgn) || 0));
   const refundOpen = Math.max(0, Math.round(Number(refundOpenNgn) || 0));
   const refundConsumed = Math.max(0, Math.round(Number(refundConsumedNgn) || 0));
   const creditOut = Math.max(0, Math.round(Number(creditAppliedOutNgn) || 0));
-  return Math.max(0, Math.max(ledger, economic) - refundOpen - refundConsumed - creditOut);
+  const companyKept = Math.max(0, Math.round(Number(companyKeptNgn) || 0));
+  return Math.max(0, Math.max(ledger, economic) - refundOpen - refundConsumed - creditOut - companyKept);
 }
 
 /**

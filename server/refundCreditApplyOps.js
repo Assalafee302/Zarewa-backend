@@ -11,6 +11,7 @@ import {
   REFUND_CREDIT_REVERSED_STATUS,
   REFUND_CREDIT_REVERSE_LEDGER_REF_PREFIX,
   allocateRefundCreditAcrossSources,
+  CONFIRM_REFUND_FUND_MIN_NGN,
   planRefundCreditApplyAmount,
   refundBlocksExternalCreditOnQuotation,
   refundCategoriesAreOverpaymentOnly,
@@ -34,6 +35,7 @@ import { reducePartnerWalletOpenForRefundCreditTx } from './finance/partnerWalle
 import { assertPeriodOpen, appendAuditLog } from './controlOps.js';
 import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import { quotationPaymentCashBreakdownByRef } from './quotationPaymentCash.js';
+import { tableExists } from './schemaCache.js';
 import {
   insertLedgerRows,
   overpayCreditRemainingOnQuotationDb,
@@ -214,6 +216,35 @@ function consumeFalseOpenRefundsOnOverpayApplyTx(db, { quotationRef, amountNgn, 
   return stampedRefundIds.filter(Boolean);
 }
 
+/**
+ * Company cut already taken off an overpayment refund. That ₦ is retained by the
+ * company — it is not leftover customer credit for the next receipt (RF-KD-26-9674: ₦7,194).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} customerId
+ */
+function companyCutKeptByQuotation(db, customerId) {
+  const map = new Map();
+  const cid = String(customerId || '').trim();
+  if (!cid || !tableExists(db, 'refund_company_retention_entries')) return map;
+  const rows = db
+    .prepare(
+      `SELECT cr.quotation_ref AS q, COALESCE(SUM(e.amount_ngn), 0) AS s
+       FROM refund_company_retention_entries e
+       INNER JOIN customer_refunds cr ON cr.refund_id = e.refund_id
+       LEFT JOIN quotations q ON q.id = cr.quotation_ref
+       WHERE e.entry_type = 'credit'
+         AND e.source_kind = 'REFUND_COMPANY_CUT'
+         AND (cr.customer_id = ? OR q.customer_id = ?)
+       GROUP BY cr.quotation_ref`
+    )
+    .all(cid, cid);
+  for (const row of rows) {
+    const qid = String(row.q || '').trim();
+    if (qid) map.set(qid, roundMoney(row.s));
+  }
+  return map;
+}
+
 function refundUsageFields(shape, open, destsByRefund) {
   const creditAppliedNgn = roundMoney(shape.creditAppliedNgn);
   const creditAppliedToQuotationRef = appliedDestsLabel(
@@ -346,6 +377,9 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
       continue;
     }
     const usage = refundUsageFields(shape, open, destsByRefund);
+    if (eligible && open < CONFIRM_REFUND_FUND_MIN_NGN) {
+      continue;
+    }
     if (eligible) {
       const entry = {
         id: `refund:${shape.refundID}`,
@@ -455,6 +489,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     db,
     quotes.map((q) => String(q.id || '').trim()).filter(Boolean)
   );
+  const companyKeptByQuote = companyCutKeptByQuotation(db, cid);
 
   for (const q of quotes) {
     const qid = String(q.id || '').trim();
@@ -478,8 +513,10 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
       refundOpenNgn: refundOpenOnQuote,
       refundConsumedNgn: overpayConsumedByQuote.get(qid) || 0,
       creditAppliedOutNgn: creditOutByQuote.get(qid) || 0,
+      settledDuplicateOverpayNgn: cash?.settledQuoteFullOverpayNgn || 0,
+      companyKeptNgn: companyKeptByQuote.get(qid) || 0,
     });
-    if (leftover > 0 && !blockingOtherPending) {
+    if (leftover >= CONFIRM_REFUND_FUND_MIN_NGN && !blockingOtherPending) {
       const creditOut = creditOutByQuote.get(qid) || 0;
       const overpayUsageHowTo = refundFundRemainingHowToUse({
         amountNgn: leftover + creditOut,

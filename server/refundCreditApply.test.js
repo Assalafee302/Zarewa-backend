@@ -1017,4 +1017,93 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
       .get();
     expect(Number(rf.credit_applied_ngn)).toBe(20_790);
   });
+
+  it('does not offer settled-quote duplicate overpay or company cut on confirm (QT-0224 / QT-1646)', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 1, unitPrice: 1000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-OLD', 'Old Overpay Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-OLD-SETTLED', 'CUS-OLD', 'Old Overpay Customer', 3700760, 4114000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-05-16', '${DEFAULT_BRANCH_ID}'),
+        ('QT-OLD-CUT', 'CUS-OLD', 'Old Overpay Customer', 963030, 1063000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-09-25', '${DEFAULT_BRANCH_ID}'),
+        ('QT-OLD-DUST', 'CUS-OLD', 'Old Overpay Customer', 100000, 100400, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-09-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-OLD-NEXT', 'CUS-OLD', 'Old Overpay Customer', 5000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-09-26', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO sales_receipts (
+        id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso,
+        ledger_entry_id, bank_received_amount_ngn, finance_reconciliation_saved_at_iso
+      ) VALUES
+        ('LE-OLD-SETTLED', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-SETTLED', 3700760, '₦3,700,760', 'Cleared', '2026-05-16', 'LE-OLD-SETTLED', 4114000, '2026-05-23T12:00:00.000Z'),
+        ('LE-OLD-CUT', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-CUT', 963030, '₦963,030', 'Cleared', '2026-09-25', 'LE-OLD-CUT', 1063000, '2026-09-25T12:00:00.000Z'),
+        ('LE-OLD-DUST', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-DUST', 100400, '₦100,400', 'Cleared', '2026-09-01', 'LE-OLD-DUST', 100400, '2026-09-01T12:00:00.000Z');
+      INSERT INTO ledger_entries (id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, branch_id, note)
+      VALUES
+        ('LE-OLD-SETTLED', 'RECEIPT', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-SETTLED', 3700760, '2026-05-16T12:00:00.000Z', '${DEFAULT_BRANCH_ID}', 'Settlement'),
+        ('LE-OLD-REAL', 'OVERPAY_ADVANCE', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-SETTLED', 413240, '2026-05-16T12:00:00.000Z', '${DEFAULT_BRANCH_ID}', 'Overpayment vs remaining balance'),
+        ('LE-OLD-DUP', 'OVERPAY_ADVANCE', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-SETTLED', 4137400, '2026-05-16T12:00:00.000Z', '${DEFAULT_BRANCH_ID}', 'Quote QT-OLD-SETTLED already settled in records — excess to overpayment credit'),
+        ('LE-OLD-CUT', 'RECEIPT', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-CUT', 963030, '2026-09-25T12:00:00.000Z', '${DEFAULT_BRANCH_ID}', 'Payment'),
+        ('LE-OLD-DUST', 'RECEIPT', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-DUST', 100400, '2026-09-01T12:00:00.000Z', '${DEFAULT_BRANCH_ID}', 'Payment');
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, status, requested_by, requested_at_iso, approved_amount_ngn, paid_amount_ngn,
+        paid_at_iso, paid_by, branch_id, calculation_lines_json
+      ) VALUES
+        ('RF-OLD-SETTLED', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-SETTLED', '["Overpayment"]', 'Overpayment',
+          413240, 'Paid', 'Sales', '2026-05-18T10:00:00.000Z', 413240, 413240,
+          '2026-05-18', 'Cashier', '${DEFAULT_BRANCH_ID}',
+          '${JSON.stringify([{ category: 'Overpayment', amountNgn: 413240 }]).replace(/'/g, "''")}'),
+        ('RF-OLD-CUT', 'CUS-OLD', 'Old Overpay Customer', 'QT-OLD-CUT', '["Overpayment"]', 'Overpayment',
+          99970, 'Paid', 'Sales', '2026-09-25T10:00:00.000Z', 99970, 92776,
+          '2026-09-25', 'Cashier', '${DEFAULT_BRANCH_ID}',
+          '${JSON.stringify([{ category: 'Overpayment', amountNgn: 99970 }]).replace(/'/g, "''")}');
+      INSERT INTO refund_company_retention_entries (
+        id, branch_id, entry_type, amount_ngn, open_ngn, source_kind, source_id, refund_id, note, created_at_iso
+      ) VALUES (
+        'RCR-OLD-1', '${DEFAULT_BRANCH_ID}', 'credit', 7194, 7194, 'REFUND_COMPANY_CUT', 'RF-OLD-CUT', 'RF-OLD-CUT',
+        'Company cut', '2026-09-25T12:00:00.000Z'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-OLD', 'QT-OLD-NEXT');
+    expect(listed.ok).toBe(true);
+    expect(listed.sources.find((s) => s.id === 'overpay:QT-OLD-SETTLED')).toBeUndefined();
+    expect(listed.sources.find((s) => s.id === 'overpay:QT-OLD-CUT')).toBeUndefined();
+    expect(listed.sources.find((s) => s.id === 'overpay:QT-OLD-DUST')).toBeUndefined();
+    expect(listed.totalAvailableNgn).toBe(0);
+  });
+
+  it('does not offer an open refund under ₦1,000 on confirm payment', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 1, unitPrice: 1000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-TINY', 'Tiny Refund Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-TINY-SRC', 'CUS-TINY', 'Tiny Refund Customer', 10000, 10800, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-09-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-TINY-DST', 'CUS-TINY', 'Tiny Refund Customer', 5000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-09-02', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, approved_amount_ngn, status, requested_by, requested_at_iso, branch_id,
+        calculation_lines_json
+      ) VALUES (
+        'RF-TINY-1', 'CUS-TINY', 'Tiny Refund Customer', 'QT-TINY-SRC', '["Overpayment"]', 'Overpayment',
+        800, 800, 'Approved', 'Sales', '2026-09-01T10:00:00.000Z', '${DEFAULT_BRANCH_ID}',
+        '${JSON.stringify([{ category: 'Overpayment', amountNgn: 800 }]).replace(/'/g, "''")}'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-TINY', 'QT-TINY-DST');
+    expect(listed.ok).toBe(true);
+    expect(listed.sources.find((s) => s.refundId === 'RF-TINY-1')).toBeUndefined();
+    expect(listed.unavailableSources.find((s) => s.refundId === 'RF-TINY-1')).toBeUndefined();
+    expect(listed.totalAvailableNgn).toBe(0);
+  });
 });

@@ -254,6 +254,22 @@ describe('refundCreditApply pure helpers', () => {
         refundConsumedNgn: 771_500,
       })
     ).toBe(0);
+    expect(
+      unclaimedOverpayCreditNgn({
+        ledgerPoolNgn: 4_550_640,
+        economicExcessNgn: 413_240,
+        refundConsumedNgn: 413_240,
+        settledDuplicateOverpayNgn: 4_137_400,
+      })
+    ).toBe(0);
+    expect(
+      unclaimedOverpayCreditNgn({
+        ledgerPoolNgn: 0,
+        economicExcessNgn: 99_970,
+        refundConsumedNgn: 92_776,
+        companyKeptNgn: 7_194,
+      })
+    ).toBe(0);
   });
 
   it('treats till-paid overpayment as consumed and ignores false Paid with no payout date', () => {

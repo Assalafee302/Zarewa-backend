@@ -3128,6 +3128,11 @@ export function adminForceRecallAndDeleteCuttingList(db, jobID, payload = {}, op
       db.prepare(`DELETE FROM cutting_lists WHERE id = ?`).run(cuttingListId);
     })();
     notifyRefundIntegrityDriftIfNeeded(db, job.quotation_ref, actor, 'production.admin_force_recall', jobId);
+    restoreCoilKgHeldByDeletedProductionJobs(db, {
+      jobIds: [jobId],
+      actor,
+      dateISO: atISO.slice(0, 10),
+    });
     return {
       ok: true,
       jobID: jobId,
@@ -4416,6 +4421,146 @@ function isCoilFinishRollConsumptionDetail(detail) {
   return /roll finished/i.test(d) || /undo finish roll/i.test(d);
 }
 
+/** Coil number written on a production consumption / restore movement detail. */
+export function coilNoMentionedInConsumptionDetail(detail) {
+  const d = String(detail || '').trim();
+  const consumed = d.match(/^(\S+)\s+consumed\b/i);
+  if (consumed) return consumed[1];
+  const restored = d.match(/\bto\s+(\S+)/i);
+  if (restored) return restored[1].replace(/[(),]/g, '');
+  const tail = d.match(/^(\S+)\s+roll finished\b/i);
+  if (tail) return tail[1];
+  return '';
+}
+
+function productionJobStillExists(db, jobId) {
+  const id = String(jobId ?? '').trim();
+  if (!id) return false;
+  try {
+    return Boolean(db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(id));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A deleted cutting list / production job must not keep holding coil kg.
+ * Nets COIL_CONSUMPTION for job ids that no longer exist and puts that kg back on the coil.
+ * Live jobs are left alone — clearing an allocation row is not the same as deleting the job.
+ *
+ * @param {{ coilNo?: string, jobIds?: string[], actor?: object, workspaceBranchId?: string, dateISO?: string }} [opts]
+ */
+export function restoreCoilKgHeldByDeletedProductionJobs(db, opts = {}) {
+  const onlyCoil = String(opts.coilNo ?? '').trim();
+  const onlyJobs = Array.isArray(opts.jobIds)
+    ? [...new Set(opts.jobIds.map((id) => String(id ?? '').trim()).filter(Boolean))]
+    : null;
+  if (!onlyCoil && !onlyJobs?.length) return { ok: true, restored: [] };
+
+  /** @type {object[]} */
+  let movements = [];
+  if (onlyCoil) {
+    movements = listCoilProductionConsumptionMovementRows(db, onlyCoil);
+  } else {
+    const stmt = db.prepare(
+      `SELECT qty, detail, ref, at_iso, product_id FROM stock_movements WHERE type = 'COIL_CONSUMPTION' AND ref = ?`
+    );
+    for (const jobId of onlyJobs) movements.push(...stmt.all(jobId));
+  }
+
+  const nets = new Map();
+  for (const m of movements) {
+    if (isCoilFinishRollConsumptionDetail(m.detail)) continue;
+    const jobId = String(m.ref || '').trim();
+    if (!jobId) continue;
+    if (onlyJobs && !onlyJobs.includes(jobId)) continue;
+    if (productionJobStillExists(db, jobId)) continue;
+    let coilNo = '';
+    if (onlyCoil && movementBelongsToCoil(m, onlyCoil)) coilNo = onlyCoil;
+    else coilNo = coilNoMentionedInConsumptionDetail(m.detail);
+    if (!coilNo || (onlyCoil && coilNo !== onlyCoil)) continue;
+    const key = `${coilNo}\0${jobId}`;
+    const prev = nets.get(key) || { coilNo, jobId, kg: 0 };
+    prev.kg -= safeNumber(m.qty);
+    nets.set(key, prev);
+  }
+
+  const dateISO = String(opts.dateISO || new Date().toISOString().slice(0, 10)).trim();
+  const restored = [];
+  const needsPost = [...nets.values()].some((entry) => entry.kg > 0.05);
+  if (needsPost) {
+    try {
+      assertPeriodOpen(db, dateISO, 'Deleted production coil release');
+    } catch (e) {
+      return { ok: false, error: String(e.message || e), restored: [] };
+    }
+  }
+
+  for (const entry of nets.values()) {
+    if (entry.kg <= 0.05) continue;
+    const coil = coilRow(db, entry.coilNo);
+    if (!coil) continue;
+    const branch =
+      String(coil.branch_id || opts.workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    const rem = clampNonNegative(coil.qty_remaining ?? coil.current_weight_kg);
+    const received = clampNonNegative(coil.weight_kg ?? coil.qty_received);
+    const kg = Math.min(entry.kg, Math.max(0, received - rem));
+    if (kg <= 0.05) continue;
+    const productId = String(coil.product_id || '').trim();
+    db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
+      rem + kg,
+      rem + kg,
+      entry.coilNo
+    );
+    updateCoilDerivedStateTx(db, entry.coilNo);
+    if (productId) adjustProductStockTx(db, productId, kg, branch);
+    appendStockMovementTx(db, {
+      type: 'COIL_CONSUMPTION',
+      ref: entry.jobId,
+      productID: productId || null,
+      qty: kg,
+      branchId: branch,
+      detail: `Deleted production release — restore ${kg.toFixed(2)} kg to ${entry.coilNo} (${entry.jobId})`,
+      dateISO,
+    });
+    appendAuditLog(db, {
+      actor: opts.actor,
+      action: 'coil.release_deleted_production',
+      entityKind: 'coil_lot',
+      entityId: entry.coilNo,
+      note: `Released ${kg.toFixed(2)} kg held by deleted production ${entry.jobId}`,
+      details: { jobID: entry.jobId, kg },
+    });
+    restored.push({ coilNo: entry.coilNo, jobID: entry.jobId, kg });
+  }
+
+  const coilsTouched = new Set([
+    ...[...nets.values()].map((entry) => entry.coilNo),
+    ...(onlyCoil ? [onlyCoil] : []),
+  ]);
+  for (const coilNo of coilsTouched) {
+    if (!coilNo) continue;
+    try {
+      db.prepare(
+        `DELETE FROM production_conversion_checks
+         WHERE coil_no = ? AND job_id NOT IN (SELECT job_id FROM production_jobs)`
+      ).run(coilNo);
+    } catch {
+      /* conversion checks are optional on older databases */
+    }
+    try {
+      db.prepare(
+        `DELETE FROM production_job_coils
+         WHERE coil_no = ? AND job_id NOT IN (SELECT job_id FROM production_jobs)`
+      ).run(coilNo);
+    } catch {
+      /* allocation rows may already be gone with the job */
+    }
+  }
+
+  return { ok: true, restored };
+}
+
 function parseConsumedMetersFromCoilMovementDetail(detail) {
   const m = String(detail || '').match(/consumed for\s+([\d.]+)\s+m\b/i);
   return m ? safeNumber(m[1]) : 0;
@@ -4525,6 +4670,8 @@ export function listOrphanCoilProductionHolders(db, coilNo, existingHolders = []
   for (const [jobId, agg] of byJob.entries()) {
     if (agg.kg <= 0.05) continue;
     const job = productionJobRow(db, jobId);
+    // Deleted cutting list / force-recall removes the job. Do not keep that production on the coil.
+    if (!job) continue;
     const cuttingListId = String(job?.cutting_list_id ?? '').trim();
     const quotationRef = String(job?.quotation_ref ?? '').trim();
     let customer = '';
@@ -4971,6 +5118,13 @@ export function recalculateAllCoilProductionJobStock(db, coilNo, opts = {}) {
   if (!coil) return { ok: false, error: 'Coil not found.' };
   const br = assertCoilInWorkspaceBranch(coil, opts.workspaceBranchId);
   if (!br.ok) return br;
+
+  restoreCoilKgHeldByDeletedProductionJobs(db, {
+    coilNo: cn,
+    actor: opts.actor,
+    workspaceBranchId: opts.workspaceBranchId,
+    dateISO: opts.dateISO,
+  });
 
   const jobIds = [
     ...new Set(

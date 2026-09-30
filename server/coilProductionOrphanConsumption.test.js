@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  coilNoMentionedInConsumptionDetail,
   coilProductionJobConsumedKgFromMovements,
   listOrphanCoilProductionHolders,
   stockMovementDetailRefersToCoilNo,
@@ -127,5 +128,23 @@ describe('listOrphanCoilProductionHolders', () => {
     expect(orphans[0].metersProduced).toBeCloseTo(9.5, 2);
     expect(orphans[0].cuttingListId).toBe('CL-YL-26-0051');
     expect(orphans[0].conversionAlertState).toBe('Low');
+  });
+
+  it('does not keep a deleted production job on the coil', () => {
+    const db = fakeDb({
+      movements: [
+        {
+          qty: -1112,
+          detail: 'CL-YL-1 consumed for 329.00 m on PRO-YL-26-0130',
+          ref: 'PRO-YL-26-0130',
+          at_iso: '2026-09-20T12:00:00',
+        },
+      ],
+      jobs: {},
+    });
+    expect(listOrphanCoilProductionHolders(db, 'CL-YL-1', [])).toEqual([]);
+    expect(coilNoMentionedInConsumptionDetail('Deleted production release — restore 1112.00 kg to CL-YL-1 (PRO-YL-26-0130)')).toBe(
+      'CL-YL-1'
+    );
   });
 });

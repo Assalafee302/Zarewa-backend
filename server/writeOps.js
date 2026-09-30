@@ -10979,11 +10979,17 @@ export function deleteCuttingListIfAllowed(db, cuttingListId) {
     return { ok: false, error: 'Cannot delete a cutting list that already has production activity.' };
   }
 
+  const deletedJobIds = db
+    .prepare(`SELECT job_id FROM production_jobs WHERE cutting_list_id = ?`)
+    .all(cid)
+    .map((row) => String(row.job_id || '').trim())
+    .filter(Boolean);
+
   db.transaction(() => {
     db.prepare(`DELETE FROM production_jobs WHERE cutting_list_id = ?`).run(cid);
     db.prepare(`DELETE FROM cutting_lists WHERE id = ?`).run(cid);
   })();
-  return { ok: true, cuttingListId: cid };
+  return { ok: true, cuttingListId: cid, deletedJobIds };
 }
 
 export function replaceRefunds(db, refunds, branchScope) {

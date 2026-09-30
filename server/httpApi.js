@@ -470,6 +470,7 @@ import {
   listProductionJobCoils,
   listCoilProductionHolders,
   listOrphanCoilProductionHolders,
+  restoreCoilKgHeldByDeletedProductionJobs,
   listCoilProductionBookReconciliationIssues,
   summarizeCoilProductionHoldersBook,
   recalculateAllCoilProductionJobStock,
@@ -8578,6 +8579,11 @@ export function registerHttpApi(app, db) {
       const br = write.assertCoilInWorkspaceBranch(coil, req.workspaceBranchId);
       if (!br.ok) return res.status(403).json({ ok: false, error: br.error });
 
+      restoreCoilKgHeldByDeletedProductionJobs(db, {
+        coilNo,
+        actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+      });
       const syncResult = syncProductionJobCoilConsumedWeightsForCoil(db, coilNo);
       const holders = listCoilProductionHolders(db, coilNo);
       const bookSummary = summarizeCoilProductionHoldersBook(db, coilNo, holders);
@@ -13566,6 +13572,13 @@ export function registerHttpApi(app, db) {
         if (!clg.ok) return res.status(clg.status).json({ ok: false, error: clg.error });
         const r = write.deleteCuttingListIfAllowed(db, req.params.id);
         if (r.ok) {
+          if (Array.isArray(r.deletedJobIds) && r.deletedJobIds.length) {
+            restoreCoilKgHeldByDeletedProductionJobs(db, {
+              jobIds: r.deletedJobIds,
+              actor: req.user,
+              workspaceBranchId: req.workspaceBranchId,
+            });
+          }
           appendAuditLog(db, {
             actor: req.user,
             action: 'cutting_list.delete',

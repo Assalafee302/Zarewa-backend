@@ -11248,6 +11248,34 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  /** Drop a payout that was already reversed but whose bank line is still showing. Balance does not change. */
+  app.post(
+    '/api/payment-requests/:requestId/clear-reversed-payout-lines',
+    requirePermission('finance.reverse'),
+    (req, res) => {
+      try {
+        const requestId = String(req.params.requestId || '').trim();
+        if (!requestId) return res.status(400).json({ ok: false, error: 'Request ID is required.' });
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'payment_request', requestId, (stripped, ctx) =>
+          write.clearReversedPaymentRequestPayoutLines(
+            db,
+            requestId,
+            {
+              ...(stripped || {}),
+              workspaceBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+              workspaceViewAll: Boolean(req.workspaceViewAll),
+              skipInnerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
+            },
+            req.user
+          )
+        );
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   /** Rollout duplicate cleanup: unpaid payment request and orphan placeholder expense (requires finance approval + KPI for officers). */
   app.delete('/api/payment-requests/:requestId/rollout-dup', requirePermission('finance.approve'), (req, res) => {
     try {

@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../db.js';
 import { lockAccountingPeriod } from '../controlOps.js';
-import { insertExpenseEntry, payPaymentRequest, reversePaymentRequestTreasuryPayouts } from '../writeOps.js';
+import {
+  insertExpenseEntry,
+  payPaymentRequest,
+  reversePaymentRequestTreasuryPayouts,
+  clearReversedPaymentRequestPayoutLines,
+  insertTreasuryMovementTx,
+} from '../writeOps.js';
 
 function mysqlAvailable() {
   try {
@@ -175,5 +181,70 @@ describe.skipIf(!mysqlAvailable())('payment request payout reversal', () => {
       workspaceBranchId: 'BR-KD',
     });
     expect(repay.ok).toBe(false);
+  });
+
+  it('removes an already reversed payout line without touching a live payment', () => {
+    const before = balance(db);
+    const expenseId = seedRequest(db, 'PR-OLD-1', 8_000, '2026-04-04');
+    const pay = payPaymentRequest(db, 'PR-OLD-1', {
+      treasuryAccountId: 1,
+      amountNgn: 8_000,
+      paidAtISO: '2026-04-04',
+      actor: ACTOR,
+      workspaceBranchId: 'BR-KD',
+    });
+    expect(pay.ok, pay.error).toBe(true);
+    const original = db
+      .prepare(`SELECT id, amount_ngn FROM treasury_movements WHERE source_id = 'PR-OLD-1' AND amount_ngn < 0`)
+      .get();
+    insertTreasuryMovementTx(db, {
+      type: 'PAYMENT_REQUEST_REVERSAL_IN',
+      treasuryAccountId: 1,
+      amountNgn: 8_000,
+      postedAtISO: '2026-04-04T12:00:00.000Z',
+      sourceKind: 'PAYMENT_REQUEST',
+      sourceId: 'PR-OLD-1',
+      reversesMovementId: original.id,
+      createdBy: 'Finance',
+    });
+    db.prepare(`UPDATE payment_requests SET paid_amount_ngn = 0 WHERE request_id = 'PR-OLD-1'`).run();
+    expect(balance(db)).toBe(before);
+
+    seedRequest(db, 'PR-KEEP-1', 3_000, '2026-04-05');
+    const keep = payPaymentRequest(db, 'PR-KEEP-1', {
+      treasuryAccountId: 1,
+      amountNgn: 3_000,
+      paidAtISO: '2026-04-05',
+      actor: ACTOR,
+      workspaceBranchId: 'BR-KD',
+    });
+    expect(keep.ok, keep.error).toBe(true);
+
+    const cleared = clearReversedPaymentRequestPayoutLines(
+      db,
+      'PR-OLD-1',
+      { workspaceBranchId: 'BR-KD' },
+      ACTOR
+    );
+    expect(cleared.ok, cleared.error).toBe(true);
+    expect(
+      db.prepare(`SELECT COUNT(*) AS n FROM treasury_movements WHERE source_id = 'PR-OLD-1'`).get().n
+    ).toBe(0);
+    expect(db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = ?`).get(expenseId)).toBeFalsy();
+    expect(
+      db.prepare(`SELECT amount_ngn FROM treasury_movements WHERE source_id = 'PR-KEEP-1'`).get().amount_ngn
+    ).toBe(-3_000);
+    expect(balance(db)).toBe(before - 3_000);
+
+    const live = clearReversedPaymentRequestPayoutLines(
+      db,
+      'PR-KEEP-1',
+      { workspaceBranchId: 'BR-KD' },
+      ACTOR
+    );
+    expect(live.ok).toBe(false);
+    expect(
+      db.prepare(`SELECT amount_ngn FROM treasury_movements WHERE source_id = 'PR-KEEP-1'`).get().amount_ngn
+    ).toBe(-3_000);
   });
 });

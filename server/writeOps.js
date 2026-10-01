@@ -8673,6 +8673,95 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
   };
 }
 
+/**
+ * Remove an expense payout that was already reversed but whose bank line is still on the book.
+ * Deletes the original line and its reversal together. The account balance does not change.
+ * A live payout that has not been reversed is left alone.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} requestId
+ * @param {{ workspaceBranchId?: string, workspaceViewAll?: boolean, skipInnerTransaction?: boolean, note?: string }} payload
+ * @param {object | null} actor
+ */
+export function clearReversedPaymentRequestPayoutLines(db, requestId, payload = {}, actor = null) {
+  const rid = String(requestId || '').trim();
+  if (!rid) return { ok: false, error: 'Request ID is required.' };
+  const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
+  if (!row) return { ok: false, error: 'Payment request not found.' };
+
+  const gate = assertPaymentRequestPayoutReversalBranchGate(
+    db,
+    rid,
+    String(payload?.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID,
+    Boolean(payload?.workspaceViewAll),
+    actor
+  );
+  if (!gate.ok) return gate;
+
+  const expenseId = String(row.expense_id || '').trim();
+  const pairs = db
+    .prepare(
+      `SELECT * FROM treasury_movements tm
+       WHERE (
+         (tm.source_kind = 'PAYMENT_REQUEST' AND tm.source_id = ?)
+         OR (tm.source_kind = 'EXPENSE' AND tm.source_id = ?)
+       )
+       AND (
+         (tm.reverses_movement_id IS NOT NULL AND TRIM(COALESCE(tm.reverses_movement_id, '')) <> '')
+         OR EXISTS (SELECT 1 FROM treasury_movements rev WHERE rev.reverses_movement_id = tm.id)
+       )`
+    )
+    .all(rid, expenseId || '—');
+  if (!pairs.length) {
+    return {
+      ok: false,
+      error: 'This payout has no reversed line to remove. Reverse is only for a payment that is still live.',
+    };
+  }
+  const locked = pairs.find((line) => !periodIsOpen(db, line.posted_at_iso));
+  if (locked) {
+    const day = String(locked.posted_at_iso || '').slice(0, 10);
+    return {
+      ok: false,
+      error: `The reversed line on ${day} is in a locked month, so it stays on the statement. It already nets to zero with its reversal.`,
+    };
+  }
+
+  const note = String(payload?.note || '').trim() || `Removed reversed payout lines for ${rid}`;
+  const removedIds = [];
+  const runCore = () => {
+    for (const line of pairs) {
+      removeTreasuryLineTx(db, line);
+      removedIds.push(line.id);
+    }
+    const liveLeft = [
+      ...unreversedTreasuryOutflows(db, 'PAYMENT_REQUEST', rid),
+      ...(expenseId ? unreversedTreasuryOutflows(db, 'EXPENSE', expenseId) : []),
+    ];
+    if (!liveLeft.length && !payoutRecordMustStay(db, rid)) {
+      deleteExpenseAndRequestTx(db, rid, expenseId);
+    }
+    appendAuditLog(db, {
+      actor,
+      action: 'payment_request.clear_reversed_payout_lines',
+      entityKind: 'payment_request',
+      entityId: rid,
+      note,
+      details: { removedMovementIds: removedIds, expenseId: expenseId || null },
+    });
+  };
+  try {
+    if (payload?.skipInnerTransaction) runCore();
+    else db.transaction(runCore)();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  return {
+    ok: true,
+    removedMovementIds: removedIds,
+    message: 'Removed the reversed payout line. The account balance is unchanged.',
+  };
+}
+
 function assertRefundPayoutReversalBranchGate(db, refundId, workspaceBranchId, workspaceViewAll, actor) {
   const rid = String(refundId || '').trim();
   const r = db.prepare(`SELECT branch_id FROM customer_refunds WHERE refund_id = ?`).get(rid);

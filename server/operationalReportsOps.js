@@ -38,7 +38,7 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
   if (readFinanceFeatureFlags().enforceDualControlPayments) {
     const rows = db
       .prepare(
-        `SELECT refund_id, requested_by_user_id, approved_by_user_id, requested_by, approved_by, paid_by_user_id, paid_by, status
+        `SELECT refund_id, customer_name, quotation_ref, amount_ngn, approved_amount_ngn, requested_by_user_id, approved_by_user_id, requested_by, approved_by, paid_by_user_id, paid_by, status, branch_id
          FROM customer_refunds
          WHERE TRIM(COALESCE(LOWER(status), '')) IN ('approved', 'paid')
          ${bRef.sql}`
@@ -50,6 +50,14 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
           kind: 'same_requester_approver',
           refundId: r.refund_id,
           message: 'Requester and approver are the same user.',
+          customerName: r.customer_name || '',
+          quotationRef: r.quotation_ref || '',
+          amountNgn: Number(r.approved_amount_ngn ?? r.amount_ngn) || 0,
+          requestedBy: r.requested_by || '',
+          approvedBy: r.approved_by || '',
+          paidBy: r.paid_by || '',
+          status: r.status || '',
+          branchId: r.branch_id || '',
         });
       }
       if (r.approved_by_user_id && r.paid_by_user_id && r.approved_by_user_id === r.paid_by_user_id) {
@@ -57,6 +65,14 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
           kind: 'same_approver_payer',
           refundId: r.refund_id,
           message: 'Approver and payer are the same user.',
+          customerName: r.customer_name || '',
+          quotationRef: r.quotation_ref || '',
+          amountNgn: Number(r.approved_amount_ngn ?? r.amount_ngn) || 0,
+          requestedBy: r.requested_by || '',
+          approvedBy: r.approved_by || '',
+          paidBy: r.paid_by || '',
+          status: r.status || '',
+          branchId: r.branch_id || '',
         });
       }
     }
@@ -194,7 +210,7 @@ export function buildProductionStatusReport(db, branchScope = 'ALL') {
     }
 
     if (st === 'Completed' && job.quotation_ref) {
-      const q = db.prepare(`SELECT total_ngn, paid_ngn, manager_production_approved_at_iso FROM quotations WHERE id = ?`).get(
+      const q = db.prepare(`SELECT total_ngn, paid_ngn, customer_name, manager_production_approved_at_iso, branch_id FROM quotations WHERE id = ?`).get(
         job.quotation_ref
       );
       if (q) {
@@ -206,6 +222,14 @@ export function buildProductionStatusReport(db, branchScope = 'ALL') {
             jobId: job.job_id,
             quotationRef: job.quotation_ref,
             paidPct: Math.round(frac * 1000) / 10,
+            totalNgn: total,
+            paidNgn: paid,
+            outstandingNgn: Math.max(0, total - paid),
+            customerName: q.customer_name || '',
+            productName: job.product_name || '',
+            actualMeters: Number(job.actual_meters) || 0,
+            completedAtIso: job.completed_at_iso || '',
+            branchId: q.branch_id || job.branch_id || '',
           });
         }
       }

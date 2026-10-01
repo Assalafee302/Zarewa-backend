@@ -81,6 +81,8 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     `);
     const open = listPurchaseOrders(db, 'BR-KD', { unlimited: true, outstandingOnly: true, skipSideEffects: true });
     expect(open.map((p) => p.poID)).toEqual(['PO-OPEN']);
+    const paid = listPurchaseOrders(db, 'BR-KD', { unlimited: true, paidOnly: true, skipSideEffects: true });
+    expect(paid.map((p) => p.poID)).toEqual(['PO-PAID']);
     expect(open[0].outstandingNgn).toBe(40_000);
     expect(open[0].lines[0].lineValueNgn).toBe(50_000);
     expect(open[0].branchId).toBe('BR-KD');

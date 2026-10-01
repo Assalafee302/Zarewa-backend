@@ -5,7 +5,7 @@ import { buildBootstrap } from './bootstrap.js';
 import { buildSalesDomainSnapshot, buildFinanceDomainSnapshot, buildProcurementDomainSnapshot } from './domainBootstrap.js';
 import { jsonWeakEtag } from './httpEtag.js';
 import { insertAssociatedStaff, insertSupplier, ensureAccountsPayableRow, purchaseOrderIdFromAutoApId } from './writeOps.js';
-import { mergeOpenAccountsPayableWithPurchaseOrders } from './readModel.js';
+import { mergeOpenAccountsPayableWithPurchaseOrders, mergeSettledAccountsPayableWithPurchaseOrders } from './readModel.js';
 
 function mysqlAvailable() {
   try {
@@ -57,6 +57,43 @@ describe('mergeOpenAccountsPayableWithPurchaseOrders', () => {
         amountNgn: 100_000,
       }),
     ]);
+  });
+});
+
+describe('mergeSettledAccountsPayableWithPurchaseOrders', () => {
+  it('keeps fully paid invoices and paid POs missing from the register', () => {
+    const rows = mergeSettledAccountsPayableWithPurchaseOrders(
+      [
+        {
+          apID: 'AP-PAID-1',
+          poRef: 'PO-REG',
+          supplierName: 'Supplier 1',
+          amountNgn: 50_000,
+          paidNgn: 50_000,
+          outstandingNgn: 0,
+        },
+      ],
+      [
+        {
+          poID: 'PO-REG',
+          supplierName: 'Supplier 1',
+          amountNgn: 50_000,
+          paidNgn: 50_000,
+          outstandingNgn: 0,
+          status: 'Approved',
+        },
+        {
+          poID: 'PO-ONLY',
+          supplierName: 'Supplier 2',
+          amountNgn: 20_000,
+          supplierPaidNgn: 20_000,
+          outstandingNgn: 0,
+          status: 'Received',
+          orderDateISO: '2026-08-01',
+        },
+      ]
+    );
+    expect(rows.map((row) => row.apID)).toEqual(['AP-PAID-1', 'AP-PO-PO-ONLY']);
   });
 });
 
@@ -149,6 +186,7 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(snap.ok).toBe(true);
     expect(snap.domain).toBe('procurement');
     expect(snap.accountsPayable.map((a) => a.apID)).toEqual(['AP-OPEN-1']);
+    expect(snap.accountsPayableSettled.map((a) => a.apID)).toEqual(['AP-PAID-1']);
     expect(snap.accountsPayable[0].outstandingNgn).toBe(90_000);
     expect(Array.isArray(snap.accountsPayable[0].lines)).toBe(true);
     expect(snap.outstandingPaymentLines.length).toBeGreaterThan(0);

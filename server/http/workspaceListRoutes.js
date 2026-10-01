@@ -24,6 +24,7 @@ import {
   countStockMovements,
   listAccountsPayable,
   listOpenSupplierPayablesForDesk,
+  listSettledSupplierPayablesForDesk,
   listCoilLots,
   listCustomers,
   listCuttingLists,
@@ -284,14 +285,16 @@ export function registerWorkspaceListRoutes(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
+      const paidOnly = /^(1|true|yes|on)$/i.test(String(req.query?.paid || ''));
       const outstandingOnly =
-        /^(1|true|yes|on)$/i.test(String(req.query?.outstanding || '')) ||
-        /^(1|true|yes|on)$/i.test(String(req.query?.open || ''));
-      const listOpts = { ...listOptsFromQuery(parsed), skipSideEffects: true, outstandingOnly };
+        !paidOnly &&
+        (/^(1|true|yes|on)$/i.test(String(req.query?.outstanding || '')) ||
+          /^(1|true|yes|on)$/i.test(String(req.query?.open || '')));
+      const listOpts = { ...listOptsFromQuery(parsed), skipSideEffects: true, outstandingOnly, paidOnly };
       const items = listPurchaseOrders(db, branchScope, listOpts);
       const total = parsed.unlimited
         ? items.length
-        : countPurchaseOrders(db, branchScope, { outstandingOnly });
+        : countPurchaseOrders(db, branchScope, { outstandingOnly, paidOnly });
       return sendPaginatedList(res, {
         items,
         total,
@@ -309,16 +312,20 @@ export function registerWorkspaceListRoutes(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
+      const settledOnly = /^(1|true|yes|on)$/i.test(String(req.query?.settled || ''));
       const openOnly =
-        /^(1|true|yes|on)$/i.test(String(req.query?.open || '')) ||
-        /^(1|true|yes|on)$/i.test(String(req.query?.openOnly || ''));
-      const listOpts = { ...listOptsFromQuery(parsed), openOnly, includeLines: true };
-      const items = openOnly
-        ? listOpenSupplierPayablesForDesk(db, branchScope, listOpts)
-        : listAccountsPayable(db, branchScope, listOpts);
+        !settledOnly &&
+        (/^(1|true|yes|on)$/i.test(String(req.query?.open || '')) ||
+          /^(1|true|yes|on)$/i.test(String(req.query?.openOnly || '')));
+      const listOpts = { ...listOptsFromQuery(parsed), openOnly, settledOnly, includeLines: true };
+      const items = settledOnly
+        ? listSettledSupplierPayablesForDesk(db, branchScope, listOpts)
+        : openOnly
+          ? listOpenSupplierPayablesForDesk(db, branchScope, listOpts)
+          : listAccountsPayable(db, branchScope, listOpts);
       const total = parsed.unlimited
         ? items.length
-        : Math.max(countAccountsPayable(db, branchScope, { openOnly }), items.length);
+        : Math.max(countAccountsPayable(db, branchScope, { openOnly, settledOnly }), items.length);
       return sendPaginatedList(res, {
         items,
         total,

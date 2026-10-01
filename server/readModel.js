@@ -1631,9 +1631,15 @@ const PO_ORDERED_VALUE_SQL = `COALESCE((
   WHERE l.po_id = purchase_orders.po_id
 ), 0)`;
 
-function purchaseOrderOutstandingSql(opts = {}) {
+function purchaseOrderSettlementSql(opts = {}) {
+  const notClosed = ` AND LOWER(TRIM(IFNULL(status,''))) NOT IN ('rejected','cancelled','canceled')`;
+  if (opts.paidOnly) {
+    return `${notClosed}
+           AND ${PO_ORDERED_VALUE_SQL} > 0
+           AND ${PO_ORDERED_VALUE_SQL} <= COALESCE(supplier_paid_ngn, 0) + ${PAYMENT_OUTSTANDING_TOLERANCE_NGN}`;
+  }
   if (!opts.outstandingOnly) return '';
-  return ` AND LOWER(TRIM(IFNULL(status,''))) NOT IN ('rejected','cancelled','canceled')
+  return `${notClosed}
            AND ${PO_ORDERED_VALUE_SQL} > COALESCE(supplier_paid_ngn, 0) + ${PAYMENT_OUTSTANDING_TOLERANCE_NGN}`;
 }
 
@@ -1699,7 +1705,7 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'purchase_orders', branchScope);
   /** Optional LOWER(status) filter — e.g. ops GRN desk only needs receipt-pending keys. */
   const { statusKeys, statusSql } = purchaseOrderStatusFilter(opts);
-  const outstandingSql = purchaseOrderOutstandingSql(opts);
+  const outstandingSql = purchaseOrderSettlementSql(opts);
   const lo = sqlLimitOffsetClause(limit, offset);
   const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql}${statusSql}${outstandingSql} ORDER BY order_date_iso DESC${lo.sql}`;
   const args = [...b.args, ...statusKeys, ...lo.args];
@@ -1729,7 +1735,7 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
 export function countPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'purchase_orders', branchScope);
   const { statusKeys, statusSql } = purchaseOrderStatusFilter(opts);
-  const outstandingSql = purchaseOrderOutstandingSql(opts);
+  const outstandingSql = purchaseOrderSettlementSql(opts);
   const row = db
     .prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE 1=1${b.sql}${statusSql}${outstandingSql}`)
     .get(...b.args, ...statusKeys);
@@ -3991,9 +3997,13 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
 
 function accountsPayableScope(db, branchScope, opts = {}) {
   const b = branchPredicate(db, 'purchase_orders', branchScope, 'po');
-  const openSql = opts.openOnly
-    ? ` AND (COALESCE(ap.amount_ngn, 0) - COALESCE(ap.paid_ngn, 0)) > ${PAYMENT_OUTSTANDING_TOLERANCE_NGN}`
-    : '';
+  let openSql = '';
+  if (opts.settledOnly) {
+    openSql = ` AND COALESCE(ap.amount_ngn, 0) > 0
+      AND (COALESCE(ap.amount_ngn, 0) - COALESCE(ap.paid_ngn, 0)) <= ${PAYMENT_OUTSTANDING_TOLERANCE_NGN}`;
+  } else if (opts.openOnly) {
+    openSql = ` AND (COALESCE(ap.amount_ngn, 0) - COALESCE(ap.paid_ngn, 0)) > ${PAYMENT_OUTSTANDING_TOLERANCE_NGN}`;
+  }
   const outstandingFirstSql = `CASE WHEN (COALESCE(ap.amount_ngn, 0) - COALESCE(ap.paid_ngn, 0)) > ${PAYMENT_OUTSTANDING_TOLERANCE_NGN} THEN 0 ELSE 1 END`;
   return { b, openSql, outstandingFirstSql };
 }
@@ -4082,6 +4092,76 @@ export function listOpenSupplierPayablesForDesk(db, branchScope = 'ALL', opts = 
     limit: opts.limit,
   });
   return mergeOpenAccountsPayableWithPurchaseOrders(apFromRegister, outstandingPos);
+}
+
+/**
+ * Fully paid supplier invoices for Procurement → Payments.
+ * AP register rows plus purchase orders paid in full that never landed in accounts_payable.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ * @param {object} [opts]
+ */
+export function listSettledSupplierPayablesForDesk(db, branchScope = 'ALL', opts = {}) {
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const includeLines = Boolean(opts.includeLines);
+  const apFromRegister = listAccountsPayable(db, branchScope, {
+    ...opts,
+    openOnly: false,
+    settledOnly: true,
+    includeLines,
+  });
+  if (offset > 0) return apFromRegister;
+  const paidPos = listPurchaseOrders(db, branchScope, {
+    paidOnly: true,
+    skipSideEffects: true,
+    unlimited: opts.unlimited,
+    limit: opts.limit,
+  });
+  return mergeSettledAccountsPayableWithPurchaseOrders(apFromRegister, paidPos);
+}
+
+/** AP-shaped rows for purchase orders that are paid in full. */
+export function accountsPayableRowsFromSettledPurchaseOrders(pos) {
+  return (pos || [])
+    .filter((po) => {
+      const status = String(po?.status || '').trim().toLowerCase();
+      if (status === 'rejected' || status === 'cancelled' || status === 'canceled') return false;
+      const amountNgn = Number(po.amountNgn) || Number(po.orderedValueNgn) || 0;
+      if (amountNgn <= 0) return false;
+      const paidNgn = Number(po.paidNgn) || Number(po.supplierPaidNgn) || 0;
+      return effectiveOutstandingNgn(amountNgn, paidNgn) <= 0;
+    })
+    .map((po) => {
+      const amountNgn = Number(po.amountNgn) || Number(po.orderedValueNgn) || 0;
+      const paidNgn = Number(po.paidNgn) || Number(po.supplierPaidNgn) || 0;
+      return {
+        apID: `AP-PO-${po.poID}`,
+        supplierName: po.supplierName,
+        poRef: po.poID,
+        invoiceRef: po.invoiceNo || '',
+        amountNgn,
+        paidNgn,
+        outstandingNgn: 0,
+        dueDateISO: po.expectedDeliveryISO || po.orderDateISO || '',
+        paymentMethod: '',
+        branchId: po.branchId || '',
+        lines: po.lines || [],
+      };
+    });
+}
+
+/**
+ * Union settled AP register rows with fully paid POs that never landed in accounts_payable.
+ * @param {object[]} apFromRegister
+ * @param {object[]} paidPos
+ */
+export function mergeSettledAccountsPayableWithPurchaseOrders(apFromRegister, paidPos) {
+  const register = Array.isArray(apFromRegister) ? apFromRegister : [];
+  const apPoRefs = new Set(register.map((row) => String(row.poRef || '').trim()).filter(Boolean));
+  const synthesized = accountsPayableRowsFromSettledPurchaseOrders(
+    (paidPos || []).filter((po) => !apPoRefs.has(String(po.poID || '').trim()))
+  );
+  return [...register, ...synthesized];
 }
 
 export function listBankReconciliation(db, branchScope = 'ALL', opts) {

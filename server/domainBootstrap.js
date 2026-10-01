@@ -8,6 +8,7 @@ import {
   listProducts,
   listPurchaseOrders,
   mergeOpenAccountsPayableWithPurchaseOrders,
+  mergeSettledAccountsPayableWithPurchaseOrders,
   listOpenSupplierPayablesForDesk,
   listCoilLotsForDesk,
   listCoilControlEvents,
@@ -752,22 +753,36 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
         ...poDeskOpts,
       })
     : [];
+  const paidPos = poListOk
+    ? listPurchaseOrders(db, branchScope, {
+        paidOnly: true,
+        skipSideEffects: true,
+        ...poDeskOpts,
+      })
+    : [];
   const recentPos = poListOk
     ? listPurchaseOrders(db, branchScope, { ...poDeskOpts, skipSideEffects: true })
     : [];
   const purchaseOrders = (() => {
     const byId = new Map();
     for (const po of outstandingPos) byId.set(po.poID, po);
+    // Fully paid orders sit outside the recent page once unpaid POs fill it.
+    for (const po of paidPos) {
+      if (!byId.has(po.poID)) byId.set(po.poID, po);
+    }
     for (const po of recentPos) {
       if (!byId.has(po.poID)) byId.set(po.poID, po);
     }
     return [...byId.values()];
   })();
   const registerOpts = { ...financeRegisterListOpts(), openOnly: true, includeLines: true };
+  const settledRegisterOpts = { ...financeRegisterListOpts(), settledOnly: true, includeLines: true };
   // Purchases outstanding table reads AP and/or PO lines; shell bootstrap leaves both empty.
   const apOk = procOk || finOk;
   const apFromRegister = apOk ? listAccountsPayable(db, branchScope, registerOpts) : [];
   const accountsPayable = mergeOpenAccountsPayableWithPurchaseOrders(apFromRegister, outstandingPos);
+  const settledApFromRegister = apOk ? listAccountsPayable(db, branchScope, settledRegisterOpts) : [];
+  const accountsPayableSettled = mergeSettledAccountsPayableWithPurchaseOrders(settledApFromRegister, paidPos);
   const outstandingPaymentLines = purchaseOrders.flatMap((po) => {
     if (!(Number(po.outstandingNgn) > 0)) return [];
     const lines = Array.isArray(po.lines) && po.lines.length ? po.lines : [{ lineKey: po.poID, productName: po.supplierName, lineValueNgn: po.amountNgn, amountNgn: po.amountNgn }];
@@ -795,6 +810,7 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     },
     purchaseOrders,
     accountsPayable,
+    accountsPayableSettled,
     outstandingPaymentLines,
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     products: productsOk ? listProducts(db, branchScope) : [],

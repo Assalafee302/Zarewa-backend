@@ -1686,12 +1686,10 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
       return { ok: false, error: 'Each run log line must have a coil number when coil is sent in the payload.' };
     }
     const reservedOpening = roundWholeKg(safeNumber(row.opening_weight_kg));
-    if (
+    // Opening kg is the reservation. A different number must not reject closing kg, metres, or the date.
+    const openingKgLocked =
       hasOpenInPayload &&
-      openingKgDiffersFromReserved(reservedOpening, line.openingWeightKg ?? line.opening_weight_kg)
-    ) {
-      return { ok: false, error: OPENING_KG_LOCKED_ERROR, code: 'OPENING_KG_LOCKED' };
-    }
+      openingKgDiffersFromReserved(reservedOpening, line.openingWeightKg ?? line.opening_weight_kg);
     const nextOpening = reservedOpening;
     if (nextOpening <= 0) {
       return { ok: false, error: `Opening kg must be greater than 0 (line ${aid}).` };
@@ -1723,6 +1721,7 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
       note,
       specMismatchAcknowledged,
       identityChanged,
+      openingKgLocked,
     });
   }
   if (!parsed.length) {
@@ -1740,6 +1739,20 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
         return { ok: false, error: String(error.message || error) };
       }
       nextStartIso = normalizedStart;
+    }
+  }
+  const requestedEnd = String(payload.completionDateISO || '').trim();
+  let nextEndIso = '';
+  if (requestedEnd) {
+    const normalizedEnd = normalizeIso(requestedEnd);
+    const currentEnd = String(job.end_date_iso || '').slice(0, 10);
+    if (normalizedEnd.slice(0, 10) !== currentEnd) {
+      try {
+        assertPeriodOpen(db, normalizedEnd, 'Complete date');
+      } catch (error) {
+        return { ok: false, error: String(error.message || error) };
+      }
+      nextEndIso = normalizedEnd;
     }
   }
   const totalMetersSaved = parsed.reduce((s, p) => s + Math.max(0, p.meters), 0);
@@ -1819,8 +1832,13 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
         );
       }
       refreshJobCoilSpecFlagsTx(db, jobID);
-      if (nextStartIso) {
-        db.prepare(`UPDATE production_jobs SET start_date_iso = ? WHERE job_id = ?`).run(nextStartIso, jobID);
+      if (nextStartIso || nextEndIso) {
+        db.prepare(
+          `UPDATE production_jobs
+           SET start_date_iso = COALESCE(?, start_date_iso),
+               end_date_iso = COALESCE(?, end_date_iso)
+           WHERE job_id = ?`
+        ).run(nextStartIso || null, nextEndIso || null, jobID);
       }
       appendAuditLog(db, {
         actor: opts.actor,
@@ -1852,7 +1870,13 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
         console.error('production stock recalc after run log', error);
       }
     });
-    return { ok: true, allocations };
+    const warnings = [];
+    if (parsed.some((p) => p.openingKgLocked)) {
+      warnings.push(
+        'Opening kg stays at the weight reserved when the coil was allocated. Closing kg, metres, notes, and dates were saved.'
+      );
+    }
+    return { ok: true, allocations, ...(warnings.length ? { warnings } : {}) };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
   }

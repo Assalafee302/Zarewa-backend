@@ -3893,7 +3893,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(coils.length).toBe(2);
   });
 
-  it('POST coil-run-log rejects opening kg edits and still allows a coil change', async () => {
+  it('POST coil-run-log keeps reserved opening kg, still saves closing kg and metres, and allows a coil change', async () => {
     const sup = await agent.post('/api/suppliers').send({ name: 'RunLog Correct Sup', city: 'Test' });
     expect(sup.status).toBe(201);
     const mkGrn = async (coilNo, lineKey) => {
@@ -3979,11 +3979,13 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         },
       ],
     });
-    expect(r1.status).toBe(400);
-    expect(r1.body.code).toBe('OPENING_KG_LOCKED');
-    expect(String(r1.body.error || '')).toMatch(/opening kg/i);
+    expect(r1.status).toBe(200);
+    expect(r1.body.ok).toBe(true);
+    expect(r1.body.warnings?.length).toBeGreaterThan(0);
     const still = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
     expect(still.body.allocations[0].openingWeightKg).toBe(2000);
+    expect(still.body.allocations[0].closingWeightKg).toBe(1400);
+    expect(still.body.allocations[0].metersProduced).toBe(10);
     const r2 = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-run-log`).send({
       readings: [
         {

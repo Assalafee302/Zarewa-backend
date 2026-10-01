@@ -187,9 +187,11 @@ describe('refundsPackReport', () => {
     expect(pipeline).toHaveLength(1);
     expect(pipeline[0].creditAppliedNgn).toBe(40_000);
     expect(pipeline[0].usageNote).toMatch(/40,000/);
+    expect(pipeline[0].usageNote).toMatch(/used on quotation 2026-DST/);
     expect(creditAppliedInPeriod).toHaveLength(1);
     expect(creditAppliedInPeriod[0].amountNgn).toBe(40_000);
-    expect(creditAppliedInPeriod[0].usageNote).toMatch(/used on/);
+    expect(creditAppliedInPeriod[0].usageNote).toMatch(/used on quotation 2026-DST/);
+    expect(creditAppliedInPeriod[0].usageNote).toMatch(/from quotation SRC/);
     expect(summary.creditAppliedTotalNgn).toBe(40_000);
   });
 

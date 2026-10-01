@@ -6,7 +6,12 @@
  */
 
 import { receivableDueOnQuotationFromEntries } from './customerLedgerCore.js';
-import { revenueProductionReportRows } from './standardReportsSales.js';
+import {
+  formatFromRefundPaymentMethod,
+  formatRefundReceiptUsageNote,
+  originReceiptIdsForApplication,
+  revenueProductionReportRows,
+} from './standardReportsSales.js';
 
 const BASIS_NOTE =
   'Figures are as the records stand when this pack is printed. Confirming an old receipt can still change an earlier month until that month is frozen.';
@@ -118,6 +123,7 @@ export function buildSalesMonthEndPack(input = {}) {
   const refunds = Array.isArray(input.refunds) ? input.refunds : [];
   const refundById = new Map(refunds.map((r) => [String(r.refundId || '').trim(), r]));
   const apps = Array.isArray(input.creditApplications) ? input.creditApplications : [];
+  const receiptCatalog = [...(input.receiptCatalog || []), ...(input.receipts || [])];
   const quotations = Array.isArray(input.quotations) ? input.quotations : [];
   const jobs = Array.isArray(input.productionJobs) ? input.productionJobs : [];
   const movements = Array.isArray(input.treasuryMovements) ? input.treasuryMovements : [];
@@ -193,11 +199,40 @@ export function buildSalesMonthEndPack(input = {}) {
         amountNgn
       );
     }
+    const originReceiptIds = originReceiptIdsForApplication(app, receiptCatalog);
+    const usageNote = formatRefundReceiptUsageNote({
+      amountNgn,
+      consumingReceiptId: rowBase.sourceReceiptId,
+      targetQuotationRef: rowBase.targetQuotationRef,
+      originReceiptIds,
+      sourceQuotationRef: rowBase.sourceQuotationRef,
+    });
+    const paymentMethod = formatFromRefundPaymentMethod({
+      refundIds: refundId ? [refundId] : [],
+      originReceiptIds,
+      sourceQuotationRefs: rowBase.sourceQuotationRef ? [rowBase.sourceQuotationRef] : [],
+    });
     if (inRange(created, startDate, endDate)) {
-      creditLines.push({ ...rowBase, appliedDateISO: created, amountNgn, lineKind: 'apply' });
+      creditLines.push({
+        ...rowBase,
+        appliedDateISO: created,
+        amountNgn,
+        lineKind: 'apply',
+        originReceiptIds,
+        paymentMethod,
+        usageNote,
+      });
     }
     if (inRange(reversed, startDate, endDate)) {
-      creditLines.push({ ...rowBase, appliedDateISO: reversed, amountNgn: -amountNgn, lineKind: 'reversal' });
+      creditLines.push({
+        ...rowBase,
+        appliedDateISO: reversed,
+        amountNgn: -amountNgn,
+        lineKind: 'reversal',
+        originReceiptIds,
+        paymentMethod,
+        usageNote: `Reversed — ${usageNote}`,
+      });
     }
   }
   creditLines.sort(
@@ -223,6 +258,15 @@ export function buildSalesMonthEndPack(input = {}) {
     let fundSource = 'Bank/Cash';
     if (creditNgn > 0 && cashNgn <= 0) fundSource = 'Refund credit';
     else if (creditNgn > 0 && cashNgn > 0) fundSource = 'Mixed';
+    const linkedCredit = creditLines.filter(
+      (line) => line.lineKind === 'apply' && line.sourceReceiptId && line.sourceReceiptId === String(r.id || '')
+    );
+    const paymentMethod =
+      linkedCredit.length > 0
+        ? linkedCredit.map((line) => line.paymentMethod).filter(Boolean).join('; ')
+        : fundSource === 'Bank/Cash'
+          ? 'Bank/Cash'
+          : fundSource;
     receiptLines.push({
       receiptId: String(r.id || ''),
       dateISO,
@@ -232,6 +276,7 @@ export function buildSalesMonthEndPack(input = {}) {
       cashNgn,
       creditNgn,
       fundSource,
+      paymentMethod,
       bankConfirmedAtISO: isoDate(r.bankConfirmedAtISO),
     });
     const cleared = String(r.status || '').trim() === 'Cleared';
@@ -554,13 +599,13 @@ export function salesMonthEndPackToCsv(pack) {
     add('receipt_vs_bank_date', r.receiptDateISO, r.receiptId, r.customer, `Bank date ${r.treasuryDateISO}`, r.amountNgn, '', '');
   }
   for (const r of pack.receiptLines || []) {
-    add('receipts', r.dateISO, r.receiptId, r.customer, `${r.fundSource} ${r.quotationRef} credit ${r.creditNgn}`, r.cashNgn, '', '');
+    add('receipts', r.dateISO, r.receiptId, r.customer, `${r.paymentMethod || r.fundSource} ${r.quotationRef} credit ${r.creditNgn}`, r.cashNgn, '', '');
   }
   for (const r of pack.cashRefundLines || []) {
     add('cash_refunds', r.postedAtISO, r.refundId || r.movementId, r.customer, r.payoutKind, r.amountNgn, '', '');
   }
   for (const r of pack.creditAppliedLines || []) {
-    add('credit_applied', r.appliedDateISO, r.applicationId, r.customer, `${r.refundId} -> ${r.targetQuotationRef}`, r.amountNgn, '', '');
+    add('credit_applied', r.appliedDateISO, r.applicationId, r.customer, r.usageNote || `${r.refundId} -> ${r.targetQuotationRef}`, r.amountNgn, '', '');
   }
   for (const r of pack.creditBySourceRefundLines || []) {
     add('credit_by_source_refund', r.appliedDateISO, r.refundId, r.customer, r.applicationId, r.amountNgn, '', '');

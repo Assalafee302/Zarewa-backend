@@ -95,6 +95,8 @@ describe('buildSalesMonthEndPack', () => {
     const zero = result.receiptLines.find((r) => r.receiptId === 'LE-ZERO');
     expect(zero.fundSource).toBe('Refund credit');
     expect(zero.creditNgn).toBe(200_000);
+    expect(zero.paymentMethod).toMatch(/^From refund /);
+    expect(result.creditAppliedLines[0].usageNote).toMatch(/used on receipt/);
     expect(result.cover.bankInNgn).toBe(1_010_000);
     expect(result.cover.bankOutNgn).toBe(450_000);
     expect(result.customersWeOweLines.find((r) => r.recordId === 'QT-OVER')).toBeUndefined();

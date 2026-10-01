@@ -70,7 +70,7 @@ export function buildExecutiveDailyPack(db, opts = {}) {
     reportListOpts()
   );
   const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, date, date, creditApps);
-  const creditApplyRows = refundCreditApplyReportRows(creditApps, date, date);
+  const creditApplyRows = refundCreditApplyReportRows(creditApps, date, date, enriched);
 
   const refunds = listRefunds(db, branchScope, reportListOpts()).filter((r) =>
     inRange(r.requestedAtISO, date, date)
@@ -80,7 +80,8 @@ export function buildExecutiveDailyPack(db, opts = {}) {
     date,
     date,
     creditApps,
-    listPaidCompanyRetentionWithdrawals(db, branchScope, date, date)
+    listPaidCompanyRetentionWithdrawals(db, branchScope, date, date),
+    enriched
   );
   const paymentRequests = listPaymentRequests(db, branchScope, reportListOpts()).filter((p) =>
     inRange(p.requestDate || p.request_date, date, date)
@@ -166,13 +167,14 @@ export function buildExecutiveWeeklyPack(db, opts = {}) {
     reportListOpts()
   );
   const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate, creditApps);
-  const creditApplyRows = refundCreditApplyReportRows(creditApps, startDate, endDate);
+  const creditApplyRows = refundCreditApplyReportRows(creditApps, startDate, endDate, enriched);
   const refundsPack = refundsPackReport(
     listRefunds(db, branchScope, reportListOpts()),
     startDate,
     endDate,
     creditApps,
-    listPaidCompanyRetentionWithdrawals(db, branchScope, startDate, endDate)
+    listPaidCompanyRetentionWithdrawals(db, branchScope, startDate, endDate),
+    enriched
   );
 
   const expenses = listExpenses(db, branchScope, reportListOpts());

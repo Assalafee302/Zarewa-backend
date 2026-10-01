@@ -25,6 +25,7 @@ import {
   reportQuotationListOpts,
   reportTreasuryListOpts,
 } from '../listQueryOpts.js';
+import { listRefundCreditApplications } from '../refundCreditApplyOps.js';
 
 /**
  * @param {string} value
@@ -58,6 +59,12 @@ export function loadReportPeriodSource(db, opts = {}) {
     endDate,
     branchScope,
     receipts,
+    refundCreditApplications: listRefundCreditApplications(
+      db,
+      '',
+      branchScope === 'ALL' ? 'ALL' : branchScope,
+      lists
+    ),
     quotations: listQuotations(db, branchScope, reportQuotationListOpts()),
     productionJobs: listProductionJobs(db, branchScope, lists),
     refunds: listRefunds(db, branchScope, lists),

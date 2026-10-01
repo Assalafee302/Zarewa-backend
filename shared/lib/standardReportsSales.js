@@ -31,6 +31,177 @@ function isActiveRefundCreditApplication(app) {
   return st !== REFUND_CREDIT_REVERSED_STATUS.toLowerCase() && st !== 'cancelled';
 }
 
+function uniqueIds(ids) {
+  const out = [];
+  for (const id of ids || []) {
+    const s = String(id || '').trim();
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
+function displayReportDoc(ref) {
+  const s = String(ref || '').trim();
+  if (!s || s === '—') return '';
+  return displayDocNumber(s) || s;
+}
+
+function formatReportNgn(amountNgn) {
+  return `₦${roundMoney(amountNgn).toLocaleString('en-NG')}`;
+}
+
+function quotationRefOfReceipt(row) {
+  return String(row?.quotationRef || row?.quotation_ref || '').trim();
+}
+
+function receiptIdOf(row) {
+  return String(row?.id || '').trim();
+}
+
+function appText(app, camel, snake) {
+  return String(app?.[camel] ?? app?.[snake] ?? '').trim();
+}
+
+/**
+ * Receipts that originally brought the money in on the refund's quotation.
+ * Skips the receipt that later consumed the refund.
+ * @param {object} app
+ * @param {Array<object>} [salesReceipts]
+ * @returns {string[]}
+ */
+export function originReceiptIdsForApplication(app, salesReceipts = []) {
+  const consuming = appText(app, 'sourceReceiptId', 'source_receipt_id');
+  const explicit = uniqueIds(app?.originReceiptIds || app?.origin_receipt_ids).filter((id) => id !== consuming);
+  if (explicit.length) return explicit;
+  const sourceQ = appText(app, 'sourceQuotationRef', 'source_quotation_ref');
+  if (!sourceQ) return [];
+  return uniqueIds(
+    (salesReceipts || [])
+      .filter((row) => {
+        if (quotationRefOfReceipt(row) !== sourceQ) return false;
+        const id = receiptIdOf(row);
+        if (!id || id === consuming) return false;
+        return String(row?.status || '').trim().toLowerCase() !== 'reversed';
+      })
+      .map(receiptIdOf)
+  );
+}
+
+/**
+ * Printed method once finance has confirmed the receipt from a refund.
+ * Cashier till names stay off this phrase. Amount is included only for a split line.
+ * @param {{ refundIds?: string[], originReceiptIds?: string[], sourceQuotationRefs?: string[], amountNgn?: number | null }} parts
+ */
+export function formatFromRefundPaymentMethod(parts = {}) {
+  const refunds = uniqueIds(parts.refundIds).map(displayReportDoc).filter(Boolean);
+  const origins = uniqueIds(parts.originReceiptIds).map(displayReportDoc).filter(Boolean);
+  const quotes = uniqueIds(parts.sourceQuotationRefs).map(displayReportDoc).filter(Boolean);
+  let text = 'From refund';
+  if (refunds.length) text += ` ${refunds.join(', ')}`;
+  if (origins.length) text += ` · receipt ${origins.join(', ')}`;
+  else if (quotes.length) text += ` · quotation ${quotes.join(', ')}`;
+  if (parts.amountNgn != null) text += ` ${formatReportNgn(parts.amountNgn)}`;
+  return text;
+}
+
+/**
+ * Refund-report line: which new receipt used the refund, and which receipt the money came from.
+ * @param {{ amountNgn?: number, consumingReceiptId?: string, targetQuotationRef?: string, originReceiptIds?: string[], sourceQuotationRef?: string }} parts
+ */
+export function formatRefundReceiptUsageNote(parts = {}) {
+  const usedReceipt = displayReportDoc(parts.consumingReceiptId);
+  const targetQ = displayReportDoc(parts.targetQuotationRef);
+  const origins = uniqueIds(parts.originReceiptIds).map(displayReportDoc).filter(Boolean);
+  const sourceQ = displayReportDoc(parts.sourceQuotationRef);
+  let used = 'another quotation';
+  if (usedReceipt && targetQ) used = `receipt ${usedReceipt} (${targetQ})`;
+  else if (usedReceipt) used = `receipt ${usedReceipt}`;
+  else if (targetQ) used = `quotation ${targetQ}`;
+  let from = '';
+  if (origins.length && sourceQ) from = `, from receipt ${origins.join(', ')} (${sourceQ})`;
+  else if (origins.length) from = `, from receipt ${origins.join(', ')}`;
+  else if (sourceQ) from = `, from quotation ${sourceQ}`;
+  return `${formatReportNgn(parts.amountNgn)} used on ${used}${from}`;
+}
+
+/**
+ * Active credit applications that settled this receipt.
+ * Direct link is the receipt stored at confirm. If that link was never stored and the
+ * target quotation has exactly one receipt, that receipt is the one.
+ * @param {object} receipt
+ * @param {Array<object>} creditApplications
+ * @param {Array<object>} [salesReceipts]
+ */
+export function refundCreditApplicationsForReceipt(receipt, creditApplications = [], salesReceipts = []) {
+  const id = receiptIdOf(receipt);
+  const ledgerId = String(receipt?.ledgerEntryId || receipt?.ledger_entry_id || '').trim();
+  const active = (creditApplications || []).filter(isActiveRefundCreditApplication);
+  const direct = active.filter((app) => {
+    const src = appText(app, 'sourceReceiptId', 'source_receipt_id');
+    return Boolean(src) && (src === id || (ledgerId && src === ledgerId));
+  });
+  if (direct.length) return direct;
+  const target = quotationRefOfReceipt(receipt);
+  if (!target || !id) return [];
+  const unlinked = active.filter((app) => {
+    const src = appText(app, 'sourceReceiptId', 'source_receipt_id');
+    return !src && appText(app, 'targetQuotationRef', 'target_quotation_ref') === target;
+  });
+  if (!unlinked.length) return [];
+  const mates = (salesReceipts || []).filter((row) => {
+    if (quotationRefOfReceipt(row) !== target) return false;
+    return String(row?.status || '').trim().toLowerCase() !== 'reversed';
+  });
+  if (mates.length === 1 && receiptIdOf(mates[0]) === id) return unlinked;
+  return [];
+}
+
+/**
+ * @param {Array<object>} apps
+ * @param {Array<object>} [salesReceipts]
+ */
+export function summarizeRefundCreditApplications(apps = [], salesReceipts = []) {
+  const refundIds = [];
+  const applicationIds = [];
+  const sourceQuotationRefs = [];
+  const originReceiptIds = [];
+  let amountNgn = 0;
+  for (const app of apps || []) {
+    amountNgn += roundMoney(app.amountNgn ?? app.amount_ngn);
+    const refundId = appText(app, 'refundId', 'refund_id');
+    if (refundId && !refundIds.includes(refundId)) refundIds.push(refundId);
+    const appId = appText(app, 'applicationId', 'application_id');
+    if (appId && !applicationIds.includes(appId)) applicationIds.push(appId);
+    const sourceQ = appText(app, 'sourceQuotationRef', 'source_quotation_ref');
+    if (sourceQ && !sourceQuotationRefs.includes(sourceQ)) sourceQuotationRefs.push(sourceQ);
+    for (const originId of originReceiptIdsForApplication(app, salesReceipts)) {
+      if (!originReceiptIds.includes(originId)) originReceiptIds.push(originId);
+    }
+  }
+  return { amountNgn: roundMoney(amountNgn), refundIds, applicationIds, sourceQuotationRefs, originReceiptIds };
+}
+
+/**
+ * Till name stays only for money that actually hit that account.
+ * @param {{ methodRaw?: string, cashNgn?: number, credit?: { amountNgn?: number, refundIds?: string[], originReceiptIds?: string[], sourceQuotationRefs?: string[] } | null }} parts
+ */
+export function paymentMethodLabelForReceiptFund(parts = {}) {
+  const credit = parts.credit;
+  const cashNgn = roundMoney(parts.cashNgn);
+  const methodRaw = String(parts.methodRaw || '').trim();
+  if (!credit || roundMoney(credit.amountNgn) <= 0) return methodRaw || '—';
+  const phrase = {
+    refundIds: credit.refundIds,
+    originReceiptIds: credit.originReceiptIds,
+    sourceQuotationRefs: credit.sourceQuotationRefs,
+  };
+  if (cashNgn <= 0) return formatFromRefundPaymentMethod(phrase);
+  const cashLabel = formatReportNgn(cashNgn);
+  const cashPart = methodRaw ? `${methodRaw} ${cashLabel}` : cashLabel;
+  const creditPart = formatFromRefundPaymentMethod({ ...phrase, amountNgn: credit.amountNgn });
+  return `${cashPart} · ${creditPart}`;
+}
+
 /**
  * Index active refund-credit applications by the sales receipt they offset on confirm.
  * @param {Array<{ sourceReceiptId?: string, amountNgn?: number, refundId?: string, applicationId?: string, status?: string }>} creditApplications
@@ -40,13 +211,13 @@ export function refundCreditBySourceReceiptId(creditApplications = []) {
   const m = new Map();
   for (const app of creditApplications || []) {
     if (!isActiveRefundCreditApplication(app)) continue;
-    const rid = String(app.sourceReceiptId || app.source_receipt_id || '').trim();
+    const rid = appText(app, 'sourceReceiptId', 'source_receipt_id');
     if (!rid) continue;
     const prev = m.get(rid) || { amountNgn: 0, refundIds: [], applicationIds: [] };
     prev.amountNgn += roundMoney(app.amountNgn ?? app.amount_ngn);
-    const refundId = String(app.refundId || app.refund_id || '').trim();
+    const refundId = appText(app, 'refundId', 'refund_id');
     if (refundId && !prev.refundIds.includes(refundId)) prev.refundIds.push(refundId);
-    const appId = String(app.applicationId || app.application_id || '').trim();
+    const appId = appText(app, 'applicationId', 'application_id');
     if (appId && !prev.applicationIds.includes(appId)) prev.applicationIds.push(appId);
     m.set(rid, prev);
   }
@@ -60,7 +231,7 @@ export function refundCreditBySourceReceiptId(creditApplications = []) {
  * @param {string} [startDate]
  * @param {string} [endDate]
  */
-export function refundCreditApplyReportRows(creditApplications = [], startDate, endDate) {
+export function refundCreditApplyReportRows(creditApplications = [], startDate, endDate, salesReceipts = []) {
   const rows = [];
   for (const app of creditApplications || []) {
     if (!isActiveRefundCreditApplication(app)) continue;
@@ -70,10 +241,16 @@ export function refundCreditApplyReportRows(creditApplications = [], startDate, 
     if (endDate && iso > endDate) continue;
     const amountNgn = roundMoney(app.amountNgn ?? app.amount_ngn);
     if (amountNgn <= 0) continue;
-    const refundId = String(app.refundId || app.refund_id || '').trim();
-    const sourceQ = String(app.sourceQuotationRef || app.source_quotation_ref || '').trim();
-    const targetQ = String(app.targetQuotationRef || app.target_quotation_ref || '').trim();
-    const sourceReceiptId = String(app.sourceReceiptId || app.source_receipt_id || '').trim();
+    const refundId = appText(app, 'refundId', 'refund_id');
+    const sourceQ = appText(app, 'sourceQuotationRef', 'source_quotation_ref');
+    const targetQ = appText(app, 'targetQuotationRef', 'target_quotation_ref');
+    const sourceReceiptId = appText(app, 'sourceReceiptId', 'source_receipt_id');
+    const originReceiptIds = originReceiptIdsForApplication(app, salesReceipts);
+    const paymentMethod = formatFromRefundPaymentMethod({
+      refundIds: refundId ? [refundId] : [],
+      originReceiptIds,
+      sourceQuotationRefs: sourceQ ? [sourceQ] : [],
+    });
     rows.push({
       dateISO: iso,
       customer: String(app.customerName || app.customer || app.createdByName || '').trim() || '—',
@@ -84,16 +261,22 @@ export function refundCreditApplyReportRows(creditApplications = [], startDate, 
       sourceQuotationRefDisplay: displayDocNumber(sourceQ) || '—',
       receiptIdFull: sourceReceiptId || '—',
       receiptIdDisplay: sourceReceiptId ? displayDocNumber(sourceReceiptId) || '—' : '—',
-      bankPaidTo: 'Refund credit (no bank)',
+      originReceiptIds: originReceiptIds.join(', '),
+      originReceiptDisplay: originReceiptIds.map(displayReportDoc).filter(Boolean).join(', ') || '—',
+      bankPaidTo: paymentMethod,
       bankReference: String(app.ledgerBankReference || app.ledger_bank_reference || '').trim() || '—',
-      paymentMethod: 'Refund credit',
+      paymentMethod,
       fundSource: 'Refund credit',
       refundCreditAppliedNgn: amountNgn,
       refundCreditFromRefundIds: refundId || '—',
-      refundCreditApplicationId: String(app.applicationId || app.application_id || '').trim() || '—',
-      fundNote: refundId
-        ? `₦${amountNgn.toLocaleString('en-NG')} used from refund ${displayDocNumber(refundId) || refundId}`
-        : `₦${amountNgn.toLocaleString('en-NG')} used from refund fund`,
+      refundCreditApplicationId: appText(app, 'applicationId', 'application_id') || '—',
+      fundNote: formatRefundReceiptUsageNote({
+        amountNgn,
+        consumingReceiptId: sourceReceiptId,
+        targetQuotationRef: targetQ,
+        originReceiptIds,
+        sourceQuotationRef: sourceQ,
+      }),
       ledgerEntryId: '',
       rowKind: 'refund_credit',
     });
@@ -121,6 +304,7 @@ export function treasuryAccountLabelByLedgerEntryId(treasuryMovements = []) {
     if (String(t.sourceKind || '') !== 'LEDGER_RECEIPT') continue;
     const id = String(t.sourceId || '').trim();
     if (!id) continue;
+    if (t.amountNgn != null && roundMoney(t.amountNgn) === 0) continue;
     const bankCode = abbreviateBankName(t.bankName);
     const label = bankCode
       ? [bankCode, t.accountNo].filter(Boolean).join(' · ')
@@ -147,7 +331,6 @@ export function receiptsRegisterReportRows(
     (ledgerEntries || []).map((e) => [String(e.id || '').trim(), e]).filter(([k]) => k)
   );
   const tmMap = treasuryAccountLabelByLedgerEntryId(treasuryMovements);
-  const creditByReceipt = refundCreditBySourceReceiptId(creditApplications);
 
   const rows = [];
   for (const r of salesReceipts || []) {
@@ -159,34 +342,35 @@ export function receiptsRegisterReportRows(
     const le = lid ? ledgerMap.get(lid) : null;
     const cashNgn = receiptEffectiveCashNgn(r);
     const receiptId = String(r.id || '').trim();
-    const creditInfo = receiptId ? creditByReceipt.get(receiptId) : null;
-    const refundCreditAppliedNgn = roundMoney(creditInfo?.amountNgn);
-    const refundIds = Array.isArray(creditInfo?.refundIds) ? creditInfo.refundIds : [];
+    const creditApps = refundCreditApplicationsForReceipt(r, creditApplications, salesReceipts);
+    const creditInfo = summarizeRefundCreditApplications(creditApps, salesReceipts);
+    const refundCreditAppliedNgn = roundMoney(creditInfo.amountNgn);
+    const refundIds = creditInfo.refundIds;
     let fundSource = 'Bank/Cash';
     if (refundCreditAppliedNgn > 0 && cashNgn > 0) fundSource = 'Mixed';
     else if (refundCreditAppliedNgn > 0) fundSource = 'Refund credit';
     const methodRaw = String(r.method || le?.paymentMethod || '').trim();
-    const paymentMethod =
-      fundSource === 'Refund credit'
-        ? 'Refund credit'
-        : fundSource === 'Mixed'
-          ? methodRaw
-            ? `${methodRaw} + Refund credit`
-            : 'Mixed (bank/cash + refund credit)'
-          : methodRaw || '—';
+    const paymentMethod = paymentMethodLabelForReceiptFund({
+      methodRaw,
+      cashNgn,
+      credit: refundCreditAppliedNgn > 0 ? creditInfo : null,
+    });
     const bankPaidToRaw = (lid && tmMap.get(lid)) || le?.paymentMethod || r.method || '—';
-    const bankPaidTo =
-      fundSource === 'Refund credit'
-        ? 'Refund credit (no bank)'
-        : fundSource === 'Mixed'
-          ? `${String(bankPaidToRaw).trim() || '—'} + Refund credit`
-          : String(bankPaidToRaw).trim() || '—';
+    const bankPaidTo = refundCreditAppliedNgn > 0 ? paymentMethod : String(bankPaidToRaw).trim() || '—';
     const qref = String(r.quotationRef || '').trim();
     const fundNote =
       refundCreditAppliedNgn > 0
-        ? `₦${refundCreditAppliedNgn.toLocaleString('en-NG')} from refund${
-            refundIds.length ? ` ${refundIds.map((id) => displayDocNumber(id) || id).join(', ')}` : ''
-          }`
+        ? creditApps
+            .map((app) =>
+              formatRefundReceiptUsageNote({
+                amountNgn: app.amountNgn ?? app.amount_ngn,
+                consumingReceiptId: receiptId,
+                targetQuotationRef: qref || appText(app, 'targetQuotationRef', 'target_quotation_ref'),
+                originReceiptIds: originReceiptIdsForApplication(app, salesReceipts),
+                sourceQuotationRef: appText(app, 'sourceQuotationRef', 'source_quotation_ref'),
+              })
+            )
+            .join('; ')
         : '';
     rows.push({
       dateISO: iso,

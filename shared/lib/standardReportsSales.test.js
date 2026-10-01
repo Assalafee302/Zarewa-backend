@@ -83,10 +83,61 @@ describe('receiptsRegisterReportRows', () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].fundSource).toBe('Refund credit');
-    expect(rows[0].paymentMethod).toBe('Refund credit');
+    expect(rows[0].paymentMethod).toBe('From refund 2026-100');
+    expect(rows[0].bankPaidTo).toBe('From refund 2026-100');
     expect(rows[0].refundCreditAppliedNgn).toBe(25_000);
     expect(rows[0].fundNote).toMatch(/25,000/);
+    expect(rows[0].fundNote).toMatch(/used on receipt/);
     expect(rows[0].refundCreditFromRefundIds).toContain('RF-2026-100');
+  });
+
+  it('names the original receipt and keeps a split till amount beside the refund', () => {
+    const rows = receiptsRegisterReportRows(
+      [
+        {
+          id: 'RC-OLD',
+          dateISO: '2026-02-01',
+          customer: 'A',
+          amountNgn: 80_000,
+          quotationRef: 'QT-2026-010',
+          method: 'Cash',
+          status: 'Cleared',
+        },
+        {
+          id: 'RC-NEW',
+          dateISO: '2026-03-15',
+          customer: 'A',
+          amountNgn: 50_000,
+          bankReceivedAmountNgn: 50_000,
+          financeReconciliationSavedAtISO: '2026-03-16T12:00:00.000Z',
+          quotationRef: 'QT-2026-020',
+          method: 'Moniepoint of Taj',
+          status: 'Cleared',
+        },
+      ],
+      [],
+      [],
+      '2026-03-01',
+      '2026-03-31',
+      [
+        {
+          applicationId: 'RCA-2',
+          sourceReceiptId: 'RC-NEW',
+          sourceQuotationRef: 'QT-2026-010',
+          targetQuotationRef: 'QT-2026-020',
+          refundId: 'RF-KD-26-9586',
+          amountNgn: 30_000,
+          status: 'Credit confirmation',
+        },
+      ]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].amountNgn).toBe(50_000);
+    expect(rows[0].paymentMethod).toBe(
+      'Moniepoint of Taj ₦50,000 · From refund KD-26-9586 · receipt OLD ₦30,000'
+    );
+    expect(rows[0].fundNote).toMatch(/used on receipt NEW/);
+    expect(rows[0].fundNote).toMatch(/from receipt OLD/);
   });
 });
 
@@ -116,9 +167,10 @@ describe('refundCreditApplyReportRows', () => {
       '2026-03-31'
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].paymentMethod).toBe('Refund credit');
+    expect(rows[0].paymentMethod).toBe('From refund 9 · quotation 2026-010');
     expect(rows[0].amountNgn).toBe(12_000);
-    expect(rows[0].fundNote).toMatch(/from refund/);
+    expect(rows[0].fundNote).toMatch(/used on quotation 2026-050/);
+    expect(rows[0].fundNote).toMatch(/from quotation 2026-010/);
   });
 });
 

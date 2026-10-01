@@ -62,6 +62,26 @@ function parseJsonArray(raw) {
   }
 }
 
+function receiptCatalogForCreditSources(db, creditApplications) {
+  const quotes = [
+    ...new Set((creditApplications || []).map((app) => String(app.sourceQuotationRef || '').trim()).filter(Boolean)),
+  ];
+  if (!quotes.length || !tableExists(db, 'sales_receipts')) return [];
+  const catalog = [];
+  const chunkSize = 80;
+  for (let i = 0; i < quotes.length; i += chunkSize) {
+    const chunk = quotes.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = db
+      .prepare(`SELECT id, quotation_ref, status FROM sales_receipts WHERE quotation_ref IN (${placeholders})`)
+      .all(...chunk);
+    for (const row of rows) {
+      catalog.push({ id: row.id, quotationRef: row.quotation_ref, status: row.status });
+    }
+  }
+  return catalog;
+}
+
 function salesTreatmentForRefund(db, row, productionJobs) {
   try {
     const policy = evaluateRefundPayoutGlPolicy(db, {
@@ -434,6 +454,7 @@ export function buildSalesMonthEndPackFromDb(db, opts = {}) {
     unmatchedReceiptIns,
     lateConfirmations,
     creditApplications,
+    receiptCatalog: receiptCatalogForCreditSources(db, creditApplications),
     refunds,
     quotations,
     productionJobs,

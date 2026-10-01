@@ -5,6 +5,10 @@
 import { displayDocNumber } from './reportDisplayFormat.js';
 import { refundApprovedAmount, refundOutstandingAmount, isRefundPayable } from './refundsStore.js';
 import { abbreviateBankName } from './bankAbbreviation.js';
+import {
+  formatRefundReceiptUsageNote,
+  originReceiptIdsForApplication,
+} from './standardReportsSales.js';
 
 function toIsoDate(value) {
   return String(value || '').slice(0, 10);
@@ -189,7 +193,14 @@ function companyCutWithdrawalLines(withdrawals = [], startDate, endDate) {
   return lines;
 }
 
-export function refundsPackReport(refunds = [], startDate, endDate, creditApplications = [], companyCutWithdrawals = []) {
+export function refundsPackReport(
+  refunds = [],
+  startDate,
+  endDate,
+  creditApplications = [],
+  companyCutWithdrawals = [],
+  salesReceipts = []
+) {
   const paidInPeriod = [];
   for (const r of refunds || []) {
     const id = String(r.refundID ?? r.refund_id ?? '').trim();
@@ -245,6 +256,14 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
     const sourceQ = String(app.sourceQuotationRef || app.source_quotation_ref || '').trim();
     const targetQ = String(app.targetQuotationRef || app.target_quotation_ref || '').trim();
     const sourceReceiptId = String(app.sourceReceiptId || app.source_receipt_id || '').trim();
+    const originReceiptIds = originReceiptIdsForApplication(app, salesReceipts);
+    const usageNote = formatRefundReceiptUsageNote({
+      amountNgn,
+      consumingReceiptId: sourceReceiptId,
+      targetQuotationRef: targetQ,
+      originReceiptIds,
+      sourceQuotationRef: sourceQ,
+    });
     creditAppliedInPeriod.push({
       appliedDateISO: iso,
       refundIdDisplay: displayDocNumber(refundId) || '—',
@@ -256,12 +275,12 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
       targetQuotationRefFull: targetQ || '—',
       sourceReceiptIdDisplay: sourceReceiptId ? displayDocNumber(sourceReceiptId) || '—' : '—',
       sourceReceiptIdFull: sourceReceiptId || '—',
+      originReceiptIds: originReceiptIds.join(', '),
+      originReceiptDisplay: originReceiptIds.map((id) => displayDocNumber(id) || id).join(', ') || '—',
       amountNgn,
       status: String(app.status || 'Credit confirmation').trim() || 'Credit confirmation',
       applicationId: String(app.applicationId || app.application_id || '').trim() || '—',
-      usageNote: `₦${amountNgn.toLocaleString('en-NG')} of this refund used on ${
-        displayDocNumber(targetQ) || targetQ || 'another quotation'
-      }`,
+      usageNote,
     });
   }
   creditAppliedInPeriod.sort(
@@ -279,6 +298,14 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
     if (row.customer === '—' && row.refundIdFull && refundCustomerById.has(row.refundIdFull)) {
       row.customer = refundCustomerById.get(row.refundIdFull);
     }
+  }
+
+  const usageNotesByRefundId = new Map();
+  for (const row of creditAppliedInPeriod) {
+    if (!row.refundIdFull || row.refundIdFull === '—') continue;
+    const prev = usageNotesByRefundId.get(row.refundIdFull) || [];
+    prev.push(row.usageNote);
+    usageNotesByRefundId.set(row.refundIdFull, prev);
   }
 
   const pipeline = [];
@@ -309,11 +336,12 @@ export function refundsPackReport(refunds = [], startDate, endDate, creditApplic
       outstandingNgn: Math.round(out),
       requestedAtISO: toIsoDate(r.requestedAtISO) || '',
       usageNote:
-        creditAppliedNgn > 0
+        usageNotesByRefundId.get(id)?.join('; ') ||
+        (creditAppliedNgn > 0
           ? `₦${creditAppliedNgn.toLocaleString('en-NG')} already used on another quotation${
               creditTarget ? ` (${displayDocNumber(creditTarget) || creditTarget})` : ''
             }`
-          : '',
+          : ''),
     });
   }
   pipeline.sort((a, b) => (b.outstandingNgn || 0) - (a.outstandingNgn || 0));

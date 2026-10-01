@@ -1440,7 +1440,7 @@ export function listRefundCreditApplications(db, customerId = '', branchScope = 
   }
   sql += ` ORDER BY created_at_iso DESC, application_id DESC${sqlLimitClause(limit)}`;
   if (limit > 0) args.push(limit);
-  return db.prepare(sql).all(...args).map((row) => ({
+  const mapped = db.prepare(sql).all(...args).map((row) => ({
     applicationId: row.application_id,
     customerID: row.customer_id,
     targetQuotationRef: row.target_quotation_ref,
@@ -1461,6 +1461,52 @@ export function listRefundCreditApplications(db, customerId = '', branchScope = 
     reverseReason: row.reverse_reason || null,
     releasedForRefundId: row.released_for_refund_id || null,
   }));
+  return attachOriginReceiptIds(db, mapped);
+}
+
+/**
+ * Receipts on the quotation the refund came from, excluding the receipt that consumed it.
+ * Print uses these ids. It does not post to a treasury account.
+ * @param {import('better-sqlite3').Database} db
+ * @param {Array<{ sourceQuotationRef?: string, sourceReceiptId?: string }>} apps
+ */
+function attachOriginReceiptIds(db, apps) {
+  const list = Array.isArray(apps) ? apps : [];
+  if (!list.length || !tableExists(db, 'sales_receipts')) {
+    return list.map((app) => ({ ...app, originReceiptIds: app.originReceiptIds || [] }));
+  }
+  const quotes = [...new Set(list.map((app) => String(app.sourceQuotationRef || '').trim()).filter(Boolean))];
+  const byQuote = new Map();
+  const chunkSize = 80;
+  for (let i = 0; i < quotes.length; i += chunkSize) {
+    const chunk = quotes.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(', ');
+    let rows = [];
+    try {
+      rows = db
+        .prepare(`SELECT id, quotation_ref, status FROM sales_receipts WHERE quotation_ref IN (${placeholders})`)
+        .all(...chunk);
+    } catch (err) {
+      console.error('[refund-credit] origin receipts', err);
+      return list.map((app) => ({ ...app, originReceiptIds: app.originReceiptIds || [] }));
+    }
+    for (const row of rows) {
+      if (String(row.status || '').trim().toLowerCase() === 'reversed') continue;
+      const quoteRef = String(row.quotation_ref || '').trim();
+      const id = String(row.id || '').trim();
+      if (!quoteRef || !id) continue;
+      const ids = byQuote.get(quoteRef) || [];
+      if (!ids.includes(id)) ids.push(id);
+      byQuote.set(quoteRef, ids);
+    }
+  }
+  return list.map((app) => {
+    const consuming = String(app.sourceReceiptId || '').trim();
+    const originReceiptIds = (byQuote.get(String(app.sourceQuotationRef || '').trim()) || []).filter(
+      (id) => id !== consuming
+    );
+    return { ...app, originReceiptIds };
+  });
 }
 
 /**

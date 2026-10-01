@@ -1028,12 +1028,20 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
           },
         });
       })();
-      const stockRecalc = recalculateProductionJobCoilStock(db, jobID, {
+      const allocations = listProductionJobCoilsForJob(db, jobID);
+      const recalcOpts = {
         extraCoilNos: normalized.map((line) => line.coilNo),
         workspaceBranchId: opts.workspaceBranchId,
         actor: opts.actor,
+      };
+      setImmediate(() => {
+        try {
+          recalculateProductionJobCoilStock(db, jobID, recalcOpts);
+        } catch (error) {
+          console.error('production stock recalc after coil append', error);
+        }
       });
-      return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID), stockRecalc };
+      return { ok: true, allocations };
     } catch (error) {
       return { ok: false, error: String(error.message || error) };
     }
@@ -1832,11 +1840,19 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
         },
       });
     })();
-    const stockRecalc = recalculateProductionJobCoilStock(db, jobID, {
+    const allocations = listProductionJobCoilsForJob(db, jobID);
+    const recalcOpts = {
       workspaceBranchId: opts.workspaceBranchId,
       actor: opts.actor,
+    };
+    setImmediate(() => {
+      try {
+        recalculateProductionJobCoilStock(db, jobID, recalcOpts);
+      } catch (error) {
+        console.error('production stock recalc after run log', error);
+      }
     });
-    return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID), stockRecalc };
+    return { ok: true, allocations };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
   }

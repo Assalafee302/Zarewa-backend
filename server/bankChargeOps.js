@@ -136,6 +136,8 @@ export function recordBankCharge(db, payload = {}, branchId = DEFAULT_BRANCH_ID)
         workspaceBranchId: bid,
         workspaceViewAll: Boolean(payload.workspaceViewAll),
         actor,
+        dateRuleType: 'BANK_CHARGE',
+        dateOverrideReason: payload.dateOverrideReason,
       });
 
       const glExp = tryPostExpensePaymentGlTx(db, {

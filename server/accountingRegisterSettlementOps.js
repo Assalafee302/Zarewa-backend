@@ -17,6 +17,7 @@ import { userMayManageAccountingSubledger } from './financeDeskAccess.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { nextPostingBatchHumanId, nextRegisterSettlementHumanId } from './humanId.js';
 import { insertTreasuryMovementTx } from './writeOps.js';
+import { normalizeIsoTimestampStrict } from '../shared/lib/isoTimestamp.js';
 import {
   clearAccountingRegisterLine,
   ensureAccountingRegisterSchema,
@@ -70,9 +71,11 @@ function actorName(user) {
 function normalizeIsoTimestamp(s) {
   const raw = String(s || '').trim();
   if (!raw) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw}T12:00:00.000Z`;
-  const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  try {
+    return normalizeIsoTimestampStrict(raw, { allowNow: false, label: 'Date' });
+  } catch {
+    return '';
+  }
 }
 
 function mapSettlementRow(row) {

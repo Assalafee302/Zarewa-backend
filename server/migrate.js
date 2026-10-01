@@ -21,6 +21,10 @@ import { recomputeAllStaffRoleCompliance } from './hrRoleComplianceOps.js';
 import { migrateSetupQuoteItemBranch } from './masterData.js';
 import { closeHangingCoilShortReceipts } from './procurement/coilShortReceiptCloseOps.js';
 import {
+  ensureTreasuryBalanceIntegritySchema,
+} from './finance/treasuryBalanceIntegrityOps.js';
+import { seedTreasuryPostingPolicyIfAbsent } from './finance/treasuryPostingPolicy.js';
+import {
   SCHEMA_MIGRATION_FTS,
   ensureWorkspaceSearchFtsSchema,
   rebuildWorkspaceSearchFts,
@@ -616,8 +620,7 @@ function runMigrationsUnlocked(db) {
   const expenses = tableCols('expenses');
   if (expenses.size && !expenses.has('category_lane')) {
     db.exec(`ALTER TABLE expenses ADD COLUMN category_lane TEXT`);
-  }
-  if (expenses.size) {
+  }  if (expenses.size) {
     db.prepare(`UPDATE expenses SET category = 'Others' WHERE TRIM(category) = 'Miscellaneous'`).run();
   }
 
@@ -7623,5 +7626,16 @@ function migrateHrRoleComplianceLifecycle2026(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_hr_staff_bank_verification ON hr_staff_profiles(bank_verification_status)`);
   } catch {
     /* optional */
+  }
+
+  try {
+    ensureTreasuryBalanceIntegritySchema(db);
+  } catch {
+    /* host dialect */
+  }
+  try {
+    seedTreasuryPostingPolicyIfAbsent(db);
+  } catch {
+    /* org_policy_kv may not exist on a partial host */
   }
 }

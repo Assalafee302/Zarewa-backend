@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { periodKeyFromParsedDate } from '../shared/lib/isoTimestamp.js';
 import { accessoryFulfillmentSummaryForQuotation, normAccessoryNameKey } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
@@ -1917,11 +1918,9 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   return issues;
 }
 
+/** YYYY-MM from a period key or a real posting date. Garbage (TM-2780) throws instead of locking "262026-09". */
 export function periodKeyFromDate(dateISO) {
-  const raw = String(dateISO || '').trim();
-  const base = raw || nowIso().slice(0, 10);
-  const [year, month] = base.split('-');
-  return `${year}-${month || '01'}`;
+  return periodKeyFromParsedDate(dateISO, nowIso().slice(0, 10));
 }
 
 /**
@@ -6354,19 +6353,44 @@ function actorMayAssignTreasuryBranch(actor) {
   return rk === 'admin' || rk === 'md' || rk === 'ceo';
 }
 
+/**
+ * Create or update a till/bank account's metadata.
+ * Money invariants (Phase 2.1):
+ * - `payload.balance` is ignored. The stored balance only moves with a treasury movement.
+ * - New account: stored balance starts equal to the opening balance (no movements yet).
+ * - Changing an existing opening balance needs Admin/MD/CEO and `openingChangeReason`, writes
+ *   `treasury_account.opening_change` with old/new/reason, and does not touch the stored balance.
+ */
 export function upsertTreasuryAccount(db, payload, actor) {
   const name = String(payload.name ?? '').trim();
   if (!name) return { ok: false, error: 'Account name is required.' };
-  const balance = roundMoney(payload.balance);
-  const hasOpeningKey = Object.prototype.hasOwnProperty.call(payload, 'openingBalanceNgn');
+  const hasOpeningKey =
+    Object.prototype.hasOwnProperty.call(payload, 'openingBalanceNgn') &&
+    payload.openingBalanceNgn !== null &&
+    payload.openingBalanceNgn !== undefined &&
+    String(payload.openingBalanceNgn).trim() !== '';
+  const openingChangeReason = String(payload.openingChangeReason ?? '').trim();
   let openingBalanceNgn;
-  if (payload.id && !hasOpeningKey) {
+  let openingChange = null;
+  if (payload.id) {
     const ex = db
       .prepare(`SELECT opening_balance_ngn FROM treasury_accounts WHERE id = ?`)
       .get(Number(payload.id));
-    openingBalanceNgn = roundMoney(ex?.opening_balance_ngn);
+    if (!ex) return { ok: false, error: 'Treasury account not found.' };
+    const oldOpening = roundMoney(ex.opening_balance_ngn);
+    openingBalanceNgn = hasOpeningKey ? roundMoney(payload.openingBalanceNgn) : oldOpening;
+    if (openingBalanceNgn !== oldOpening) {
+      const rk = String(actor?.roleKey || '').toLowerCase();
+      if (!['admin', 'md', 'ceo'].includes(rk)) {
+        return { ok: false, error: 'Only Admin, MD or CEO can change an opening balance.' };
+      }
+      if (!openingChangeReason) {
+        return { ok: false, error: 'A reason is required to change the opening balance.' };
+      }
+      openingChange = { oldOpening, newOpening: openingBalanceNgn, reason: openingChangeReason };
+    }
   } else {
-    openingBalanceNgn = hasOpeningKey ? roundMoney(payload.openingBalanceNgn) : balance;
+    openingBalanceNgn = hasOpeningKey ? roundMoney(payload.openingBalanceNgn) : 0;
   }
   const accountOfficerName = String(payload.accountOfficerName ?? '').trim();
   const accountOfficerPhone = String(payload.accountOfficerPhone ?? '').trim();
@@ -6402,14 +6426,13 @@ export function upsertTreasuryAccount(db, payload, actor) {
         if (mayReassignBranch) {
           db.prepare(
             `UPDATE treasury_accounts
-             SET name = ?, bank_name = ?, balance = ?, opening_balance_ngn = ?, type = ?, acc_no = ?,
+             SET name = ?, bank_name = ?, opening_balance_ngn = ?, type = ?, acc_no = ?,
                  account_officer_name = ?, account_officer_phone = ?, bank_branch = ?, sort_code_or_swift = ?, notes = ?,
                  branch_id = ?
              WHERE id = ?`
           ).run(
             name,
             String(payload.bankName ?? '').trim(),
-            balance,
             openingBalanceNgn,
             String(payload.type ?? 'Bank').trim() || 'Bank',
             String(payload.accNo ?? '').trim() || 'N/A',
@@ -6424,13 +6447,12 @@ export function upsertTreasuryAccount(db, payload, actor) {
         } else {
           db.prepare(
             `UPDATE treasury_accounts
-             SET name = ?, bank_name = ?, balance = ?, opening_balance_ngn = ?, type = ?, acc_no = ?,
+             SET name = ?, bank_name = ?, opening_balance_ngn = ?, type = ?, acc_no = ?,
                  account_officer_name = ?, account_officer_phone = ?, bank_branch = ?, sort_code_or_swift = ?, notes = ?
              WHERE id = ?`
           ).run(
             name,
             String(payload.bankName ?? '').trim(),
-            balance,
             openingBalanceNgn,
             String(payload.type ?? 'Bank').trim() || 'Bank',
             String(payload.accNo ?? '').trim() || 'N/A',
@@ -6449,7 +6471,7 @@ export function upsertTreasuryAccount(db, payload, actor) {
         ).run(
           name,
           String(payload.bankName ?? '').trim(),
-          balance,
+          openingBalanceNgn,
           openingBalanceNgn,
           String(payload.type ?? 'Bank').trim() || 'Bank',
           String(payload.accNo ?? '').trim() || 'N/A',
@@ -6471,8 +6493,18 @@ export function upsertTreasuryAccount(db, payload, actor) {
         entityKind: 'treasury_account',
         entityId: String(row?.id ?? payload.id ?? ''),
         note: `${name} saved in treasury controls`,
-        details: { balance, openingBalanceNgn },
+        details: { openingBalanceNgn, treasuryKept: true },
       });
+      if (openingChange) {
+        appendAuditLog(db, {
+          actor,
+          action: 'treasury_account.opening_change',
+          entityKind: 'treasury_account',
+          entityId: String(row?.id ?? payload.id ?? ''),
+          note: openingChange.reason,
+          details: openingChange,
+        });
+      }
     })();
     return { ok: true, id: savedId };
   } catch (e) {

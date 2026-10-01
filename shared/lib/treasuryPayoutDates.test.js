@@ -14,6 +14,16 @@ describe('treasuryPayoutDates', () => {
     expect(payoutLinePostedAtISO({ dateISO: '2026-03-10' })).toBe('2026-03-10T12:00:00.000Z');
   });
 
+  it('rejects a garbage line date instead of saving "262026-09-T12…" (TM-2780)', () => {
+    expect(() => payoutLinePostedAtISO({ dateISO: '262026-09-07' }, '2026-09-07')).toThrow(/Payment line date/);
+    expect(() => payoutLinePostedDay({ dateISO: '2026-02-30' })).toThrow(/Invalid calendar date/);
+  });
+
+  it('uses the fallback only when the line has no date', () => {
+    expect(payoutLinePostedAtISO({}, '2026-09-07')).toBe('2026-09-07T12:00:00.000Z');
+    expect(payoutLinePostedAtISO({ dateISO: '2026-09-07T15:30:00.000Z' })).toBe('2026-09-07T12:00:00.000Z');
+  });
+
   it('picks latest day for mixed batch', () => {
     const lines = [{ dateISO: '2026-01-05' }, { dateISO: '2026-01-20' }];
     expect(latestPayoutDay(lines, (l) => payoutLinePostedDay(l))).toBe('2026-01-20');

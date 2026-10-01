@@ -5,6 +5,7 @@ import {
   decideCreditException,
   revokeCreditException,
   migrateCreditExceptions,
+  listCreditExceptions,
   resolveActiveCreditForQuotation,
   getQuotationCreditStatus,
   countCreditExceptionTrialDiagnostics,
@@ -28,8 +29,8 @@ describe.skipIf(!mysqlTestReady)('creditExceptionOps', () => {
     db = createDatabase(':memory:');
     migrateCreditExceptions(db);
     db.exec(`
-      INSERT INTO quotations (id, customer_id, total_ngn, paid_ngn, status, lines_json, date_iso, branch_id)
-      VALUES ('QT-CRED-1', 'C1', 10000000, 3000000, 'Approved', '{}', '2026-06-01', 'BR-KD');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-CRED-1', 'C1', 'Musa Garba', 10000000, 3000000, 'Approved', '{}', '2026-06-01', 'BR-KD');
       INSERT INTO production_jobs (job_id, quotation_ref, status, actual_meters, completed_at_iso, created_at_iso)
       VALUES ('PJ-C1','QT-CRED-1','Completed',100,'2026-06-10T10:00:00.000Z','2026-06-10T10:00:00.000Z');
     `);
@@ -155,5 +156,12 @@ describe.skipIf(!mysqlTestReady)('creditExceptionOps', () => {
     const st = getQuotationCreditStatus(db, 'QT-CRED-1');
     expect(st.outstandingNgn).toBe(7_000_000);
     expect(st.receivableNgn).toBe(7_000_000);
+  });
+
+  it('listCreditExceptions enriches customerName from quotations', () => {
+    createCreditExceptionRequest(db, { quotationRef: 'QT-CRED-1' }, branchActor);
+    const list = listCreditExceptions(db, { quotationRef: 'QT-CRED-1' });
+    expect(list.length).toBe(1);
+    expect(list[0].customerName).toBe('Musa Garba');
   });
 });

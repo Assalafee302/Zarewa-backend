@@ -2,6 +2,7 @@
  * HTTP routes for branch overtime (OT) pay requests (`/api/ot/*`).
  * Domain logic lives in otOps.js — this file is auth + branch scope + status visibility.
  */
+import { treasuryMoneyRoute } from './http/treasuryMoneyRoute.js';
 import {
   DEFAULT_BRANCH_ID,
 } from './branches.js';
@@ -404,7 +405,7 @@ export function registerOtApi(app, db) {
     }
   });
 
-  app.post('/api/ot/requests/:id/pay', requireAuth, requirePermission(OT_PAY_PERM), (req, res) => {
+  app.post('/api/ot/requests/:id/pay', requireAuth, requirePermission(OT_PAY_PERM), treasuryMoneyRoute(db, 'ot.pay'), (req, res) => {
     try {
       const r = payOtRequest(
         db,

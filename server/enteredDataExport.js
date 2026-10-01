@@ -24,6 +24,7 @@ import {
   listTreasuryAccounts,
   listTreasuryMovements,
 } from './readModel.js';
+import { computeTreasuryBalanceIntegrity } from './finance/treasuryBalanceIntegrityOps.js';
 
 const UNLIMITED = { unlimited: true };
 const PO_OPTS = { unlimited: true, skipSideEffects: true };
@@ -443,9 +444,41 @@ function flattenTreasuryAccounts(rows) {
       'accNo',
       'balance',
       'openingBalanceNgn',
+      'storedBalanceNgn',
+      'computedBalanceNgn',
+      'movementSumNgn',
+      'differenceNgn',
+      'strictCacheEnabled',
       'accountOfficerName',
       'bankBranch',
       'branchId',
+    ])
+  );
+}
+
+function flattenTreasuryIntegrity(rows) {
+  return rows.map((r) =>
+    pick(r, [
+      'ranAtISO',
+      'branchId',
+      'treasuryAccountId',
+      'accountName',
+      'openingBalanceNgn',
+      'movementSumNgn',
+      'computedBalanceNgn',
+      'storedBalanceNgn',
+      'differenceNgn',
+      'strictCacheEnabled',
+      'strictCacheChangedAtISO',
+      'strictCacheChangedBy',
+      'strictCacheReason',
+      'lastNonMovementChangeAtISO',
+      'lastNonMovementChangeKind',
+      'lastNonMovementChangeBy',
+      'negativeDayCount',
+      'firstNegativeDay',
+      'lowestBalanceNgn',
+      'lowestBalanceDay',
     ])
   );
 }
@@ -467,6 +500,13 @@ function flattenTreasuryMovements(rows) {
       'sourceId',
       'note',
       'createdBy',
+      'createdByUserId',
+      'createdAtISO',
+      'sourceDocDate',
+      'dateOverrideReason',
+      'amountFloorReason',
+      'duplicateOverrideReason',
+      'reversesMovementId',
     ])
   );
 }
@@ -520,6 +560,18 @@ export function collectEnteredDataPack(db, branchScope = 'ALL') {
   const ledger = safeList('ledger', () => listLedgerEntries(db, branchScope, UNLIMITED));
   const treasuryAccounts = safeList('treasuryAccounts', () => listTreasuryAccounts(db, branchScope));
   const treasuryMovements = safeList('treasuryMovements', () => listTreasuryMovements(db, branchScope, UNLIMITED));
+  const integrityPack = (() => {
+    try {
+      return computeTreasuryBalanceIntegrity(db, branchScope || 'ALL');
+    } catch (e) {
+      console.error('[entered-data] treasuryIntegrity', e);
+      return { ranAtISO: new Date().toISOString(), accounts: [] };
+    }
+  })();
+  const treasuryIntegrity = (integrityPack.accounts || []).map((a) => ({
+    ...a,
+    ranAtISO: integrityPack.ranAtISO,
+  }));
   const bankRecon = safeList('bankRecon', () => listBankReconciliation(db, branchScope));
   const suppliers = safeList('suppliers', () => listSuppliers(db));
   const transportAgents = safeList('transportAgents', () => listTransportAgents(db));
@@ -545,6 +597,7 @@ export function collectEnteredDataPack(db, branchScope = 'ALL') {
     { name: 'Ledger', rows: flattenLedger(ledger) },
     { name: 'Treasury_accounts', rows: flattenTreasuryAccounts(treasuryAccounts) },
     { name: 'Treasury_movements', rows: flattenTreasuryMovements(treasuryMovements) },
+    { name: 'Treasury_integrity', rows: flattenTreasuryIntegrity(treasuryIntegrity) },
     { name: 'Bank_recon', rows: flattenBankRecon(bankRecon) },
     { name: 'Suppliers', rows: flattenSuppliers(suppliers) },
     { name: 'Transport_agents', rows: flattenTransportAgents(transportAgents) },
@@ -614,4 +667,6 @@ export const enteredDataFlatten = {
   flattenQuotations,
   flattenQuotationLines,
   flattenReceipts,
+  flattenTreasuryAccounts,
+  flattenTreasuryIntegrity,
 };

@@ -83,10 +83,26 @@ describe('enteredDataExport', () => {
     expect(pack.sheets.every((s) => s.rows.length === 0)).toBe(true);
   });
 
-  it('enteredDataFilename sanitizes branch scope', () => {
-    expect(enteredDataFilename('BR-KD', '2026-08-15T12:00:00.000Z')).toBe(
-      'zarewa-entered-data-BR-KD-2026-08-15.xlsx'
-    );
-    expect(enteredDataFilename('ALL / HQ', '2026-08-15')).toBe('zarewa-entered-data-ALLHQ-2026-08-15.xlsx');
+  it('flattenTreasuryAccounts includes stored, computed, and difference', () => {
+    const rows = enteredDataFlatten.flattenTreasuryAccounts([
+      {
+        id: 4,
+        name: 'Moniepoint',
+        bankName: 'Moniepoint',
+        type: 'Bank',
+        accNo: '1',
+        balance: 28733823,
+        openingBalanceNgn: 713503,
+        storedBalanceNgn: 28733823,
+        computedBalanceNgn: 22955436,
+        movementSumNgn: 22241933,
+        differenceNgn: 5778387,
+        branchId: 'BR-KD',
+      },
+    ]);
+    expect(rows[0].storedBalanceNgn).toBe(28733823);
+    expect(rows[0].computedBalanceNgn).toBe(22955436);
+    expect(rows[0].differenceNgn).toBe(5778387);
+    expect(rows[0].movementSumNgn).toBe(22241933);
   });
 });

@@ -1,21 +1,30 @@
 /**
  * Per-line payout dates become treasury movement posted_at_iso (statements, reports, period locks).
  * Frontend copies via `npm run sync:shared` → src/shared/lib/treasuryPayoutDates.js
+ *
+ * A typed line date that is not a real calendar day throws. It is never sliced into a
+ * string like "262026-09-T12:00:00.000Z" (TM-2780) and never silently replaced by the fallback.
  */
+import { IsoTimestampError, lagosCalendarDay, parseIsoTimestamp } from './isoTimestamp.js';
+
+function validDayOrThrow(raw, label) {
+  const parsed = parseIsoTimestamp(raw);
+  if (!parsed.ok) throw new IsoTimestampError(`${label}: ${parsed.error}`, parsed.code);
+  return parsed.day;
+}
 
 export function payoutLinePostedDay(line, fallbackDay = '') {
   const raw = String(line?.dateISO ?? line?.postedAtISO ?? line?.paidAtISO ?? '').trim();
-  const day = raw.slice(0, 10);
-  const fb = String(fallbackDay || '').trim().slice(0, 10);
-  return day || fb || new Date().toISOString().slice(0, 10);
+  if (raw) return validDayOrThrow(raw, 'Payment line date');
+  const fb = String(fallbackDay || '').trim();
+  if (fb) return validDayOrThrow(fb, 'Payment date');
+  return lagosCalendarDay();
 }
 
-export function payoutLinePostedAtISO(line, fallbackDay = '', normalizeIsoTimestamp) {
-  const day = payoutLinePostedDay(line, fallbackDay);
-  if (typeof normalizeIsoTimestamp === 'function' && day.includes('T')) {
-    return normalizeIsoTimestamp(day);
-  }
-  return `${day}T12:00:00.000Z`;
+/** Third argument kept for call-site compatibility; the line day is always posted at 12:00Z. */
+// eslint-disable-next-line no-unused-vars
+export function payoutLinePostedAtISO(line, fallbackDay = '', _normalizeIsoTimestamp) {
+  return `${payoutLinePostedDay(line, fallbackDay)}T12:00:00.000Z`;
 }
 
 /** Latest YYYY-MM-DD among payout lines (header paid_at_iso when batch has mixed dates). */

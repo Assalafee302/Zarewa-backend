@@ -10,7 +10,9 @@ import crypto from 'node:crypto';
 import { actorId, actorName } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
-import { nextOtRequestHumanId, nextPostingBatchHumanId, nextTreasuryMovementHumanId } from './humanId.js';
+import { nextOtRequestHumanId, nextPostingBatchHumanId } from './humanId.js';
+import { normalizeIsoTimestampStrict } from '../shared/lib/isoTimestamp.js';
+import { insertTreasuryMovementTx } from './finance/treasuryMovementWrite.js';
 import {
   latestPayoutDay,
   payoutLinePostedAtISO,
@@ -44,12 +46,7 @@ function nowIso() {
 }
 
 function normalizeIsoTimestamp(value) {
-  const s = String(value ?? '').trim();
-  if (!s) return nowIso();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T12:00:00.000Z`;
-  const t = Date.parse(s);
-  if (Number.isNaN(t)) return nowIso();
-  return new Date(t).toISOString();
+  return normalizeIsoTimestampStrict(value, { label: 'OT date' });
 }
 
 function moneyRound(v) {
@@ -59,42 +56,12 @@ function moneyRound(v) {
 
 /** Local treasury outflow insert — avoids importing writeOps (heavy / circular). */
 function insertOtTreasuryOutflowTx(db, payload) {
-  const treasuryAccountId = Number(payload.treasuryAccountId);
-  if (!treasuryAccountId) throw new Error('treasuryAccountId is required.');
-  const amountNgn = moneyRound(payload.amountNgn);
-  if (!amountNgn) throw new Error('Treasury movement amount must be non-zero.');
-  const row = db.prepare(`SELECT id, name, balance FROM treasury_accounts WHERE id = ?`).get(treasuryAccountId);
-  if (!row) throw new Error('Treasury account not found.');
-  const nextBalance = moneyRound(row.balance) + amountNgn;
-  if (nextBalance < 0) throw new Error(`Insufficient balance in ${row.name}.`);
-  db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(nextBalance, treasuryAccountId);
-  const branchForTm = String(payload.workspaceBranchId || payload.branchId || DEFAULT_BRANCH_ID).trim();
-  const id = String(payload.id || '').trim() || nextTreasuryMovementHumanId(db, branchForTm);
-  const postedAtISO = normalizeIsoTimestamp(payload.postedAtISO);
-  db.prepare(
-    `INSERT INTO treasury_movements (
-      id, posted_at_iso, type, treasury_account_id, amount_ngn, reference,
-      counterparty_kind, counterparty_id, counterparty_name, source_kind, source_id,
-      note, created_by, reverses_movement_id, batch_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).run(
-    id,
-    postedAtISO,
-    payload.type,
-    treasuryAccountId,
-    amountNgn,
-    payload.reference ?? null,
-    payload.counterpartyKind ?? null,
-    payload.counterpartyId ?? null,
-    payload.counterpartyName ?? null,
-    payload.sourceKind ?? null,
-    payload.sourceId ?? null,
-    payload.note ?? null,
-    payload.createdBy ?? null,
-    null,
-    payload.batchId ?? null
-  );
-  return id;
+  const row = insertTreasuryMovementTx(db, {
+    ...payload,
+    amountNgn: moneyRound(payload.amountNgn),
+    actor: payload.actor || null,
+  });
+  return row.id;
 }
 
 function newLineId(prefix) {
@@ -1269,6 +1236,7 @@ export function payOtRequest(db, actor, requestId, body = {}, opts = {}) {
           sourceId: id,
           batchId,
           createdBy: paidByLabel,
+          actor,
           workspaceBranchId,
           branchId: fresh.branch_id,
         });

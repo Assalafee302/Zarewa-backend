@@ -62,15 +62,25 @@ export function buildTreasuryAccountStatement(db, treasuryAccountId, fromISO, to
   if (!account) return { ok: false, error: 'Treasury account not found.' };
 
   const liveBalance = roundMoney(account.balance);
-  const afterTo = db
+  const openingRegistered = roundMoney(account.opening_balance_ngn);
+  const sumThroughTo = db
     .prepare(
       `SELECT COALESCE(SUM(amount_ngn), 0) AS s
        FROM treasury_movements
        WHERE treasury_account_id = ?
-         AND SUBSTR(posted_at_iso, 1, 10) > ?`
+         AND SUBSTR(posted_at_iso, 1, 10) <= ?`
     )
     .get(id, to);
-  const closingBalanceNgn = roundMoney(liveBalance - roundMoney(afterTo?.s));
+  const sumBeforeFrom = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s
+       FROM treasury_movements
+       WHERE treasury_account_id = ?
+         AND SUBSTR(posted_at_iso, 1, 10) < ?`
+    )
+    .get(id, from);
+  const closingBalanceNgn = roundMoney(openingRegistered + roundMoney(sumThroughTo?.s));
+  const openingBalanceNgn = roundMoney(openingRegistered + roundMoney(sumBeforeFrom?.s));
 
   const rows = db
     .prepare(
@@ -83,9 +93,6 @@ export function buildTreasuryAccountStatement(db, treasuryAccountId, fromISO, to
        ORDER BY tm.posted_at_iso ASC, tm.id ASC`
     )
     .all(id, from, to);
-
-  const periodNet = roundMoney(rows.reduce((s, r) => s + roundMoney(r.amount_ngn), 0));
-  const openingBalanceNgn = roundMoney(closingBalanceNgn - periodNet);
 
   let running = openingBalanceNgn;
   let inflowNgn = 0;

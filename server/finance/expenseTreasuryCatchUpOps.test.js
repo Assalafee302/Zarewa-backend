@@ -10,12 +10,12 @@ import {
   isExpenseUnpostedForVoid,
   listExpensesClearableForReimport,
   listExpensesMissingBankPosting,
-  rebuildTreasuryBalancesFromLedger,
   resolveTillForExpense,
   syncImportedExpensesToCashier,
   voidUnpostedImportedExpense,
   EXPENSE_REIMPORT_CONFIRM_PHRASE,
 } from './expenseTreasuryCatchUpOps.js';
+import { previewTreasuryBalanceRebuild } from './treasuryBalanceIntegrityOps.js';
 
 function mysqlAvailable() {
   try {
@@ -264,7 +264,7 @@ describe.skipIf(!mysqlOk)('expense treasury catch-up (imported refunds)', () => 
     expect(after).toBe(before + preview.restoreCashNgn);
   });
 
-  it('rebuilds a drifted till balance and posts leftover expenses onto Cash vs POS', () => {
+  it('posts leftover expenses onto Cash vs POS without rewriting drifted stored balances', () => {
     db.prepare(
       `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, branch_id, opening_balance_ngn)
        VALUES ('Yola Cash', 'Cash', 2000000, 'Cash', 'YL-CASH-SYNC', ?, 2000000)`
@@ -327,11 +327,21 @@ describe.skipIf(!mysqlOk)('expense treasury catch-up (imported refunds)', () => 
     );
 
     db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(cashBefore, cashId);
-    const rebuilt = rebuildTreasuryBalancesFromLedger(db, DEFAULT_BRANCH_ID);
-    expect(rebuilt.ok).toBe(true);
+    const afterDrift = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cashId).balance);
+    const syncedAgain = syncImportedExpensesToCashier(db, ACTOR, {
+      workspaceBranchId: DEFAULT_BRANCH_ID,
+      category: 'Refund',
+    });
+    expect(syncedAgain.ok, JSON.stringify(syncedAgain)).toBe(true);
     expect(Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cashId).balance)).toBe(
-      cashBefore - 25_000
+      afterDrift
     );
+    const preview = previewTreasuryBalanceRebuild(db, DEFAULT_BRANCH_ID);
+    expect(preview.ok).toBe(true);
+    expect(preview.wroteRows).toBe(0);
+    const cashRow = preview.accounts.find((a) => a.treasuryAccountId === cashId);
+    expect(cashRow.storedBalanceNgn).toBe(afterDrift);
+    expect(cashRow.computedBalanceNgn).toBe(cashBefore - 25_000);
   });
 
   it('does not treat a payment-request expense as unposted import catch-up', () => {

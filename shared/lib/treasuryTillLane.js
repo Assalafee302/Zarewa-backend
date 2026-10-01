@@ -15,6 +15,21 @@ export function treasuryPayoutAvailableNgn(account) {
   return Math.round(Number(account?.balance) || 0);
 }
 
+/** Stored cache vs opening + movement sum. Display both when flagged or when they differ. */
+export function treasuryIntegrityDisplay(account) {
+  const stored = Math.round(Number(account?.storedBalanceNgn ?? account?.balance) || 0);
+  const computed =
+    account?.computedBalanceNgn != null && String(account.computedBalanceNgn).trim() !== ''
+      ? Math.round(Number(account.computedBalanceNgn) || 0)
+      : stored;
+  const difference =
+    account?.differenceNgn != null && String(account.differenceNgn).trim() !== ''
+      ? Math.round(Number(account.differenceNgn) || 0)
+      : stored - computed;
+  const show = Boolean(account?.displayComputed) || difference !== 0;
+  return { stored, computed, difference, show };
+}
+
 /**
  * Lane for a treasury account. POS is often stored as type Bank with name "POS".
  * @param {{ type?: string; name?: string; bankName?: string; bank_name?: string } | null | undefined} account

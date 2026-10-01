@@ -104,6 +104,7 @@ function rowToDto(row) {
     quotationId: row.quotation_id,
     quotationRef: row.quotation_ref,
     customerId: row.customer_id,
+    customerName: row.customer_name || null,
     branchId: row.branch_id,
     amountNgn: Math.round(Number(row.amount_ngn) || 0),
     outstandingNgnAtRequest: Math.round(Number(row.outstanding_ngn_at_request) || 0),
@@ -190,7 +191,12 @@ export function getQuotationCreditStatus(db, quotationRef) {
   const outstandingNgn = Math.round(Number(pay.balanceNgn) || 0);
   const rows = db
     .prepare(
-      `SELECT * FROM credit_exceptions WHERE quotation_ref = ? ORDER BY created_at_iso DESC LIMIT 50`
+      `SELECT ce.*, q.customer_name
+       FROM credit_exceptions ce
+       LEFT JOIN quotations q ON q.id = ce.quotation_ref
+       WHERE ce.quotation_ref = ?
+       ORDER BY ce.created_at_iso DESC
+       LIMIT 50`
     )
     .all(ref);
   const dtos = rows.map(rowToDto);
@@ -238,9 +244,11 @@ export function resolveActiveCreditForQuotation(db, quotationRef, balanceNgn = n
 
   const rows = db
     .prepare(
-      `SELECT * FROM credit_exceptions
-       WHERE quotation_ref = ? AND status = ?
-       ORDER BY approved_at_iso DESC, created_at_iso DESC`
+      `SELECT ce.*, q.customer_name
+       FROM credit_exceptions ce
+       LEFT JOIN quotations q ON q.id = ce.quotation_ref
+       WHERE ce.quotation_ref = ? AND ce.status = ?
+       ORDER BY ce.approved_at_iso DESC, ce.created_at_iso DESC`
     )
     .all(ref, CREDIT_EXCEPTION_STATUS.APPROVED);
 
@@ -295,7 +303,14 @@ export function listCreditExceptions(db, filters = {}) {
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const limit = Math.min(200, Math.max(1, Math.round(Number(filters.limit) || 100)));
   const rows = db
-    .prepare(`SELECT * FROM credit_exceptions ${where} ORDER BY updated_at_iso DESC LIMIT ${limit}`)
+    .prepare(
+      `SELECT ce.*, q.customer_name
+       FROM credit_exceptions ce
+       LEFT JOIN quotations q ON q.id = ce.quotation_ref
+       ${where ? where.replace(/\b(status|quotation_ref|branch_id)\b/g, 'ce.$1') : ''}
+       ORDER BY ce.updated_at_iso DESC
+       LIMIT ${limit}`
+    )
     .all(...args);
   return rows.map(rowToDto);
 }
@@ -410,7 +425,14 @@ export function createCreditExceptionRequest(db, payload, actor) {
     },
   });
 
-  const row = db.prepare(`SELECT * FROM credit_exceptions WHERE id = ?`).get(id);
+  const row = db
+    .prepare(
+      `SELECT ce.*, q.customer_name
+       FROM credit_exceptions ce
+       LEFT JOIN quotations q ON q.id = ce.quotation_ref
+       WHERE ce.id = ?`
+    )
+    .get(id);
   return {
     ok: true,
     creditException: rowToDto(row),
@@ -488,7 +510,19 @@ export function decideCreditException(db, id, decision, payload, actor) {
       note: String(payload.decisionNote || '').trim() || 'Credit exception rejected',
       details: { quotationRef: row.quotation_ref },
     });
-    return { ok: true, creditException: rowToDto(db.prepare(`SELECT * FROM credit_exceptions WHERE id = ?`).get(row.id)) };
+    return {
+      ok: true,
+      creditException: rowToDto(
+        db
+          .prepare(
+            `SELECT ce.*, q.customer_name
+             FROM credit_exceptions ce
+             LEFT JOIN quotations q ON q.id = ce.quotation_ref
+             WHERE ce.id = ?`
+          )
+          .get(row.id)
+      ),
+    };
   }
 
   db.prepare(
@@ -515,7 +549,19 @@ export function decideCreditException(db, id, decision, payload, actor) {
       dueDateISO: row.due_date_iso,
     },
   });
-  return { ok: true, creditException: rowToDto(db.prepare(`SELECT * FROM credit_exceptions WHERE id = ?`).get(row.id)) };
+  return {
+    ok: true,
+    creditException: rowToDto(
+      db
+        .prepare(
+          `SELECT ce.*, q.customer_name
+           FROM credit_exceptions ce
+           LEFT JOIN quotations q ON q.id = ce.quotation_ref
+           WHERE ce.id = ?`
+        )
+        .get(row.id)
+    ),
+  };
 }
 
 /**
@@ -563,7 +609,19 @@ export function revokeCreditException(db, id, payload, actor) {
     note: String(payload.decisionNote || '').trim() || 'Credit exception revoked',
     details: { quotationRef: row.quotation_ref },
   });
-  return { ok: true, creditException: rowToDto(db.prepare(`SELECT * FROM credit_exceptions WHERE id = ?`).get(row.id)) };
+  return {
+    ok: true,
+    creditException: rowToDto(
+      db
+        .prepare(
+          `SELECT ce.*, q.customer_name
+           FROM credit_exceptions ce
+           LEFT JOIN quotations q ON q.id = ce.quotation_ref
+           WHERE ce.id = ?`
+        )
+        .get(row.id)
+    ),
+  };
 }
 
 /**

@@ -40,6 +40,8 @@ describe('buildTreasuryAccountStatement', () => {
                 branch_id: 'BR-KD',
               };
             }
+            if (q.includes('<= ?')) return { s: -50_000 };
+            if (q.includes('< ?')) return { s: 0 };
             return { s: 0 };
           },
           all: () => {

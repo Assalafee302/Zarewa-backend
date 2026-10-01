@@ -304,8 +304,8 @@ export function rebuildTreasuryBalancesFromLedger(db, branchId) {
 }
 
 /**
- * Post every expense still missing a till line onto Cash/POS from its payment method, then
- * rebuild live balances so Cashier desk matches the cash book.
+ * Post every expense still missing a till line onto Cash/POS from its payment method.
+ * Does not rewrite stored `treasury_accounts.balance` (Phase 2.1 — no catch-up rebuild).
  *
  * @param {import('better-sqlite3').Database} db
  * @param {object|null} actor
@@ -364,9 +364,6 @@ export function syncImportedExpensesToCashier(db, actor, payload = {}) {
     else failed.push({ expenseID: exp.expense_id, error: r.error || 'Could not deduct.' });
   }
 
-  const rebuilt = rebuildTreasuryBalancesFromLedger(db, bid);
-  if (!rebuilt.ok) return rebuilt;
-  const changed = (rebuilt.accounts || []).filter((a) => a.deltaNgn !== 0);
   const newlyPosted = posted.filter((p) => !p.alreadyOnTreasury);
   const summary = summarizeBranchExpenseCashPosting(db, bid, { category });
 
@@ -376,25 +373,16 @@ export function syncImportedExpensesToCashier(db, actor, payload = {}) {
   } else if (!missing.length) {
     bits.push('Every expense on this branch already has a till line');
   }
-  if (changed.length) {
-    bits.push(
-      `corrected ${changed.length} live balance(s): ${changed
-        .map((a) => `${a.accountName} ₦${a.previousBalanceNgn.toLocaleString('en-NG')} → ₦${a.nextBalanceNgn.toLocaleString('en-NG')}`)
-        .join('; ')}`
-    );
-  } else {
-    bits.push('live till balances already match the cash book');
-  }
   if (failed.length) bits.push(`${failed.length} row(s) could not post`);
 
   return {
-    ok: failed.length === 0 || newlyPosted.length > 0 || changed.length > 0,
+    ok: failed.length === 0 || newlyPosted.length > 0,
     postedCount: newlyPosted.length,
     failedCount: failed.length,
     posted,
     failed,
-    rebuiltAccounts: rebuilt.accounts,
-    balanceChangedCount: changed.length,
+    rebuiltAccounts: [],
+    balanceChangedCount: 0,
     summary,
     message: `${bits.join('. ')}.`,
   };
@@ -455,6 +443,7 @@ function attachTreasuryToExpenseTx(db, exp, treasuryAccountId, actor, opts) {
     workspaceBranchId: String(opts.workspaceBranchId || exp.branch_id || DEFAULT_BRANCH_ID).trim(),
     workspaceViewAll: Boolean(opts.workspaceViewAll),
     actor,
+    sourceDocDate: exp.date || null,
     allowNegativeBalance: true,
   });
 

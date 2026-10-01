@@ -3,6 +3,7 @@ import {
   TILL_LANE,
   composeTreasuryTillTruth,
   treasuryPayoutAvailableNgn,
+  treasuryIntegrityDisplay,
   treasuryTillLane,
 } from './treasuryTillLane.js';
 
@@ -18,6 +19,20 @@ describe('treasuryTillLane', () => {
 
   it('uses live balance as payout available (not opening + movements)', () => {
     expect(treasuryPayoutAvailableNgn({ balance: 12_500.4, openingBalanceNgn: 1 })).toBe(12500);
+  });
+
+  it('shows stored vs computed when they differ', () => {
+    const d = treasuryIntegrityDisplay({
+      balance: 28_733_823,
+      storedBalanceNgn: 28_733_823,
+      computedBalanceNgn: 22_955_436,
+      differenceNgn: 5_778_387,
+      displayComputed: true,
+    });
+    expect(d.show).toBe(true);
+    expect(d.stored).toBe(28_733_823);
+    expect(d.computed).toBe(22_955_436);
+    expect(d.difference).toBe(5_778_387);
   });
 });
 

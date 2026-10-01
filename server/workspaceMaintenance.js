@@ -1,4 +1,5 @@
 import { runQuotationLifecycleMaintenance } from './quotationLifecycleOps.js';
+import { recordTreasuryBalanceIntegrityRunIfDue } from './finance/treasuryBalanceIntegrityOps.js';
 
 /**
  * Background-safe maintenance (no per-user work-item sync).
@@ -14,6 +15,11 @@ export function runWorkspaceMaintenance(db, opts = {}) {
     }
   } catch (e) {
     console.error('[zarewa] quotation lifecycle maintenance failed', e);
+  }
+  try {
+    recordTreasuryBalanceIntegrityRunIfDue(db);
+  } catch (e) {
+    console.error('[zarewa] treasury balance integrity snapshot failed', e);
   }
 }
 

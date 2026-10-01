@@ -1106,6 +1106,20 @@ CREATE INDEX IF NOT EXISTS idx_treasury_movements_account ON treasury_movements(
 CREATE INDEX IF NOT EXISTS idx_treasury_movements_source ON treasury_movements(source_kind, source_id);
 CREATE INDEX IF NOT EXISTS idx_treasury_movements_posted ON treasury_movements(posted_at_iso DESC);
 
+CREATE TABLE IF NOT EXISTS treasury_balance_integrity_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ran_at_iso TEXT NOT NULL,
+  branch_id TEXT NOT NULL,
+  treasury_account_id INTEGER NOT NULL,
+  opening_balance_ngn INTEGER NOT NULL DEFAULT 0,
+  movement_sum_ngn INTEGER NOT NULL DEFAULT 0,
+  computed_ngn INTEGER NOT NULL DEFAULT 0,
+  stored_ngn INTEGER NOT NULL DEFAULT 0,
+  difference_ngn INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_treasury_integrity_ran ON treasury_balance_integrity_runs(ran_at_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_treasury_integrity_acct ON treasury_balance_integrity_runs(treasury_account_id, ran_at_iso DESC);
+
 CREATE TABLE IF NOT EXISTS inter_branch_loans (
   loan_id TEXT PRIMARY KEY,
   created_at_iso TEXT NOT NULL,

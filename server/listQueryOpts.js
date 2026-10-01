@@ -155,6 +155,44 @@ export function financeRegisterListOpts() {
 }
 
 /**
+ * Period / management reports must include every matching row, not the desk's
+ * recent-N page. Desk caps hide older receipts, jobs, expenses, and refunds
+ * from print and Excel for the selected dates.
+ * @returns {{ unlimited: true }}
+ */
+export function reportListOpts() {
+  return { unlimited: true };
+}
+
+/**
+ * Quotations on reports: full history, skip line-table enrich (IDs / totals / customer).
+ * @returns {{ unlimited: true, includeLines: false }}
+ */
+export function reportQuotationListOpts() {
+  return { unlimited: true, includeLines: false };
+}
+
+/**
+ * Purchase orders on reports: full history, no receipt-status writes on GET.
+ * @returns {{ unlimited: true, skipSideEffects: true }}
+ */
+export function reportPurchaseOrderListOpts() {
+  return { unlimited: true, skipSideEffects: true };
+}
+
+/**
+ * Treasury lines for a report period. `fromISO` drops movements before the
+ * period without the cashier desk's 62-day window.
+ * @param {string} [startDate]
+ * @returns {{ unlimited: true, fromISO?: string }}
+ */
+export function reportTreasuryListOpts(startDate) {
+  const fromISO = String(startDate || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fromISO)) return { unlimited: true, fromISO };
+  return { unlimited: true };
+}
+
+/**
  * List opts for sales receipts (Sales filters + Cashier desk confirmation queue).
  * Uncleared/pending receipts are merged in separately so cashier queues are not
  * silently truncated.

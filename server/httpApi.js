@@ -204,7 +204,13 @@ import {
   assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { parseListQuery, sendPaginatedList } from './listPagination.js';
-import { financeHistoryListOpts, productionHistoryListOpts, treasuryHistoryListOpts } from './listQueryOpts.js';
+import {
+  productionHistoryListOpts,
+  reportListOpts,
+  reportPurchaseOrderListOpts,
+  reportQuotationListOpts,
+  reportTreasuryListOpts,
+} from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
 import { humanizeValidationMessage } from './validationLabels.js';
 import { permissionGuidanceMessage } from './permissionMessages.js';
@@ -4897,16 +4903,16 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const report = buildMaterialTransactionReport({
-        productionJobs: listProductionJobs(db, branchScope, productionHistoryListOpts()),
+        productionJobs: listProductionJobs(db, branchScope, reportListOpts()),
         productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
-        quotations: listQuotations(db, branchScope),
-        refunds: listRefunds(db, branchScope),
+        quotations: listQuotations(db, branchScope, reportQuotationListOpts()),
+        refunds: listRefunds(db, branchScope, reportListOpts()),
         coilLots: listCoilLots(db, branchScope),
-        products: listProducts(db, branchScope),
+        products: listProducts(db, branchScope, reportListOpts()),
         stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
         stockMovementsThroughEnd: listStockMovementsForBranchThrough(db, branchScope, endDate),
         masterData: listMasterData(db),
-        accessoryUsage: listProductionJobAccessoryUsage(db, branchScope),
+        accessoryUsage: listProductionJobAccessoryUsage(db, branchScope, reportListOpts()),
         startDate,
         endDate,
       });
@@ -4944,10 +4950,10 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const report = buildMaterialTransactionReport({
-        productionJobs: listProductionJobs(db, branchScope, productionHistoryListOpts()),
+        productionJobs: listProductionJobs(db, branchScope, reportListOpts()),
         productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
-        quotations: listQuotations(db, branchScope),
-        refunds: listRefunds(db, branchScope),
+        quotations: listQuotations(db, branchScope, reportQuotationListOpts()),
+        refunds: listRefunds(db, branchScope, reportListOpts()),
         coilLots: listCoilLots(db, branchScope),
         startDate,
         endDate,
@@ -4990,15 +4996,15 @@ export function registerHttpApi(app, db) {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const raw = listSalesReceipts(db, branchScope);
-      const ledger = listLedgerEntries(db, branchScope);
+      const raw = listSalesReceipts(db, branchScope, reportListOpts());
+      const ledger = listLedgerEntries(db, branchScope, reportListOpts());
       const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
-      const tm = listTreasuryMovements(db, branchScope, treasuryHistoryListOpts());
+      const tm = listTreasuryMovements(db, branchScope, reportTreasuryListOpts(startDate));
       const creditApps = refundCreditApplyOps.listRefundCreditApplications(
         db,
         '',
         branchScope === 'ALL' ? 'ALL' : branchScope,
-        financeHistoryListOpts()
+        reportListOpts()
       );
       const rows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate, creditApps);
       const creditApplyRows = refundCreditApplyReportRows(creditApps, startDate, endDate);
@@ -5032,8 +5038,8 @@ export function registerHttpApi(app, db) {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const quotations = listQuotations(db, branchScope);
-      const jobs = listProductionJobs(db, branchScope, productionHistoryListOpts());
+      const quotations = listQuotations(db, branchScope, reportQuotationListOpts());
+      const jobs = listProductionJobs(db, branchScope, reportListOpts());
       const rows = revenueProductionReportRows(quotations, jobs, startDate, endDate);
       res.json({ ok: true, startDate, endDate, branchScope, rows });
     } catch (e) {
@@ -5046,9 +5052,9 @@ export function registerHttpApi(app, db) {
     try {
       const asAtDate = String(req.query.asAtDate || req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const quotations = listQuotations(db, branchScope);
-      const ledger = listLedgerEntries(db, branchScope);
-      const productionJobs = listProductionJobs(db, branchScope, productionHistoryListOpts());
+      const quotations = listQuotations(db, branchScope, reportQuotationListOpts());
+      const ledger = listLedgerEntries(db, branchScope, reportListOpts());
+      const productionJobs = listProductionJobs(db, branchScope, reportListOpts());
       const rows = arAsAtReportRows(quotations, ledger, productionJobs);
       res.json({
         ok: true,
@@ -5069,10 +5075,10 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const asAtDate = String(req.query.asAtDate || endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const raw = listSalesReceipts(db, branchScope);
-      const ledger = listLedgerEntries(db, branchScope);
+      const raw = listSalesReceipts(db, branchScope, reportListOpts());
+      const ledger = listLedgerEntries(db, branchScope, reportListOpts());
       const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
-      const jobs = listProductionJobs(db, branchScope, productionHistoryListOpts());
+      const jobs = listProductionJobs(db, branchScope, reportListOpts());
       const rows = salesBridgeReportRows(enriched, jobs, startDate, endDate, asAtDate);
       res.json({ ok: true, startDate, endDate, asAtDate: asAtDate || null, branchScope, rows });
     } catch (e) {
@@ -5086,8 +5092,8 @@ export function registerHttpApi(app, db) {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const expenses = listExpenses(db, branchScope, financeHistoryListOpts());
-      const treasuryMovements = listTreasuryMovements(db, branchScope, treasuryHistoryListOpts());
+      const expenses = listExpenses(db, branchScope, reportListOpts());
+      const treasuryMovements = listTreasuryMovements(db, branchScope, reportTreasuryListOpts(startDate));
       const { detail, summaryByCategory, dateBasis } = expensesPackReport(
         expenses,
         startDate,
@@ -5106,12 +5112,12 @@ export function registerHttpApi(app, db) {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const refunds = listRefunds(db, branchScope);
+      const refunds = listRefunds(db, branchScope, reportListOpts());
       const creditApps = refundCreditApplyOps.listRefundCreditApplications(
         db,
         '',
         branchScope === 'ALL' ? 'ALL' : branchScope,
-        financeHistoryListOpts()
+        reportListOpts()
       );
       const companyCutWithdrawals = listPaidCompanyRetentionWithdrawals(
         db,
@@ -5139,11 +5145,11 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const report = buildPurchaseReport({
-        purchaseOrders: listPurchaseOrders(db, branchScope),
+        purchaseOrders: listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts()),
         coilLots: listCoilLots(db, branchScope),
         stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
-        treasuryMovements: listTreasuryMovements(db, branchScope, treasuryHistoryListOpts()),
-        products: listProducts(db, branchScope),
+        treasuryMovements: listTreasuryMovements(db, branchScope, reportTreasuryListOpts(startDate)),
+        products: listProducts(db, branchScope, reportListOpts()),
         masterData: listMasterData(db),
         startDate,
         endDate,
@@ -5162,12 +5168,12 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       if (cut === 'ordered') {
-        const pos = listPurchaseOrders(db, branchScope);
+        const pos = listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts());
         const rows = purchasesOrderedRows(pos, startDate, endDate);
         return res.json({ ok: true, cut: 'ordered', startDate, endDate, branchScope, rows });
       }
       if (cut === 'paid') {
-        const tm = listTreasuryMovements(db, branchScope, treasuryHistoryListOpts());
+        const tm = listTreasuryMovements(db, branchScope, reportTreasuryListOpts(startDate));
         const rows = purchasesPaidRows(tm, startDate, endDate);
         return res.json({ ok: true, cut: 'paid', startDate, endDate, branchScope, rows });
       }
@@ -5195,7 +5201,7 @@ export function registerHttpApi(app, db) {
         rows: stainRows,
         totals: stockStainInventoryTotals(stainRows),
       };
-      const products = listProducts(db, branchScope);
+      const products = listProducts(db, branchScope, reportListOpts());
       const stoneRows = stockStoneAsAtRows(products);
       const accessoryRows = stockAccessoryAsAtRows(products);
       const stoneInventory = {
@@ -5289,16 +5295,16 @@ export function registerHttpApi(app, db) {
       }
 
       const materialTransactionReport = buildMaterialTransactionReport({
-        productionJobs: listProductionJobs(db, branchScope, productionHistoryListOpts()),
+        productionJobs: listProductionJobs(db, branchScope, reportListOpts()),
         productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
-        quotations: listQuotations(db, branchScope),
-        refunds: listRefunds(db, branchScope),
+        quotations: listQuotations(db, branchScope, reportQuotationListOpts()),
+        refunds: listRefunds(db, branchScope, reportListOpts()),
         coilLots: listCoilLots(db, branchScope),
-        products: listProducts(db, branchScope),
+        products: listProducts(db, branchScope, reportListOpts()),
         stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
         stockMovementsThroughEnd: listStockMovementsForBranchThrough(db, branchScope, endDate),
         masterData: listMasterData(db),
-        accessoryUsage: listProductionJobAccessoryUsage(db, branchScope),
+        accessoryUsage: listProductionJobAccessoryUsage(db, branchScope, reportListOpts()),
         startDate,
         endDate,
       });

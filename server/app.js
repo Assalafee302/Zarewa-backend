@@ -7,6 +7,7 @@ import compression from 'compression';
 import { registerHttpApi } from './httpApi.js';
 import { registerExpenseMemoFilingRoutes } from './http/expenseMemoFilingRoutes.js';
 import { registerSalesMonthEndPackRoutes } from './http/salesMonthEndPackRoutes.js';
+import { registerReportPeriodSourceRoutes } from './http/reportPeriodSourceRoutes.js';
 import { registerBranchRefundFreezePage } from './http/branchRefundFreezePage.js';
 import { registerExpenseCashCatchupPage } from './http/expenseCashCatchupPage.js';
 import { registerExpensePayoutCorrectionPage } from './http/expensePayoutCorrectionPage.js';
@@ -156,6 +157,7 @@ export function createApp(db) {
   registerHttpApi(app, db);
   registerExpenseMemoFilingRoutes(app, db);
   registerSalesMonthEndPackRoutes(app, db);
+  registerReportPeriodSourceRoutes(app, db);
   registerBranchRefundFreezePage(app, db);
   registerExpenseCashCatchupPage(app, db);
   registerExpensePayoutCorrectionPage(app, db);

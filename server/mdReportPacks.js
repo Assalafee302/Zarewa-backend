@@ -20,7 +20,12 @@ import { expensesPackReport, refundsPackReport } from '../shared/lib/standardRep
 import { listPaidCompanyRetentionWithdrawals } from './finance/refundCompanyRetentionLedger.js';
 import { purchasesOrderedRows } from '../shared/lib/standardReportsPurchases.js';
 import { listRefundCreditApplications } from './refundCreditApplyOps.js';
-import { financeHistoryListOpts } from './listQueryOpts.js';
+import {
+  reportListOpts,
+  reportPurchaseOrderListOpts,
+  reportQuotationListOpts,
+  reportTreasuryListOpts,
+} from './listQueryOpts.js';
 
 function isoDateOnly(s) {
   return String(s || '').trim().slice(0, 10);
@@ -50,35 +55,37 @@ export function buildExecutiveDailyPack(db, opts = {}) {
   const branchScope = opts.branchScope || 'ALL';
 
   const attention = listMdAttentionInbox(db, branchScope);
-  const quotations = listQuotations(db, branchScope);
+  const quotations = listQuotations(db, branchScope, reportQuotationListOpts());
   const newQuotes = quotations.filter((q) => inRange(q.dateISO || q.date_iso, date, date));
   const flaggedToday = quotations.filter((q) => inRange(q.managerFlaggedAtISO, date, date));
 
-  const rawReceipts = listSalesReceipts(db, branchScope);
-  const ledger = listLedgerEntries(db, branchScope);
+  const rawReceipts = listSalesReceipts(db, branchScope, reportListOpts());
+  const ledger = listLedgerEntries(db, branchScope, reportListOpts());
   const enriched = enrichSalesReceiptRowsWithCashFromLedger(rawReceipts, ledger);
-  const tm = listTreasuryMovements(db, branchScope);
+  const tm = listTreasuryMovements(db, branchScope, reportTreasuryListOpts(date));
   const creditApps = listRefundCreditApplications(
     db,
     '',
     branchScope === 'ALL' ? 'ALL' : branchScope,
-    financeHistoryListOpts()
+    reportListOpts()
   );
   const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, date, date, creditApps);
   const creditApplyRows = refundCreditApplyReportRows(creditApps, date, date);
 
-  const refunds = listRefunds(db, branchScope).filter((r) => inRange(r.requestedAtISO, date, date));
+  const refunds = listRefunds(db, branchScope, reportListOpts()).filter((r) =>
+    inRange(r.requestedAtISO, date, date)
+  );
   const refundsPack = refundsPackReport(
-    listRefunds(db, branchScope),
+    listRefunds(db, branchScope, reportListOpts()),
     date,
     date,
     creditApps,
     listPaidCompanyRetentionWithdrawals(db, branchScope, date, date)
   );
-  const paymentRequests = listPaymentRequests(db, branchScope).filter((p) =>
+  const paymentRequests = listPaymentRequests(db, branchScope, reportListOpts()).filter((p) =>
     inRange(p.requestDate || p.request_date, date, date)
   );
-  const jobsCompleted = listProductionJobs(db, branchScope).filter((j) =>
+  const jobsCompleted = listProductionJobs(db, branchScope, reportListOpts()).filter((j) =>
     inRange(j.completedAtISO, date, date)
   );
 
@@ -145,37 +152,45 @@ export function buildExecutiveWeeklyPack(db, opts = {}) {
   const startDate = addDays(endDate, -6);
   const branchScope = opts.branchScope || 'ALL';
 
-  const quotations = listQuotations(db, branchScope);
+  const quotations = listQuotations(db, branchScope, reportQuotationListOpts());
   const quotesInWeek = quotations.filter((q) => inRange(q.dateISO || q.date_iso, startDate, endDate));
 
-  const rawReceipts = listSalesReceipts(db, branchScope);
-  const ledger = listLedgerEntries(db, branchScope);
+  const rawReceipts = listSalesReceipts(db, branchScope, reportListOpts());
+  const ledger = listLedgerEntries(db, branchScope, reportListOpts());
   const enriched = enrichSalesReceiptRowsWithCashFromLedger(rawReceipts, ledger);
-  const tm = listTreasuryMovements(db, branchScope);
+  const tm = listTreasuryMovements(db, branchScope, reportTreasuryListOpts(startDate));
   const creditApps = listRefundCreditApplications(
     db,
     '',
     branchScope === 'ALL' ? 'ALL' : branchScope,
-    financeHistoryListOpts()
+    reportListOpts()
   );
   const receiptRows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate, creditApps);
   const creditApplyRows = refundCreditApplyReportRows(creditApps, startDate, endDate);
   const refundsPack = refundsPackReport(
-    listRefunds(db, branchScope),
+    listRefunds(db, branchScope, reportListOpts()),
     startDate,
     endDate,
     creditApps,
     listPaidCompanyRetentionWithdrawals(db, branchScope, startDate, endDate)
   );
 
-  const expenses = listExpenses(db, branchScope);
+  const expenses = listExpenses(db, branchScope, reportListOpts());
   const expensePack = expensesPackReport(expenses, startDate, endDate, tm);
 
-  const pos = purchasesOrderedRows(listPurchaseOrders(db, branchScope), startDate, endDate);
+  const pos = purchasesOrderedRows(
+    listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts()),
+    startDate,
+    endDate
+  );
 
   const attention = listMdAttentionInbox(db, branchScope);
-  const refunds = listRefunds(db, branchScope).filter((r) => inRange(r.requestedAtISO, startDate, endDate));
-  const jobs = listProductionJobs(db, branchScope).filter((j) => inRange(j.completedAtISO, startDate, endDate));
+  const refunds = listRefunds(db, branchScope, reportListOpts()).filter((r) =>
+    inRange(r.requestedAtISO, startDate, endDate)
+  );
+  const jobs = listProductionJobs(db, branchScope, reportListOpts()).filter((j) =>
+    inRange(j.completedAtISO, startDate, endDate)
+  );
 
   const monthKey = endDate.slice(0, 7);
   const monthSnapshot = buildMdOperationsPack(db, {

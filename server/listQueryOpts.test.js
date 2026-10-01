@@ -17,6 +17,10 @@ import {
   treasuryHistoryListOpts,
   treasuryHistoryFromIso,
   DEFAULT_TREASURY_HISTORY_LIMIT,
+  reportListOpts,
+  reportQuotationListOpts,
+  reportPurchaseOrderListOpts,
+  reportTreasuryListOpts,
 } from './listQueryOpts.js';
 
 describe('listQueryOpts', () => {
@@ -155,5 +159,13 @@ describe('listQueryOpts', () => {
         limit: 150,
       },
     ]);
+  });
+
+  it('report list opts are unlimited and do not use the cashier 62-day window', () => {
+    expect(reportListOpts()).toEqual({ unlimited: true });
+    expect(reportQuotationListOpts()).toEqual({ unlimited: true, includeLines: false });
+    expect(reportPurchaseOrderListOpts()).toEqual({ unlimited: true, skipSideEffects: true });
+    expect(reportTreasuryListOpts('2026-01-15')).toEqual({ unlimited: true, fromISO: '2026-01-15' });
+    expect(reportTreasuryListOpts('')).toEqual({ unlimited: true });
   });
 });

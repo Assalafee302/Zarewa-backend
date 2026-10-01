@@ -12734,12 +12734,13 @@ export function registerHttpApi(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
+      const q = String(req.query?.q || '').trim();
       const refunds = listRefunds(
         db,
         branchScope,
-        unlimited ? { unlimited: true } : { limit, offset }
+        unlimited ? { unlimited: true, q: q || undefined } : { limit, offset, q: q || undefined }
       );
-      const total = unlimited ? refunds.length : countRefunds(db, branchScope);
+      const total = unlimited ? refunds.length : countRefunds(db, branchScope, { q: q || undefined });
       return sendPaginatedList(res, {
         items: refunds,
         total,
@@ -13572,8 +13573,13 @@ export function registerHttpApi(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
-      const total = countSalesReceipts(db, branchScope);
-      const receipts = listSalesReceipts(db, branchScope, unlimited ? { unlimited: true } : { limit, offset });
+      const q = String(req.query?.q || '').trim();
+      const total = countSalesReceipts(db, branchScope, { q: q || undefined });
+      const receipts = listSalesReceipts(
+        db,
+        branchScope,
+        unlimited ? { unlimited: true, q: q || undefined } : { limit, offset, q: q || undefined }
+      );
       return sendPaginatedList(res, {
         items: receipts,
         total,

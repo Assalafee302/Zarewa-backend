@@ -4,14 +4,22 @@ const DEFAULT_LIST_LIMIT = Math.min(
 );
 
 /**
- * First desk page size: recent rows only. SPA background-hydrates older pages via
- * `bootstrapMeta.backgroundHydrate` without waiting for search.
- * Override with `ZAREWA_DESK_PAGE_SIZE` (positive int) or `0` for unlimited history.
+ * First desk page size: recent rows only, so the screen can paint before older
+ * rows arrive. After paint the SPA follows `bootstrapMeta.backgroundHydrate`
+ * in {@link DESK_BACKGROUND_CHUNK}-row steps until {@link DESK_WARM_CAP}.
+ * Anything older than that warm window is search-only.
+ * Override the first page with `ZAREWA_DESK_PAGE_SIZE` (positive int) or `0` for unlimited history.
  */
 export const DEFAULT_DESK_PAGE_SIZE = Math.min(
   50_000,
   Math.max(50, Number(process.env.ZAREWA_DESK_PAGE_SIZE) || 150)
 );
+
+/** Background pages after the first paint. */
+export const DESK_BACKGROUND_CHUNK = 100;
+
+/** Recent rows kept on the desk without a search. First page plus background chunks stop here. */
+export const DESK_WARM_CAP = 500;
 
 /**
  * Shared list-query limit helpers for readModel list functions.
@@ -231,32 +239,51 @@ export function coilDeskListOpts() {
 }
 
 /**
- * SPA hint: keep loading older pages in the background (newest/recent first already shipped).
- * Does not require the user to search or open a row.
+ * SPA hint: after the first page is on screen, keep loading older rows in
+ * {@link DESK_BACKGROUND_CHUNK}-row steps until {@link DESK_WARM_CAP}.
+ * Stop there. Older rows stay on the server until the user searches.
  *
  * @param {{ key: string; path: string; limit: number; loaded: number; querySuffix?: string }[]} resources
- * @param {{ pageSize?: number }} [opts]
+ * @param {{ pageSize?: number; chunkSize?: number; warmCap?: number }} [opts]
  */
 export function buildBackgroundHydrateMeta(resources, opts = {}) {
   const pageSize = Math.max(1, Number(opts.pageSize) || DEFAULT_DESK_PAGE_SIZE);
+  const chunkSize = Math.max(1, Math.floor(Number(opts.chunkSize) || DESK_BACKGROUND_CHUNK));
+  const warmCap = Math.max(pageSize, Math.floor(Number(opts.warmCap) || DESK_WARM_CAP));
   const cont = (resources || [])
-    .filter((r) => Number(r.loaded) >= Number(r.limit) && Number(r.limit) > 0)
+    .filter((r) => Number(r.loaded) >= Number(r.limit) && Number(r.limit) > 0 && Number(r.limit) < warmCap)
     .map((r) => {
-      const limit = Number(r.limit) || pageSize;
-      const offset = limit;
       const suffix = r.querySuffix ? String(r.querySuffix) : '';
       const join = r.path.includes('?') ? '&' : '?';
+      const pages = [];
+      let offset = Number(r.limit) || pageSize;
+      while (offset < warmCap) {
+        const limit = Math.min(chunkSize, warmCap - offset);
+        pages.push({
+          href: `${r.path}${join}limit=${limit}&offset=${offset}${suffix}`,
+          offset,
+          limit,
+        });
+        offset += limit;
+      }
+      const first = pages[0];
       return {
         key: r.key,
-        href: `${r.path}${join}limit=${limit}&offset=${offset}${suffix}`,
-        offset,
-        limit,
+        href: first.href,
+        offset: first.offset,
+        limit: first.limit,
+        warmCap,
+        pages,
       };
-    });
+    })
+    .filter((r) => r.pages.length > 0);
   return {
     enabled: cont.length > 0,
-    strategy: 'recent_first',
+    strategy: 'warm_then_search',
     pageSize,
+    chunkSize,
+    warmCap,
+    searchBeyond: true,
     resources: cont,
   };
 }

@@ -144,7 +144,7 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(snap.bootstrapMeta?.sort?.customers).toBe('recent');
     expect(snap.bootstrapMeta?.backgroundHydrate).toEqual(
       expect.objectContaining({
-        strategy: 'recent_first',
+        strategy: 'warm_then_search',
         enabled: expect.any(Boolean),
         resources: expect.any(Array),
       })

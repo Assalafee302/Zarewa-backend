@@ -37,6 +37,7 @@ import { procurementKindFromPoRow } from './procurementPoKind.js';
 import { poLineOrderedValueNgn } from '../shared/lib/liveAnalytics.js';
 import { parseSupplierProfileJson, stripAgreementBodiesForList } from './supplierProfile.js';
 import { listBranches, DEFAULT_BRANCH_ID } from './branches.js';
+import { attachTreasuryComputedBalances } from './finance/treasuryBalanceIntegrityOps.js';
 import { branchPredicate } from './branchSql.js';
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { isStainMeterQuotationLinesJson, isStoneMeterQuotationLinesJson } from './stoneInventory.js';
@@ -2536,10 +2537,27 @@ export function listSalesReceiptsForDesk(db, branchScope, ledgerRows, historyOpt
   return enrichSalesReceiptRowsWithCashFromLedger(mergeSalesReceiptRowsById(recent, pending), ledgerRows);
 }
 
-/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
-export function countSalesReceipts(db, branchScope = 'ALL') {
+/**
+ * Text search for receipts — applied in SQL before LIMIT so a desk that only
+ * holds the warm window can still find an older receipt by reference, customer, or quote.
+ * @param {string} [q]
+ */
+function receiptSearchClause(q) {
+  const term = String(q || '').trim();
+  if (!term) return { sql: '', args: [] };
+  const like = `%${term}%`;
+  return {
+    sql: ` AND (id LIKE ? OR IFNULL(customer_name,'') LIKE ? OR IFNULL(customer_id,'') LIKE ? OR IFNULL(quotation_ref,'') LIKE ? OR IFNULL(handled_by,'') LIKE ? OR IFNULL(method,'') LIKE ? OR IFNULL(status,'') LIKE ? OR IFNULL(amount_display,'') LIKE ?)`,
+    args: [like, like, like, like, like, like, like, like],
+  };
+}
+
+export function countSalesReceipts(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'sales_receipts', branchScope);
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM sales_receipts WHERE 1=1${b.sql}`).get(...b.args);
+  const s = receiptSearchClause(opts.q);
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM sales_receipts WHERE 1=1${b.sql}${s.sql}`)
+    .get(...b.args, ...s.args);
   return Number(row?.n) || 0;
 }
 
@@ -2548,6 +2566,7 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const page = sqlLimitOffsetClause(limit, offset);
   const b = branchWhere(db, 'sales_receipts', branchScope);
+  const s = receiptSearchClause(opts.q);
   const unclearedSql = opts?.unclearedOnly
     ? ` AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
@@ -2556,8 +2575,8 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
     ? [...new Set(opts.ids.map((id) => String(id || '').trim()).filter(Boolean))]
     : [];
   const idSql = idList.length ? ` AND id IN (${idList.map(() => '?').join(',')})` : '';
-  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql}${idSql} ORDER BY date_iso DESC, id DESC${page.sql}`;
-  const args = [...b.args, ...idList, ...page.args];
+  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${s.sql}${unclearedSql}${idSql} ORDER BY date_iso DESC, id DESC${page.sql}`;
+  const args = [...b.args, ...s.args, ...idList, ...page.args];
   const rows = db.prepare(sql).all(...args);
   const displayByUserId = displayNamesByUserIds(
     db,
@@ -3364,20 +3383,36 @@ function partnerWalletOpenByRefundIds(db, refundIds) {
   return map;
 }
 
+/**
+ * Text search for refunds — applied in SQL before LIMIT so older refunds
+ * outside the desk warm window stay findable.
+ * @param {string} [q]
+ */
+function refundSearchClause(q) {
+  const term = String(q || '').trim();
+  if (!term) return { sql: '', args: [] };
+  const like = `%${term}%`;
+  return {
+    sql: ` AND (cr.refund_id LIKE ? OR IFNULL(cr.customer_name,'') LIKE ? OR IFNULL(cr.customer_id,'') LIKE ? OR IFNULL(cr.quotation_ref,'') LIKE ? OR IFNULL(cr.cutting_list_ref,'') LIKE ? OR IFNULL(cr.status,'') LIKE ? OR IFNULL(cr.payee_name,'') LIKE ?)`,
+    args: [like, like, like, like, like, like, like],
+  };
+}
+
 export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const page = sqlLimitOffsetClause(limit, offset);
   const b = branchWhere(db, 'customer_refunds', branchScope);
   const branchSql = b.sql.replace(/\bbranch_id\b/g, 'cr.branch_id');
+  const s = refundSearchClause(opts.q);
   const sql = `SELECT cr.*,
               q.refunds_blocked_at_iso AS quotation_refunds_blocked_at_iso,
               q.refunds_blocked_reason AS quotation_refunds_blocked_reason
        FROM customer_refunds cr
        LEFT JOIN quotations q ON q.id = cr.quotation_ref
-       WHERE 1=1${branchSql}
+       WHERE 1=1${branchSql}${s.sql}
        ORDER BY cr.requested_at_iso DESC${page.sql}`;
-  const args = [...b.args, ...page.args];
+  const args = [...b.args, ...s.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
   // Credit heal stays on write paths (pay / confirm / decide with heal:true). List and GET
   // detail must not UPDATE customer_refunds.
@@ -3401,12 +3436,13 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
 }
 
 /** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
-export function countRefunds(db, branchScope = 'ALL') {
+export function countRefunds(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'customer_refunds', branchScope);
   const branchSql = b.sql.replace(/\bbranch_id\b/g, 'cr.branch_id');
+  const s = refundSearchClause(opts.q);
   const row = db
-    .prepare(`SELECT COUNT(*) AS n FROM customer_refunds cr WHERE 1=1${branchSql}`)
-    .get(...b.args);
+    .prepare(`SELECT COUNT(*) AS n FROM customer_refunds cr WHERE 1=1${branchSql}${s.sql}`)
+    .get(...b.args, ...s.args);
   return Number(row?.n) || 0;
 }
 
@@ -3426,22 +3462,22 @@ export function listTreasuryAccounts(db, branchScope = 'ALL') {
     notes: row.notes ?? '',
     branchId: row.branch_id ?? '',
   });
+  let rows;
   if (branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')) {
-    return db.prepare(`SELECT * FROM treasury_accounts ORDER BY id`).all().map(mapRow);
+    rows = db.prepare(`SELECT * FROM treasury_accounts ORDER BY id`).all().map(mapRow);
+  } else {
+    rows = db
+      .prepare(
+        `SELECT * FROM treasury_accounts
+         WHERE branch_id = ?
+            OR (TRIM(COALESCE(branch_id, '')) = '' AND ? = ?)
+         ORDER BY id`
+      )
+      .all(branchScope, branchScope, DEFAULT_BRANCH_ID)
+      .map(mapRow);
   }
-  // Empty branch_id posts as DEFAULT_BRANCH_ID (assertTreasuryAccountForWorkspace) — include those
-  // when the workspace is on the default branch so cashiers can pick till/bank accounts.
-  return db
-    .prepare(
-      `SELECT * FROM treasury_accounts
-       WHERE branch_id = ?
-          OR (TRIM(COALESCE(branch_id, '')) = '' AND ? = ?)
-       ORDER BY id`
-    )
-    .all(branchScope, branchScope, DEFAULT_BRANCH_ID)
-    .map(mapRow);
+  return attachTreasuryComputedBalances(db, rows);
 }
-
 export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
@@ -3485,6 +3521,12 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
       batchId: row.batch_id ?? '',
       financeConfirmedAtISO: row.finance_confirmed_at_iso ?? null,
       financeConfirmedByUserId: row.finance_confirmed_by_user_id ?? null,
+      createdAtISO: row.created_at_iso ?? '',
+      createdByUserId: row.created_by_user_id ?? '',
+      sourceDocDate: row.source_doc_date ?? '',
+      dateOverrideReason: row.date_override_reason ?? '',
+      amountFloorReason: row.amount_floor_reason ?? '',
+      duplicateOverrideReason: row.duplicate_override_reason ?? '',
     }));
 }
 

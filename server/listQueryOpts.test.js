@@ -13,6 +13,8 @@ import {
   receiptsHistoryListOpts,
   coilDeskListOpts,
   buildBackgroundHydrateMeta,
+  DESK_BACKGROUND_CHUNK,
+  DESK_WARM_CAP,
   deskPageListOpts,
   treasuryHistoryListOpts,
   treasuryHistoryFromIso,
@@ -134,7 +136,7 @@ describe('listQueryOpts', () => {
     expect(coilDeskListOpts()).toEqual({ unlimited: true });
   });
 
-  it('buildBackgroundHydrateMeta lists next recent-first pages for the SPA to prefetch', () => {
+  it('buildBackgroundHydrateMeta plans 100-row pages until 500, then leaves the rest to search', () => {
     const meta = buildBackgroundHydrateMeta(
       [
         { key: 'quotations', path: '/api/quotations', limit: 150, loaded: 150 },
@@ -144,21 +146,24 @@ describe('listQueryOpts', () => {
       { pageSize: 150 }
     );
     expect(meta.enabled).toBe(true);
-    expect(meta.strategy).toBe('recent_first');
-    expect(meta.resources).toEqual([
-      {
-        key: 'quotations',
-        href: '/api/quotations?limit=150&offset=150',
-        offset: 150,
-        limit: 150,
-      },
-      {
-        key: 'receipts',
-        href: '/api/receipts?limit=150&offset=150',
-        offset: 150,
-        limit: 150,
-      },
-    ]);
+    expect(meta.strategy).toBe('warm_then_search');
+    expect(meta.chunkSize).toBe(DESK_BACKGROUND_CHUNK);
+    expect(meta.warmCap).toBe(DESK_WARM_CAP);
+    expect(meta.searchBeyond).toBe(true);
+    expect(meta.resources.map((r) => r.key)).toEqual(['quotations', 'receipts']);
+    expect(meta.resources[1]).toEqual({
+      key: 'receipts',
+      href: '/api/receipts?limit=100&offset=150',
+      offset: 150,
+      limit: 100,
+      warmCap: 500,
+      pages: [
+        { href: '/api/receipts?limit=100&offset=150', offset: 150, limit: 100 },
+        { href: '/api/receipts?limit=100&offset=250', offset: 250, limit: 100 },
+        { href: '/api/receipts?limit=100&offset=350', offset: 350, limit: 100 },
+        { href: '/api/receipts?limit=50&offset=450', offset: 450, limit: 50 },
+      ],
+    });
   });
 
   it('report list opts are unlimited and do not use the cashier 62-day window', () => {

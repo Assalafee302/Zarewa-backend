@@ -10595,6 +10595,36 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  /** Drop till/bank lines for a refund that was already reversed. The refund stays. Balance does not change. */
+  app.post(
+    '/api/refunds/:refundId/clear-reversed-payout-lines',
+    requirePermission('finance.reverse'),
+    (req, res) => {
+      try {
+        const refundId = String(req.params.refundId || '').trim();
+        if (!refundId) return res.status(400).json({ ok: false, error: 'Refund ID is required.' });
+        const refundGate = assertRefundIdInWorkspace(db, req, refundId);
+        if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'refund', refundId, (stripped, ctx) =>
+          write.clearReversedRefundPayoutLines(
+            db,
+            refundId,
+            {
+              ...(stripped || {}),
+              workspaceBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+              workspaceViewAll: Boolean(req.workspaceViewAll),
+              skipInnerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
+            },
+            req.user
+          )
+        );
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   app.get('/api/setup', requirePermission('settings.view'), (req, res) => {
     try {
       const branchId = String(req.workspaceBranchId || req.query?.branchId || '').trim();

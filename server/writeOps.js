@@ -8890,6 +8890,121 @@ export function reverseRefundTreasuryPayouts(db, refundId, payload = {}, actor =
   return { ok: true, movements: created, priorPaidAmountNgn: paidAmountNgn };
 }
 
+function refundGlTailListsOnlyMovements(sourceId, movementIds) {
+  const parts = String(sourceId || '').split(':');
+  const tail = parts.slice(2).join(':');
+  if (!tail) return false;
+  const ids = [...movementIds].sort((a, b) => b.length - a.length);
+  let rest = tail;
+  for (const id of ids) rest = rest.split(id).join('');
+  return rest.replace(/-/g, '') === '';
+}
+
+function deleteRefundPayoutJournalsForMovementsTx(db, refundId, movementIds) {
+  if (!tableExists(db, 'gl_journal_entries')) return;
+  const ids = [...new Set((movementIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return;
+  const rows = db
+    .prepare(
+      `SELECT source_kind, source_id FROM gl_journal_entries
+       WHERE source_kind IN ('CUSTOMER_REFUND_PAYOUT_GL', 'CUSTOMER_REFUND_PAYOUT_REVERSAL_GL')
+         AND (source_id LIKE ? OR source_id LIKE ?)`
+    )
+    .all(`${refundId}:paid:%`, `${refundId}:full:%`);
+  for (const row of rows) {
+    if (!refundGlTailListsOnlyMovements(row.source_id, ids)) continue;
+    deleteJournalsBySourceTx(db, row.source_kind, row.source_id);
+  }
+}
+
+/**
+ * Drop till/bank lines for a refund that was already reversed. The refund stays so it can be paid once.
+ * Balance does not change. A locked month is left on the statement because the pair already nets to zero.
+ */
+export function clearReversedRefundPayoutLines(db, refundId, payload = {}, actor = null) {
+  const rid = String(refundId || '').trim();
+  if (!rid) return { ok: false, error: 'Refund ID is required.' };
+  const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(rid);
+  if (!row) return { ok: false, error: 'Refund not found.' };
+
+  const gate = assertRefundPayoutReversalBranchGate(
+    db,
+    rid,
+    String(payload?.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID,
+    Boolean(payload?.workspaceViewAll),
+    actor
+  );
+  if (!gate.ok) return gate;
+
+  const pairs = db
+    .prepare(
+      `SELECT * FROM treasury_movements tm
+       WHERE tm.source_kind = 'REFUND' AND tm.source_id = ?
+         AND (
+           (tm.reverses_movement_id IS NOT NULL AND TRIM(COALESCE(tm.reverses_movement_id, '')) <> '')
+           OR EXISTS (SELECT 1 FROM treasury_movements rev WHERE rev.reverses_movement_id = tm.id)
+         )`
+    )
+    .all(rid);
+  if (!pairs.length) {
+    return {
+      ok: false,
+      error: 'This refund has no reversed payout line to remove. Reverse is only for a payout that is still live.',
+    };
+  }
+  const locked = pairs.find((line) => !periodIsOpen(db, line.posted_at_iso));
+  if (locked) {
+    const day = String(locked.posted_at_iso || '').slice(0, 10);
+    return {
+      ok: false,
+      error: `The reversed line on ${day} is in a locked month, so it stays on the statement. It already nets to zero with its reversal.`,
+    };
+  }
+
+  const note = String(payload?.note || '').trim() || `Removed reversed refund payout lines for ${rid}`;
+  const removedIds = [];
+  const runCore = () => {
+    for (const line of pairs) {
+      removeTreasuryLineTx(db, line);
+      removedIds.push(line.id);
+    }
+    deleteRefundPayoutJournalsForMovementsTx(db, rid, removedIds);
+    const liveLeft = unreversedTreasuryOutflows(db, 'REFUND', rid);
+    if (!liveLeft.length) {
+      db.prepare(
+        `UPDATE customer_refunds
+         SET paid_amount_ngn = 0,
+             paid_at_iso = '',
+             paid_by = '',
+             status = CASE
+               WHEN TRIM(LOWER(COALESCE(status, ''))) = 'paid' THEN 'Approved'
+               ELSE status
+             END
+         WHERE refund_id = ?`
+      ).run(rid);
+    }
+    appendAuditLog(db, {
+      actor,
+      action: 'refund.clear_reversed_payout_lines',
+      entityKind: 'refund',
+      entityId: rid,
+      note,
+      details: { removedMovementIds: removedIds },
+    });
+  };
+  try {
+    if (payload?.skipInnerTransaction) runCore();
+    else db.transaction(runCore)();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  return {
+    ok: true,
+    removedMovementIds: removedIds,
+    message: 'Removed the reversed refund lines. The balance is unchanged, and the refund is still there to pay once.',
+  };
+}
+
 /**
  * Rollout-only cleanup: delete an expense and any linked payment requests that have **no** treasury payout recorded.
  * Removes `EXPENSE` treasury rows for this expense id. Refuses when any linked request has paid_amount_ngn > 0.

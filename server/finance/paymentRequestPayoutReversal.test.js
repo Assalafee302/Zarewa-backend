@@ -6,6 +6,7 @@ import {
   payPaymentRequest,
   reversePaymentRequestTreasuryPayouts,
   clearReversedPaymentRequestPayoutLines,
+  clearReversedRefundPayoutLines,
   insertTreasuryMovementTx,
 } from '../writeOps.js';
 
@@ -246,5 +247,96 @@ describe.skipIf(!mysqlAvailable())('payment request payout reversal', () => {
     expect(
       db.prepare(`SELECT amount_ngn FROM treasury_movements WHERE source_id = 'PR-KEEP-1'`).get().amount_ngn
     ).toBe(-3_000);
+  });
+
+  it('removes reversed refund payout lines and leaves the refund to pay once', () => {
+    const before = balance(db);
+    db.prepare(`INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-1', 'Qs Isa', 'BR-KD')`).run();
+    db.prepare(
+      `INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, product, reason_category, reason,
+        amount_ngn, approved_amount_ngn, paid_amount_ngn, status, requested_by, requested_at_iso,
+        approval_date, approved_by, branch_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      'RF-OLD-1',
+      'CUS-1',
+      'Qs Isa',
+      'QT-1',
+      '—',
+      '["Additional services"]',
+      'Additional services',
+      5_380_867,
+      5_380_867,
+      0,
+      'Approved',
+      'Sales',
+      '2026-09-20',
+      '2026-09-21',
+      'BM',
+      'BR-KD'
+    );
+    const first = insertTreasuryMovementTx(db, {
+      type: 'REFUND_PAYOUT',
+      treasuryAccountId: 1,
+      amountNgn: -100,
+      postedAtISO: '2026-04-25T12:00:00.000Z',
+      sourceKind: 'REFUND',
+      sourceId: 'RF-OLD-1',
+      createdBy: 'Finance',
+    });
+    const second = insertTreasuryMovementTx(db, {
+      type: 'REFUND_PAYOUT',
+      treasuryAccountId: 1,
+      amountNgn: -250,
+      postedAtISO: '2026-04-25T12:00:00.000Z',
+      sourceKind: 'REFUND',
+      sourceId: 'RF-OLD-1',
+      createdBy: 'Finance',
+    });
+    insertTreasuryMovementTx(db, {
+      type: 'REFUND_PAYOUT_REVERSAL_IN',
+      treasuryAccountId: 1,
+      amountNgn: 100,
+      postedAtISO: '2026-04-26T12:00:00.000Z',
+      sourceKind: 'REFUND',
+      sourceId: 'RF-OLD-1',
+      reversesMovementId: first.id,
+      createdBy: 'Finance',
+    });
+    insertTreasuryMovementTx(db, {
+      type: 'REFUND_PAYOUT_REVERSAL_IN',
+      treasuryAccountId: 1,
+      amountNgn: 250,
+      postedAtISO: '2026-04-26T12:00:00.000Z',
+      sourceKind: 'REFUND',
+      sourceId: 'RF-OLD-1',
+      reversesMovementId: second.id,
+      createdBy: 'Finance',
+    });
+    expect(balance(db)).toBe(before);
+
+    const cleared = clearReversedRefundPayoutLines(db, 'RF-OLD-1', { workspaceBranchId: 'BR-KD' }, ACTOR);
+    expect(cleared.ok, cleared.error).toBe(true);
+    expect(cleared.removedMovementIds).toHaveLength(4);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM treasury_movements WHERE source_id = 'RF-OLD-1'`).get().n).toBe(0);
+    const refund = db.prepare(`SELECT status, paid_amount_ngn FROM customer_refunds WHERE refund_id = 'RF-OLD-1'`).get();
+    expect(refund.status).toBe('Approved');
+    expect(Number(refund.paid_amount_ngn)).toBe(0);
+    expect(balance(db)).toBe(before);
+
+    const liveOut = insertTreasuryMovementTx(db, {
+      type: 'REFUND_PAYOUT',
+      treasuryAccountId: 1,
+      amountNgn: -1000,
+      postedAtISO: '2026-04-27T12:00:00.000Z',
+      sourceKind: 'REFUND',
+      sourceId: 'RF-OLD-1',
+      createdBy: 'Finance',
+    });
+    const refused = clearReversedRefundPayoutLines(db, 'RF-OLD-1', { workspaceBranchId: 'BR-KD' }, ACTOR);
+    expect(refused.ok).toBe(false);
+    expect(db.prepare(`SELECT id FROM treasury_movements WHERE id = ?`).get(liveOut.id)).toBeTruthy();
+    expect(balance(db)).toBe(before - 1000);
   });
 });

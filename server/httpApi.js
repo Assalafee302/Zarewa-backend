@@ -609,6 +609,7 @@ import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWa
 import { recordBankCharge } from './bankChargeOps.js';
 import * as refundCreditApplyOps from './refundCreditApplyOps.js';
 import { healReceiptsNeedingOverpayConfirm } from './sales/receiptOverpayConfirmHeal.js';
+import { resolveReceiptPostingCustomer } from './sales/receiptQuotationCustomer.js';
 import {
   allocateBankDepositTx,
   findSimilarOpenBankDeposits,
@@ -13179,9 +13180,9 @@ export function registerHttpApi(app, db) {
     (req, res) => {
     try {
       const {
-        customerID,
+        customerID: requestedCustomerID,
         customerName,
-        quotationId,
+        quotationId: quotationIdBody,
         amountNgn,
         paymentMethod,
         dateISO,
@@ -13190,23 +13191,24 @@ export function registerHttpApi(app, db) {
         forceUnlinkedBankPost,
         unlinkedBankOverrideReason,
       } = req.body || {};
+      const quotationId = String(quotationIdBody ?? req.body?.quotationRef ?? '').trim();
       const fullAmountAsReceipt = true;
       const resolvedBankReference = effectiveReceiptBankReference(req.body || {});
-      if (!customerID || !quotationId) {
-        return res.status(400).json({ ok: false, error: 'customerID and quotationId are required' });
+      if (!quotationId) {
+        return res.status(400).json({ ok: false, error: 'quotationId is required' });
       }
       const branchScope = resolveBootstrapBranchScope(req);
-      const cust = getCustomer(db, customerID, branchScope);
-      if (!cust) return res.status(404).json({ ok: false, error: 'Customer not found' });
-      const postingBr = assertCustomerLedgerPostingBranch(cust, req);
-      if (!postingBr.ok) return res.status(400).json({ ok: false, error: postingBr.error });
       const qt = getQuotation(db, quotationId);
       if (!qt) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       const qGate = assertQuotationIdInWorkspace(db, req, quotationId);
       if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
-      if (qt.customerID !== customerID) {
-        return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
-      }
+      const resolvedCust = resolveReceiptPostingCustomer(qt, requestedCustomerID);
+      if (!resolvedCust.ok) return res.status(400).json({ ok: false, error: resolvedCust.error });
+      const customerID = resolvedCust.customerID;
+      const cust = getCustomer(db, customerID, branchScope);
+      if (!cust) return res.status(404).json({ ok: false, error: 'Customer not found' });
+      const postingBr = assertCustomerLedgerPostingBranch(cust, req);
+      if (!postingBr.ok) return res.status(400).json({ ok: false, error: postingBr.error });
       if (!resolvedBankReference) {
         return res.status(400).json({
           ok: false,
@@ -13262,16 +13264,13 @@ export function registerHttpApi(app, db) {
       write.syncQuotationPaidFromLedger(db, quotationId);
       const qtSynced = getQuotation(db, quotationId);
       if (!qtSynced) return res.status(404).json({ ok: false, error: 'Quotation not found' });
-      if (qtSynced.customerID !== customerID) {
-        return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
-      }
 
       const postAmountNgn = Math.round(Number(amountNgn) || 0);
 
       const entries = listLedgerEntries(db, branchScope);
       const plan = planReceiptWithQuotation(entries, {
         customerID,
-        customerName: customerName || cust.name,
+        customerName: qtSynced.customer || customerName || cust.name,
         quotationRow: qtSynced,
         amountNgn,
         paymentMethod,
@@ -13403,7 +13402,7 @@ export function registerHttpApi(app, db) {
           write.recordCustomerReceiptCash(db, {
             sourceId: parsed.receipt?.id || parsed.overpay?.id,
             customerID,
-            customerName: customerName || cust.name,
+            customerName: qtSynced.customer || customerName || cust.name,
             dateISO,
             reference: resolvedBankReference,
             note: parsed.overpay ? `Receipt ${qtSynced.id} with overpayment credit (not deposit advance)` : `Receipt ${qtSynced.id}`,

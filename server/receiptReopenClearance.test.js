@@ -6,7 +6,19 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import { listManagementItems } from './readModel.js';
 import { insertLedgerRows, reopenQuotationManagerClearanceAfterReceipt } from './writeOps.js';
 
-describe('receipt on a manager-cleared quotation', () => {
+function mysqlAvailable() {
+  try {
+    const db = createDatabase(':memory:', { seed: false });
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const mysqlOk = mysqlAvailable();
+
+describe.skipIf(!mysqlOk)('receipt on a manager-cleared quotation', () => {
   let db;
 
   beforeAll(() => {
@@ -107,5 +119,38 @@ describe('receipt on a manager-cleared quotation', () => {
 
     const queue = listManagementItems(db, 'ALL');
     expect(queue.pendingClearance.some((q) => q.id === 'QT-REOPEN')).toBe(true);
+  });
+
+  it('POST /api/ledger/receipt on a cleared quote uses the quotation customer even if the body has another customer', async () => {
+    db.prepare(
+      `UPDATE quotations
+       SET manager_cleared_at_iso = ?, manager_flagged_at_iso = NULL, manager_flag_reason = NULL, paid_ngn = 40000
+       WHERE id = ?`
+    ).run('2026-05-01T00:00:00.000Z', 'QT-REOPEN');
+
+    const treasury = db.prepare(`SELECT id FROM treasury_accounts ORDER BY id LIMIT 1`).get();
+    expect(treasury?.id).toBeTruthy();
+
+    const app = createApp(db);
+    const agent = request.agent(app);
+    const login = await agent.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
+    expect(login.status).toBe(200);
+
+    const res = await agent.post('/api/ledger/receipt').send({
+      customerID: 'CUS-001',
+      quotationId: 'QT-REOPEN',
+      amountNgn: 8_000,
+      paymentMethod: 'Cash',
+      bankReference: 'RCPT-CLEARED-CUSTOMER',
+      dateISO: '2026-09-29',
+      paymentLines: [{ treasuryAccountId: treasury.id, amountNgn: 8_000, reference: 'RCPT-CLEARED-CUSTOMER' }],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.managerClearanceReopened).toBe(true);
+    expect(res.body.receipt?.customerID).toBe('CUS-REOPEN');
+
+    const row = db.prepare(`SELECT manager_cleared_at_iso, customer_id FROM quotations WHERE id = ?`).get('QT-REOPEN');
+    expect(row.manager_cleared_at_iso).toBeNull();
+    expect(row.customer_id).toBe('CUS-REOPEN');
   });
 });

@@ -2284,7 +2284,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     ).toHaveLength(1);
   });
 
-  it('POST /api/payment-requests/:requestId/reverse-treasury-payout zeros paid and posts compensating movements', async () => {
+  it('POST /api/payment-requests/:requestId/reverse-treasury-payout removes the expense and its cash line', async () => {
     const before = await agent.get('/api/bootstrap');
     const cashAccount = before.body.treasuryAccounts[0];
 
@@ -2311,23 +2311,27 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       .send({ note: 'wrong batch' });
     expect(rev.status).toBe(200);
     expect(rev.body.ok).toBe(true);
-    expect(Array.isArray(rev.body.movements)).toBe(true);
-    expect(rev.body.movements.length).toBe(1);
+    expect(rev.body.expenseRemoved).toBe(true);
+    expect(rev.body.removedMovementIds).toHaveLength(1);
+    expect(rev.body.movements).toEqual([]);
 
     const after = await agent.get('/api/bootstrap');
     const reqRow = after.body.paymentRequests.find((r) => r.requestID === requestCreate.body.requestID);
-    expect(reqRow.paidAmountNgn).toBe(0);
+    expect(reqRow).toBeUndefined();
 
     const lines = after.body.treasuryMovements.filter(
       (m) => m.sourceKind === 'PAYMENT_REQUEST' && m.sourceId === requestCreate.body.requestID
     );
-    const reversals = lines.filter((m) => m.type === 'PAYMENT_REQUEST_REVERSAL_IN');
-    expect(reversals.length).toBe(1);
-    expect(Number(reversals[0].amountNgn)).toBeGreaterThan(0);
+    expect(lines).toHaveLength(0);
+
+    const again = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(requestCreate.body.requestID)}/pay`)
+      .send({ treasuryAccountId: cashAccount.id, amountNgn: 50_000, note: 'second pay' });
+    expect(again.status).toBe(400);
 
     const gl = await agent.get('/api/gl/journals?startDate=2026-03-01&endDate=2026-12-31');
     if (gl.status === 200 && Array.isArray(gl.body.journals)) {
-      expect(gl.body.journals.some((j) => j.sourceKind === 'EXPENSE_PAYMENT_REVERSAL_GL')).toBe(true);
+      expect(gl.body.journals.some((j) => j.sourceKind === 'EXPENSE_PAYMENT_REVERSAL_GL')).toBe(false);
     }
   });
 

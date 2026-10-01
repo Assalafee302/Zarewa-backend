@@ -401,6 +401,9 @@ function moveOnePayoutTx(db, movementId, toAccount, actor, payload, today) {
   const movementDay = String(row.posted_at_iso || '').slice(0, 10);
   const locked = periodOpen(db, movementDay, 'Expense pay-from correction date');
   const note = String(payload.note || '').trim();
+  if (!String(payload.correctionReason || note).trim()) {
+    return { ok: false, code: 'CORRECTION_REASON_REQUIRED', error: 'A reason is required to move a payout to another account.' };
+  }
   if (!locked.open) {
     const todayOpen = periodOpen(db, today, 'Payout account correction date');
     if (!todayOpen.open) {
@@ -418,6 +421,7 @@ function moveOnePayoutTx(db, movementId, toAccount, actor, payload, today) {
     {
       treasuryAccountId: Number(toAccount.id),
       note: note || `Payout moved to ${toAccount.name || 'the account that paid'}`,
+      correctionReason: String(payload.correctionReason || note || '').trim(),
       workspaceBranchId: payload.workspaceBranchId,
       workspaceViewAll: Boolean(payload.workspaceViewAll),
       allowDestinationShortfall: true,
@@ -531,24 +535,20 @@ function releaseOneExpenseRefundTx(db, expenseId, actor, payload, today) {
     String(payload.note || '').trim() ||
     `Expense refund ${expenseId} cleared so it can be raised as a normal refund.`;
 
-  if (expensePeriod.open) {
-    const requests = db.prepare(`SELECT request_id, paid_amount_ngn FROM payment_requests WHERE expense_id = ?`).all(expenseId);
-    for (const pr of requests) {
-      if (roundMoney(pr.paid_amount_ngn) <= 0) continue;
-      const reversed = reversePaymentRequestTreasuryPayouts(
-        db,
-        pr.request_id,
-        {
-          note,
-          actedAtISO: `${today}T12:00:00.000Z`,
-          workspaceBranchId: payload.workspaceBranchId,
-          workspaceViewAll: Boolean(payload.workspaceViewAll),
-          skipInnerTransaction: true,
-        },
-        actor
-      );
-      if (!reversed.ok) return reversed;
-    }
+  // A paid payment request in an open month is removed with its cash line.
+  // A direct expense line, or a locked month, is reversed and the expense is zeroed.
+  const movementCount =
+    Number(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM treasury_movements
+           WHERE (source_kind = 'EXPENSE' AND source_id = ?)
+              OR source_id IN (SELECT request_id FROM payment_requests WHERE expense_id = ?)`
+        )
+        .get(expenseId, expenseId)?.n
+    ) || 0;
+
+  if (expensePeriod.open && movementCount === 0) {
     const deleted = deleteExpenseRolloutDup(db, expenseId, actor, { skipInnerTransaction: true });
     if (!deleted.ok) return deleted;
     return { ok: true, expenseId, mode: 'deleted' };
@@ -558,11 +558,12 @@ function releaseOneExpenseRefundTx(db, expenseId, actor, payload, today) {
   if (!todayOpen.open) {
     return {
       ok: false,
-      error: `${expensePeriod.error} Today is locked as well. Unlock the current month in Settings → Governance, then remove the expense refund.`,
+      error: `${expensePeriod.open ? '' : `${expensePeriod.error} `}Today is locked. Unlock the current month in Settings → Governance, then remove the expense refund.`,
     };
   }
 
   const requests = db.prepare(`SELECT request_id, paid_amount_ngn FROM payment_requests WHERE expense_id = ?`).all(expenseId);
+  let expenseRemoved = false;
   for (const pr of requests) {
     if (roundMoney(pr.paid_amount_ngn) <= 0) continue;
     const reversed = reversePaymentRequestTreasuryPayouts(
@@ -578,6 +579,10 @@ function releaseOneExpenseRefundTx(db, expenseId, actor, payload, today) {
       actor
     );
     if (!reversed.ok) return reversed;
+    if (reversed.expenseRemoved) expenseRemoved = true;
+  }
+  if (expenseRemoved) {
+    return { ok: true, expenseId, mode: 'deleted' };
   }
 
   const reversals = reverseTreasurySourceTx(db, 'EXPENSE', expenseId, 'EXPENSE_REVERSAL_IN', note, actor, {
@@ -617,8 +622,8 @@ function releaseOneExpenseRefundTx(db, expenseId, actor, payload, today) {
 
 /**
  * Undo a refund that was posted as an expense, restoring the till.
- * When the expense month is open the row is deleted. When it is locked the amount is zeroed
- * and the cash is restored today, so Sales can raise a normal refund without paying twice.
+ * Posted cash-book rows are reversed today and the expense amount is zeroed, so Sales can raise
+ * a normal refund without paying twice. Only an expense with no treasury movements is deleted.
  * @param {import('better-sqlite3').Database} db
  * @param {{ expenseIds?: string[], note?: string, workspaceBranchId?: string, workspaceViewAll?: boolean }} payload
  * @param {object | null} actor
@@ -649,7 +654,7 @@ export function releaseDirectExpenseRefunds(db, payload = {}, actor = null) {
   }
   const zeroed = released.filter((row) => row.mode === 'zeroed').length;
   const message = zeroed
-    ? `Cleared ${released.length} expense refund(s) and put the cash back. ${zeroed} sit in a locked month, so those rows were zeroed instead of deleted. Raise each one under Sales → Refunds and pay it from the account that sent the money.`
+    ? `Cleared ${released.length} expense refund(s) and put the cash back. ${zeroed} had cash-book rows, so those were reversed and the expense zeroed. Raise each one under Sales → Refunds and pay it from the account that sent the money.`
     : `Removed ${released.length} expense refund(s) and put the cash back. Raise each one under Sales → Refunds and pay it from the account that sent the money.`;
   return { ok: true, released, message };
 }

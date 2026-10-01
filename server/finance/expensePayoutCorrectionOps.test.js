@@ -156,12 +156,24 @@ describe.skipIf(!mysqlOk)('expense payout corrections', () => {
       q: 'LOCKED-MONTH-TAJ',
     });
     expect(listed).toHaveLength(1);
+    const noReason = reassignExpensePayouts(
+      db,
+      {
+        movementIds: [listed[0].movementId],
+        toTreasuryAccountId: moniepointId,
+        workspaceBranchId: DEFAULT_BRANCH_ID,
+      },
+      ACTOR
+    );
+    expect(noReason.ok).toBe(false);
+    expect(balance(db, tajId)).toBe(beforeTaj);
     const moved = reassignExpensePayouts(
       db,
       {
         movementIds: [listed[0].movementId],
         toTreasuryAccountId: moniepointId,
         workspaceBranchId: DEFAULT_BRANCH_ID,
+        correctionReason: 'Bank statement shows Moniepoint paid it',
       },
       ACTOR
     );
@@ -180,7 +192,7 @@ describe.skipIf(!mysqlOk)('expense payout corrections', () => {
     expect(String(charge?.posted_at_iso || '').slice(0, 10)).toBe(today);
   });
 
-  it('removes a refund posted as an expense and puts the cash back', () => {
+  it('reverses a refund posted as an expense, zeroes it and puts the cash back', () => {
     const beforeTaj = balance(db, tajId);
     const created = insertExpenseEntry(
       db,
@@ -208,9 +220,15 @@ describe.skipIf(!mysqlOk)('expense payout corrections', () => {
       ACTOR
     );
     expect(released.ok, released.error).toBe(true);
-    expect(released.released[0].mode).toBe('deleted');
+    expect(released.released[0].mode).toBe('zeroed');
     expect(balance(db, tajId)).toBe(beforeTaj);
-    expect(db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = ?`).get(created.expenseID) || null).toBeNull();
+    const exp = db.prepare(`SELECT amount_ngn FROM expenses WHERE expense_id = ?`).get(created.expenseID);
+    expect(Number(exp.amount_ngn)).toBe(0);
+    const rows = db
+      .prepare(`SELECT amount_ngn, reverses_movement_id FROM treasury_movements WHERE source_id = ?`)
+      .all(created.expenseID);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows.reduce((s, r) => s + Number(r.amount_ngn), 0)).toBe(0);
   });
 
   it('refuses to clear an expense that is not a refund', () => {

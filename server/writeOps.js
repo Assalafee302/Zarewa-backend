@@ -1003,9 +1003,13 @@ export function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, 
     normalizeIsoTimestamp(String(opts.postedAtISO || '').trim()) || new Date().toISOString();
   const rows = db
     .prepare(
-      `SELECT * FROM treasury_movements
-       WHERE source_kind = ? AND source_id = ? AND reverses_movement_id IS NULL
-       ORDER BY posted_at_iso, id`
+      `SELECT * FROM treasury_movements tm
+       WHERE tm.source_kind = ? AND tm.source_id = ?
+         AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+         AND NOT EXISTS (
+           SELECT 1 FROM treasury_movements rev WHERE rev.reverses_movement_id = tm.id
+         )
+       ORDER BY tm.posted_at_iso, tm.id`
     )
     .all(sourceKind, sourceId);
   const created = [];
@@ -8328,15 +8332,147 @@ function assertPaymentRequestPayoutReversalBranchGate(db, requestId, workspaceBr
  * @param {{ note?: string, actedAtISO?: string, postedAtISO?: string, workspaceBranchId?: string, workspaceViewAll?: boolean, skipInnerTransaction?: boolean }} payload
  * @param {object | null} actor
  */
+
+function periodIsOpen(db, dateISO) {
+  const day = String(dateISO || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  try {
+    assertPeriodOpen(db, day, 'Payout date');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Live cash-out lines: not themselves reversals, and nothing has reversed them yet. */
+function unreversedTreasuryOutflows(db, sourceKind, sourceId) {
+  const sid = String(sourceId || '').trim();
+  if (!sid) return [];
+  return db
+    .prepare(
+      `SELECT * FROM treasury_movements tm
+       WHERE tm.source_kind = ? AND tm.source_id = ?
+         AND tm.amount_ngn < 0
+         AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+         AND NOT EXISTS (
+           SELECT 1 FROM treasury_movements rev WHERE rev.reverses_movement_id = tm.id
+         )
+       ORDER BY tm.posted_at_iso, tm.id`
+    )
+    .all(sourceKind, sid);
+}
+
+function unreversedTreasuryOutNgn(db, sourceKind, sourceId) {
+  return unreversedTreasuryOutflows(db, sourceKind, sourceId).reduce(
+    (sum, row) => sum + Math.abs(roundMoney(row.amount_ngn)),
+    0
+  );
+}
+
+function deleteJournalsBySourceTx(db, sourceKind, sourceId) {
+  if (!tableExists(db, 'gl_journal_entries')) return;
+  const rows = db
+    .prepare(`SELECT id FROM gl_journal_entries WHERE source_kind = ? AND source_id = ?`)
+    .all(sourceKind, String(sourceId));
+  for (const row of rows) {
+    if (tableExists(db, 'gl_journal_lines')) {
+      db.prepare(`DELETE FROM gl_journal_lines WHERE journal_id = ?`).run(row.id);
+    }
+    db.prepare(`DELETE FROM gl_journal_entries WHERE id = ?`).run(row.id);
+  }
+}
+
+/**
+ * Take a cash-book line off the account and out of the statement.
+ * Caller must already know the line's month is still open.
+ */
+function removeTreasuryLineTx(db, line) {
+  adjustTreasuryBalanceTx(db, line.treasury_account_id, -roundMoney(line.amount_ngn), {
+    allowNegativeBalance: true,
+  });
+  deleteJournalsBySourceTx(db, 'EXPENSE_PAYMENT_GL', line.id);
+  deleteJournalsBySourceTx(db, 'EXPENSE_PAYMENT_REVERSAL_GL', line.id);
+  db.prepare(`DELETE FROM treasury_movements WHERE id = ?`).run(line.id);
+}
+
+function payoutRecordMustStay(db, requestId) {
+  if (findApprovedHrLoanForPaymentRequest(db, requestId)) return true;
+  if (tableExists(db, 'chairman_office_loans')) {
+    const loan = db
+      .prepare(`SELECT id FROM chairman_office_loans WHERE payment_request_id = ? LIMIT 1`)
+      .get(requestId);
+    if (loan) return true;
+  }
+  if (
+    tableExists(db, 'hr_staff_obligation_accounts') &&
+    hasColumn(db, 'hr_staff_obligation_accounts', 'finance_payment_request_id')
+  ) {
+    const ob = db
+      .prepare(
+        `SELECT 1 AS ok FROM hr_staff_obligation_accounts WHERE finance_payment_request_id = ? LIMIT 1`
+      )
+      .get(requestId);
+    if (ob) return true;
+  }
+  return false;
+}
+
+function clearPayoutLinksTx(db, requestId) {
+  if (
+    tableExists(db, 'maintenance_work_orders') &&
+    hasColumn(db, 'maintenance_work_orders', 'related_payment_request_id')
+  ) {
+    db.prepare(
+      `UPDATE maintenance_work_orders SET related_payment_request_id = NULL WHERE related_payment_request_id = ?`
+    ).run(requestId);
+  }
+  if (tableExists(db, 'machine_fuel_logs') && hasColumn(db, 'machine_fuel_logs', 'payment_request_id')) {
+    db.prepare(`UPDATE machine_fuel_logs SET payment_request_id = NULL WHERE payment_request_id = ?`).run(
+      requestId
+    );
+  }
+}
+
+function deleteExpenseAndRequestTx(db, requestId, expenseId) {
+  clearPayoutLinksTx(db, requestId);
+  db.prepare(`DELETE FROM payment_requests WHERE request_id = ?`).run(requestId);
+  const eid = String(expenseId || '').trim();
+  if (!eid) return;
+  const others = db.prepare(`SELECT COUNT(*) AS c FROM payment_requests WHERE expense_id = ?`).get(eid);
+  if (others && Number(others.c) > 0) return;
+  if (tableExists(db, 'fixed_assets')) {
+    db.prepare(`DELETE FROM fixed_assets WHERE source_expense_id = ?`).run(eid);
+  }
+  deleteJournalsBySourceTx(db, 'CAPEX_CAPITALIZE', eid);
+  db.prepare(`DELETE FROM expenses WHERE expense_id = ?`).run(eid);
+}
+
+function paymentAlreadyCoversRequestError(paidAmountNgn, liveOutNgn) {
+  if (liveOutNgn > 0 && roundMoney(paidAmountNgn) < liveOutNgn) {
+    return 'This request still has a payout on the cash book. Reverse that payout before recording it again, or the payment will be duplicated.';
+  }
+  return 'Payment request is already fully paid.';
+}
+
+/**
+ * finance.reverse: undo an expense payout.
+ * Open month: delete the cash line, its GL, the payment request and the expense,
+ * and put the cash back, so recording the expense correctly posts one payment.
+ * Locked month: post a compensating cash line dated today and cancel the expense
+ * so it cannot be paid again. Staff-loan and chairman-loan requests stay, unpaid,
+ * so the same request can be paid once.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} requestId
+ * @param {{ note?: string, actedAtISO?: string, postedAtISO?: string, workspaceBranchId?: string, workspaceViewAll?: boolean, skipInnerTransaction?: boolean }} payload
+ * @param {object | null} actor
+ */
 export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}, actor = null) {
   const rid = String(requestId || '').trim();
   if (!rid) return { ok: false, error: 'Request ID is required.' };
   const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
   if (!row) return { ok: false, error: 'Payment request not found.' };
   const paidAmountNgn = roundMoney(row.paid_amount_ngn);
-  if (paidAmountNgn <= 0) {
-    return { ok: false, error: 'This request has no recorded treasury payouts to reverse.' };
-  }
+  const expenseId = String(row.expense_id || '').trim();
 
   const gate = assertPaymentRequestPayoutReversalBranchGate(
     db,
@@ -8347,18 +8483,42 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
   );
   if (!gate.ok) return gate;
 
-  const anySourceLines = db
-    .prepare(
-      `SELECT COUNT(*) AS c FROM treasury_movements WHERE source_kind = 'PAYMENT_REQUEST' AND source_id = ?`
-    )
-    .get(rid);
-  if (!anySourceLines || Number(anySourceLines.c) === 0) {
-    return {
-      ok: false,
-      error:
-        'No treasury payout lines exist for this request, but paid_amount is non-zero. Data needs manual repair.',
-    };
+  const seen = new Set();
+  const liveLines = [];
+  for (const line of [
+    ...unreversedTreasuryOutflows(db, 'PAYMENT_REQUEST', rid),
+    ...(expenseId ? unreversedTreasuryOutflows(db, 'EXPENSE', expenseId) : []),
+  ]) {
+    if (seen.has(line.id)) continue;
+    seen.add(line.id);
+    liveLines.push(line);
   }
+  const relatedMoves = db
+    .prepare(
+      `SELECT * FROM treasury_movements
+       WHERE (source_kind = 'PAYMENT_REQUEST' AND source_id = ?)
+          OR (source_kind = 'EXPENSE' AND source_id = ?)`
+    )
+    .all(rid, expenseId || '—');
+  if (!liveLines.length && !relatedMoves.length) {
+    if (paidAmountNgn > 0) {
+      return {
+        ok: false,
+        error:
+          'No treasury payout lines exist for this request, but paid_amount is non-zero. Data needs manual repair.',
+      };
+    }
+    return { ok: false, error: 'This request has no recorded treasury payouts to reverse.' };
+  }
+
+  const openLines = [];
+  const lockedLines = [];
+  for (const line of liveLines) {
+    if (periodIsOpen(db, line.posted_at_iso)) openLines.push(line);
+    else lockedLines.push(line);
+  }
+  const leftoverPairs = relatedMoves.filter((line) => !seen.has(line.id));
+  const leftoverOpen = leftoverPairs.every((line) => periodIsOpen(db, line.posted_at_iso));
 
   const note = String(payload?.note ?? '').trim() || `Treasury payout reversal for ${rid}`;
   const day =
@@ -8368,51 +8528,59 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
   const postedAtISO =
     String(payload?.actedAtISO ?? payload?.postedAtISO ?? '').trim() || `${day}T12:00:00.000Z`;
 
-  try {
-    assertPeriodOpen(db, day, 'Payment request payout reversal date');
-  } catch (e) {
-    return { ok: false, error: String(e.message || e) };
+  if (lockedLines.length) {
+    try {
+      assertPeriodOpen(db, day, 'Payment request payout reversal date');
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
+    }
   }
 
   let created = [];
+  let removedIds = [];
+  let mode = 'deleted';
   const runCore = () => {
-    created = reverseTreasurySourceTx(
-      db,
-      'PAYMENT_REQUEST',
-      rid,
-      'PAYMENT_REQUEST_REVERSAL_IN',
-      note,
-      actor,
-      { postedAtISO }
-    );
-    const linkedExpense = db
-      .prepare(`SELECT category, branch_id FROM expenses WHERE expense_id = ?`)
-      .get(row.expense_id);
-    for (const mv of created || []) {
-      const reversalRow = db
-        .prepare(`SELECT reverses_movement_id FROM treasury_movements WHERE id = ?`)
-        .get(mv.id);
-      const origId = String(reversalRow?.reverses_movement_id || '').trim();
-      if (!origId) continue;
-      const origGl = tableExists(db, 'gl_journal_entries')
-        ? db
-            .prepare(
-              `SELECT id FROM gl_journal_entries WHERE source_kind = 'EXPENSE_PAYMENT_GL' AND source_id = ?`
-            )
-            .get(origId)
-        : null;
-      if (!origGl) continue;
-      const origMv = db
-        .prepare(`SELECT treasury_account_id, amount_ngn FROM treasury_movements WHERE id = ?`)
-        .get(origId);
-      const lineAmt = Math.abs(roundMoney(origMv?.amount_ngn ?? mv.amountNgn));
-      if (lineAmt <= 0 || !origMv?.treasury_account_id) continue;
+    for (const line of openLines) {
+      removeTreasuryLineTx(db, line);
+      removedIds.push(line.id);
+    }
+    if (!lockedLines.length && leftoverOpen) {
+      for (const line of leftoverPairs) {
+        removeTreasuryLineTx(db, line);
+        removedIds.push(line.id);
+      }
+    }
+    const linkedExpense = expenseId
+      ? db.prepare(`SELECT category, branch_id FROM expenses WHERE expense_id = ?`).get(expenseId)
+      : null;
+    for (const line of lockedLines) {
+      const reversalType =
+        String(line.source_kind) === 'EXPENSE' ? 'EXPENSE_REVERSAL_IN' : 'PAYMENT_REQUEST_REVERSAL_IN';
+      const mv = insertTreasuryMovementTx(db, {
+        type: reversalType,
+        treasuryAccountId: line.treasury_account_id,
+        amountNgn: -roundMoney(line.amount_ngn),
+        postedAtISO,
+        reference: line.reference,
+        counterpartyKind: line.counterparty_kind,
+        counterpartyId: line.counterparty_id,
+        counterpartyName: line.counterparty_name,
+        sourceKind: line.source_kind,
+        sourceId: line.source_id,
+        note,
+        createdBy: actorName(actor),
+        reversesMovementId: line.id,
+        batchId: line.batch_id || null,
+      });
+      created.push(mv);
+      const lineAmt = Math.abs(roundMoney(line.amount_ngn));
+      if (lineAmt <= 0) continue;
       const glRev = tryPostExpensePaymentReversalGlTx(db, {
-        treasuryAccountId: origMv.treasury_account_id,
+        treasuryAccountId: line.treasury_account_id,
         amountNgn: lineAmt,
         entryDateISO: day,
         sourceId: mv.id,
-        originalMovementId: origId,
+        originalMovementId: line.id,
         expenseCategory: linkedExpense?.category || 'Others',
         paymentRequestId: rid,
         branchId: linkedExpense?.branch_id || null,
@@ -8423,12 +8591,31 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
         throw new Error(glRev.error || 'Expense payment GL reversal failed.');
       }
     }
-    db.prepare(
-      `UPDATE payment_requests
-       SET paid_amount_ngn = 0, paid_at_iso = '', paid_by = '', payment_note = ?
-       WHERE request_id = ?`
-    ).run(note, rid);
-    syncStaffLoanDisbursementOnPayoutReversal(db, rid);
+
+    const keep = payoutRecordMustStay(db, rid);
+    if (keep) {
+      db.prepare(
+        `UPDATE payment_requests
+         SET paid_amount_ngn = 0, paid_at_iso = '', paid_by = '', payment_note = ?
+         WHERE request_id = ?`
+      ).run(note, rid);
+      syncStaffLoanDisbursementOnPayoutReversal(db, rid);
+      mode = 'reset';
+    } else if (lockedLines.length) {
+      db.prepare(
+        `UPDATE payment_requests
+         SET approval_status = 'Cancelled', paid_amount_ngn = 0, paid_at_iso = '', paid_by = '', payment_note = ?
+         WHERE request_id = ?`
+      ).run(note, rid);
+      if (expenseId) {
+        db.prepare(`UPDATE expenses SET amount_ngn = 0 WHERE expense_id = ?`).run(expenseId);
+      }
+      mode = 'cancelled';
+    } else {
+      deleteExpenseAndRequestTx(db, rid, expenseId);
+      mode = 'deleted';
+    }
+
     appendAuditLog(db, {
       actor,
       action: 'payment_request.reverse_treasury_payout',
@@ -8436,11 +8623,15 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
       entityId: rid,
       note,
       details: {
+        mode,
+        removedMovementIds: removedIds,
         reversalMovementIds: created.map((m) => m.id),
         priorPaidNgn: paidAmountNgn,
+        expenseId: expenseId || null,
       },
     });
   };
+
   try {
     if (payload?.skipInnerTransaction) {
       runCore();
@@ -8452,13 +8643,34 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
   }
 
   const actorLabel = actorName(actor);
+  const timeline =
+    mode === 'deleted'
+      ? `Accounts: payout for ${rid} was removed by ${actorLabel}. The expense was deleted and the cash was put back. Record the correct expense once.`
+      : mode === 'cancelled'
+        ? `Accounts: payout for ${rid} was reversed by ${actorLabel}. The expense was cancelled so it cannot be paid again. The original month is locked, so the cash line was offset today.`
+        : `Accounts: treasury payout for ${rid} was reversed by ${actorLabel} and the paid balance was reset to zero.`;
   appendPaymentRequestTimelineToOfficeThreads(
     db,
     rid,
-    `Accounts: treasury payout for ${rid} was reversed by ${actorLabel} (cash restored and expense GL reversed; paid balance reset to zero).${note ? ` Note: ${note}` : ''}`
+    `${timeline}${note ? ` Note: ${note}` : ''}`
   );
 
-  return { ok: true, movements: created, priorPaidAmountNgn: paidAmountNgn };
+  const message =
+    mode === 'deleted'
+      ? 'Payout removed. The expense and its cash line are gone, and the money is back on the account. Record the correct expense once.'
+      : mode === 'cancelled'
+        ? 'Payout reversed and the expense was cancelled so it cannot be paid again. The original month is locked, so that cash line was offset today. Record the correct expense once.'
+        : 'Payout reversed and the paid balance was reset to zero. Pay this request once.';
+
+  return {
+    ok: true,
+    movements: created,
+    removedMovementIds: removedIds,
+    expenseRemoved: mode === 'deleted',
+    mode,
+    priorPaidAmountNgn: paidAmountNgn,
+    message,
+  };
 }
 
 function assertRefundPayoutReversalBranchGate(db, refundId, workspaceBranchId, workspaceViewAll, actor) {
@@ -9023,10 +9235,11 @@ export function payPaymentRequest(db, requestID, payload) {
   if (!dualGate.ok) return dualGate;
 
   const requested = roundMoney(row.amount_requested_ngn);
-  const alreadyPaid = roundMoney(row.paid_amount_ngn);
+  const liveOutNgn = unreversedTreasuryOutNgn(db, 'PAYMENT_REQUEST', requestID);
+  const alreadyPaid = Math.max(roundMoney(row.paid_amount_ngn), liveOutNgn);
   const outstanding = effectiveOutstandingNgn(requested, alreadyPaid);
   if (outstanding <= 0) {
-    return { ok: false, error: 'Payment request is already fully paid.' };
+    return { ok: false, error: paymentAlreadyCoversRequestError(row.paid_amount_ngn, liveOutNgn) };
   }
 
   const defaultPaidDay =
@@ -9120,10 +9333,11 @@ export function payPaymentRequest(db, requestID, payload) {
         throw new Error('Only approved payment requests can be paid.');
       }
       const requestedFresh = roundMoney(fresh.amount_requested_ngn);
-      const alreadyPaidFresh = roundMoney(fresh.paid_amount_ngn);
+      const liveOutFresh = unreversedTreasuryOutNgn(db, 'PAYMENT_REQUEST', requestID);
+      const alreadyPaidFresh = Math.max(roundMoney(fresh.paid_amount_ngn), liveOutFresh);
       const outstandingFresh = effectiveOutstandingNgn(requestedFresh, alreadyPaidFresh);
       if (outstandingFresh <= 0) {
-        throw new Error('Payment request is already fully paid.');
+        throw new Error(paymentAlreadyCoversRequestError(fresh.paid_amount_ngn, liveOutFresh));
       }
       if (totalPaid > outstandingFresh) {
         throw new Error('Payment exceeds the approved request balance.');

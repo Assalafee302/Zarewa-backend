@@ -445,11 +445,12 @@ const OPERATIONAL_TOPICS = [
     module: 'finance',
     action: 'reverse a treasury payout',
     title: 'Reverse treasury payout',
-    answer: 'finance.reverse may post compensating entries — use with control.',
+    answer:
+      'finance.reverse removes the expense and its cash line when that month is still open, and puts the money back. Record the correct expense once. A locked month is offset with a reversal dated today and the expense is cancelled so it cannot be paid again.',
     steps: [
-      'Open paid request/line.',
+      'Open the paid request.',
       'Use **Reverse payout** if permission allows.',
-      'Coordinate with audit — Zare only guides.',
+      'Record the correct expense once. Do not pay the reversed request again.',
     ],
     links: [{ label: 'Finance', to: '/accounts' }],
     extraKeywords: ['reverse payout', 'undo payment'],

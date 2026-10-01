@@ -1720,6 +1720,20 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
   if (!parsed.length) {
     return { ok: false, error: 'Nothing to save — add readings for at least one coil line.' };
   }
+  const requestedStart = String(payload.productionDateISO || payload.startedAtISO || '').trim();
+  let nextStartIso = '';
+  if (requestedStart) {
+    const normalizedStart = normalizeIso(requestedStart);
+    const currentStart = String(job.start_date_iso || '').slice(0, 10);
+    if (normalizedStart.slice(0, 10) !== currentStart) {
+      try {
+        assertPeriodOpen(db, normalizedStart, 'Production date');
+      } catch (error) {
+        return { ok: false, error: String(error.message || error) };
+      }
+      nextStartIso = normalizedStart;
+    }
+  }
   const totalMetersSaved = parsed.reduce((s, p) => s + Math.max(0, p.meters), 0);
   if (totalMetersSaved <= 0) {
     return {
@@ -1797,6 +1811,9 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
         );
       }
       refreshJobCoilSpecFlagsTx(db, jobID);
+      if (nextStartIso) {
+        db.prepare(`UPDATE production_jobs SET start_date_iso = ? WHERE job_id = ?`).run(nextStartIso, jobID);
+      }
       appendAuditLog(db, {
         actor: opts.actor,
         action: 'production.run_log_draft',

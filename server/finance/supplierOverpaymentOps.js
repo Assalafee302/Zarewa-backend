@@ -8,6 +8,8 @@
  *   received value when goods landed cost more than the order).
  * - Treasury, `supplier_paid_ngn`, accounts payable, and the GL journal commit together.
  * - The same bank reference and amount on the same PO is not posted twice.
+ * - Correcting a payment restates that one outflow. The difference moves cash, the paid total,
+ *   and a balancing journal. It does not delete the original line.
  */
 import { appendAuditLog, assertPeriodOpen } from '../controlOps.js';
 import {
@@ -504,6 +506,278 @@ export function recordSupplierOverpaymentReversal(db, poId, payload = {}) {
         amountNgn: ctx.amountNgn,
         unwindAdvanceNgn,
         unwindPayableNgn,
+        position: supplierCashPosition(db, fresh.poId),
+      };
+    })();
+    return result;
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+function paymentKindLabel(type) {
+  if (type === 'SUPPLIER_OVERPAYMENT') return 'Extra / duplicate payment';
+  if (type === 'AP_PAYMENT') return 'Invoice payment';
+  return 'Invoice payment';
+}
+
+/**
+ * Supplier outflows already posted against this purchase order. These are the lines
+ * whose amount can be restated when the figure entered was wrong.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} poId
+ */
+export function listEditableSupplierPayments(db, poId) {
+  const id = String(poId || '').trim();
+  if (!id) return [];
+  const rows = db
+    .prepare(
+      `SELECT tm.id, tm.posted_at_iso, tm.type, tm.amount_ngn, tm.reference, tm.note,
+              tm.treasury_account_id, tm.source_kind,
+              ta.name AS account_name, ta.type AS account_type, ta.bank_name
+       FROM treasury_movements tm
+       LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
+       WHERE tm.amount_ngn < 0
+         AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+         AND (
+           (tm.type = 'SUPPLIER_PAYMENT' AND tm.source_kind = 'PURCHASE_ORDER' AND tm.source_id = ?)
+           OR (tm.type = 'SUPPLIER_OVERPAYMENT' AND tm.source_kind = 'SUPPLIER_OVERPAYMENT' AND tm.source_id = ?)
+           OR (
+             tm.type = 'AP_PAYMENT'
+             AND tm.source_kind = 'ACCOUNTS_PAYABLE'
+             AND tm.source_id IN (SELECT ap_id FROM accounts_payable WHERE po_ref = ?)
+           )
+         )
+       ORDER BY tm.posted_at_iso DESC, tm.id DESC`
+    )
+    .all(id, id, id);
+  return rows.map((row) => ({
+    id: row.id,
+    postedAtISO: row.posted_at_iso || '',
+    type: row.type || '',
+    kindLabel: paymentKindLabel(row.type),
+    amountNgn: roundMoney(row.amount_ngn),
+    amountPaidNgn: Math.abs(roundMoney(row.amount_ngn)),
+    reference: row.reference || '',
+    note: row.note || '',
+    treasuryAccountId: Number(row.treasury_account_id) || 0,
+    accountName: String(row.account_name || row.bank_name || '').trim(),
+    accountType: String(row.account_type || '').trim(),
+    sourceKind: row.source_kind || '',
+  }));
+}
+
+function loadEditablePayment(db, poId, movementId) {
+  const id = String(movementId || '').trim();
+  if (!id) return { ok: false, error: 'Choose the payment to correct.' };
+  const row = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Payment not found.' };
+  if (String(row.reverses_movement_id || '').trim()) {
+    return { ok: false, error: 'This line is a reversal. Correct the original payment instead.' };
+  }
+  const type = String(row.type || '');
+  const sourceKind = String(row.source_kind || '');
+  const sourceId = String(row.source_id || '');
+  let belongs = false;
+  if (type === 'SUPPLIER_PAYMENT' && sourceKind === 'PURCHASE_ORDER' && sourceId === poId) belongs = true;
+  if (type === 'SUPPLIER_OVERPAYMENT' && sourceKind === 'SUPPLIER_OVERPAYMENT' && sourceId === poId) belongs = true;
+  if (type === 'AP_PAYMENT' && sourceKind === 'ACCOUNTS_PAYABLE') {
+    const ap = db.prepare(`SELECT po_ref FROM accounts_payable WHERE ap_id = ?`).get(sourceId);
+    belongs = String(ap?.po_ref || '') === poId;
+  }
+  if (!belongs) return { ok: false, error: 'That payment is not on this purchase order.' };
+  const oldAmount = roundMoney(row.amount_ngn);
+  if (oldAmount >= 0) {
+    return { ok: false, error: 'Only payments that left the bank can be corrected here.' };
+  }
+  return { ok: true, row, oldPaidNgn: Math.abs(oldAmount) };
+}
+
+function correctionJournalLines(db, poId, treasuryAccountId, movementId, deltaPaidNgn) {
+  const cash = ensureTreasuryCashGlAccount(db, treasuryAccountId);
+  if (!cash.ok) throw new Error(cash.error || 'Treasury cash account is not on the GL.');
+  ensureArchitecturalGlAccounts(db);
+  if (deltaPaidNgn > 0) {
+    const position = supplierCashPosition(db, poId);
+    if (!position.ok) throw new Error(position.error);
+    const settlementNgn = Math.min(deltaPaidNgn, position.stillOwedNgn);
+    const advanceNgn = roundMoney(deltaPaidNgn - settlementNgn);
+    if (advanceNgn > 0) ensureSupplierAdvanceGlAccount(db);
+    const lines = [];
+    if (settlementNgn > 0) lines.push({ accountCode: '2000', debitNgn: settlementNgn, memo: poId });
+    if (advanceNgn > 0) lines.push({ accountCode: '1400', debitNgn: advanceNgn, memo: poId });
+    lines.push({ accountCode: cash.accountCode, creditNgn: deltaPaidNgn, memo: movementId });
+    return { lines, settlementNgn, advanceNgn, unwindAdvanceNgn: 0, unwindPayableNgn: 0 };
+  }
+  const reduceNgn = -deltaPaidNgn;
+  const net1400 = Math.max(0, netGlForPoSupplierCash(db, poId, '1400'));
+  const net2000 = Math.max(0, netGlForPoSupplierCash(db, poId, '2000'));
+  let left = reduceNgn;
+  const unwindAdvanceNgn = Math.min(left, net1400);
+  left -= unwindAdvanceNgn;
+  const unwindKnown = Math.min(left, net2000);
+  left -= unwindKnown;
+  const unwindPayableNgn = unwindKnown + left;
+  if (unwindAdvanceNgn > 0) ensureSupplierAdvanceGlAccount(db);
+  const lines = [{ accountCode: cash.accountCode, debitNgn: reduceNgn, memo: movementId }];
+  if (unwindAdvanceNgn > 0) lines.push({ accountCode: '1400', creditNgn: unwindAdvanceNgn, memo: poId });
+  if (unwindPayableNgn > 0) lines.push({ accountCode: '2000', creditNgn: unwindPayableNgn, memo: poId });
+  return { lines, settlementNgn: 0, advanceNgn: 0, unwindAdvanceNgn, unwindPayableNgn };
+}
+
+/**
+ * Restate one posted supplier payment to the amount that actually left the bank.
+ * Cash, the purchase-order paid total, accounts payable, and the GL move by the difference only.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} poId
+ * @param {object} payload
+ */
+export function correctSupplierPaymentAmount(db, poId, payload = {}) {
+  const position = supplierCashPosition(db, poId);
+  if (!position.ok) return position;
+  if (String(position.status).toLowerCase() === 'rejected') {
+    return { ok: false, error: 'This purchase order is rejected.' };
+  }
+  const amountNgn = moneyInput(payload.amountNgn);
+  if (amountNgn <= 0) return { ok: false, error: 'Enter the correct amount that left the bank.' };
+  const note = String(payload.note || '').trim();
+  if (note.length < 8) {
+    return { ok: false, error: 'Enter a note explaining the correction (at least 8 characters).' };
+  }
+  const hqSettle = userMaySettleSupplierPayableFromHqRollup(payload.actor, payload.workspaceViewAll);
+  if (!hqSettle) {
+    const gate = assertEntityBranchForWorkspaceWrite(
+      payload.actor,
+      position.branchId,
+      payload.workspaceBranchId,
+      Boolean(payload.workspaceViewAll)
+    );
+    if (!gate.ok) return { ok: false, error: gate.error };
+  }
+  const loaded = loadEditablePayment(db, position.poId, payload.movementId);
+  if (!loaded.ok) return loaded;
+  if (amountNgn === loaded.oldPaidNgn) {
+    return {
+      ok: true,
+      noOp: true,
+      movementId: loaded.row.id,
+      previousAmountNgn: loaded.oldPaidNgn,
+      amountNgn,
+      position,
+    };
+  }
+  const day = String(loaded.row.posted_at_iso || '').slice(0, 10) || postingDay(payload);
+  try {
+    assertPeriodOpen(db, day, 'Supplier payment correction date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  try {
+    let result = { ok: false };
+    db.transaction(() => {
+      const fresh = supplierCashPosition(db, position.poId);
+      if (!fresh.ok) throw new Error(fresh.error);
+      const current = loadEditablePayment(db, fresh.poId, payload.movementId);
+      if (!current.ok) throw new Error(current.error);
+      if (amountNgn === current.oldPaidNgn) {
+        result = {
+          ok: true,
+          noOp: true,
+          movementId: current.row.id,
+          previousAmountNgn: current.oldPaidNgn,
+          amountNgn,
+          position: fresh,
+        };
+        return;
+      }
+      const deltaPaidNgn = roundMoney(amountNgn - current.oldPaidNgn);
+      const nextPaid = roundMoney(fresh.supplierPaidNgn + deltaPaidNgn);
+      if (nextPaid < 0) throw new Error('The corrected amount would take supplier paid below zero.');
+      const split = correctionJournalLines(
+        db,
+        fresh.poId,
+        Number(current.row.treasury_account_id),
+        current.row.id,
+        deltaPaidNgn
+      );
+      const account = db
+        .prepare(`SELECT id, name, balance FROM treasury_accounts WHERE id = ?`)
+        .get(current.row.treasury_account_id);
+      if (!account) throw new Error('Treasury account not found.');
+      // Restates cash that already left this account, so the book balance may go negative.
+      db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(
+        roundMoney(account.balance) - deltaPaidNgn,
+        account.id
+      );
+      db.prepare(`UPDATE purchase_orders SET supplier_paid_ngn = ? WHERE po_id = ?`).run(nextPaid, fresh.poId);
+      const priorNote = String(current.row.note || '').trim();
+      const mergedNote = priorNote
+        ? `${priorNote} — Corrected from ₦${current.oldPaidNgn.toLocaleString('en-NG')} to ₦${amountNgn.toLocaleString('en-NG')}. ${note}`
+        : `Corrected from ₦${current.oldPaidNgn.toLocaleString('en-NG')} to ₦${amountNgn.toLocaleString('en-NG')}. ${note}`;
+      db.prepare(`UPDATE treasury_movements SET amount_ngn = ?, note = ? WHERE id = ?`).run(
+        -amountNgn,
+        mergedNote,
+        current.row.id
+      );
+      db.prepare(`UPDATE purchase_payment_cashier_acks SET amount_ngn = ? WHERE treasury_movement_id = ?`).run(
+        amountNgn,
+        current.row.id
+      );
+      const likePrefix = `${String(current.row.id).replace(/[\\%_]/g, '\\$&')}:%`;
+      const priorCorrections = db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM gl_journal_entries
+           WHERE source_kind = 'SUPPLIER_PAYMENT_CORRECTION_GL' AND source_id LIKE ? ESCAPE '\\'`
+        )
+        .get(likePrefix);
+      const gl = postBalancedJournalTx(db, {
+        entryDateISO: day,
+        memo: `Correct supplier payment ${fresh.poId} from ${current.oldPaidNgn} to ${amountNgn}`,
+        sourceKind: 'SUPPLIER_PAYMENT_CORRECTION_GL',
+        sourceId: `${current.row.id}:${Number(priorCorrections?.c || 0) + 1}`,
+        branchId: fresh.branchId,
+        createdByUserId: payload.actor?.id ?? null,
+        lines: split.lines,
+      });
+      const glError = rejectGl(gl);
+      if (glError) throw new Error(glError);
+      insertStockMovementTx(db, {
+        id: nextStockMovementHumanId(db),
+        type: 'PO_SUPPLIER_PAYMENT_CORRECTION',
+        ref: fresh.poId,
+        detail: `${current.row.id} ${current.oldPaidNgn} -> ${amountNgn}`,
+        dateISO: day,
+        branchId: fresh.branchId,
+      });
+      appendAuditLog(db, {
+        actor: payload.actor,
+        action: 'purchase_order.supplier_payment_correct',
+        entityKind: 'purchase_order',
+        entityId: fresh.poId,
+        note,
+        details: {
+          movementId: current.row.id,
+          previousAmountNgn: current.oldPaidNgn,
+          amountNgn,
+          deltaPaidNgn,
+          settlementNgn: split.settlementNgn,
+          advanceNgn: split.advanceNgn,
+          unwindAdvanceNgn: split.unwindAdvanceNgn,
+          unwindPayableNgn: split.unwindPayableNgn,
+        },
+      });
+      syncAccountsPayableFromPurchaseOrder(db, fresh.poId);
+      result = {
+        ok: true,
+        movementId: current.row.id,
+        previousAmountNgn: current.oldPaidNgn,
+        amountNgn,
+        deltaPaidNgn,
+        settlementNgn: split.settlementNgn,
+        advanceNgn: split.advanceNgn,
+        unwindAdvanceNgn: split.unwindAdvanceNgn,
+        unwindPayableNgn: split.unwindPayableNgn,
         position: supplierCashPosition(db, fresh.poId),
       };
     })();

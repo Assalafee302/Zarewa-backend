@@ -398,7 +398,7 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
     kind: 'nav',
     id: 'nav-supplier-overpayments',
     label: 'Supplier double payment and overpayment',
-    sublabel: 'Record a second supplier payment, or the refund of an overpayment',
+    sublabel: 'Record a second supplier payment, correct a wrong amount, or the refund of an overpayment',
     path: '/supplier-overpayments',
     keywords: [
       'double paid',
@@ -408,6 +408,9 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
       'second payment',
       'supplier refund',
       'reverse supplier payment',
+      'wrong payment amount',
+      'correct supplier payment',
+      'edit payment',
     ],
     permissions: ['finance.pay'],
   },

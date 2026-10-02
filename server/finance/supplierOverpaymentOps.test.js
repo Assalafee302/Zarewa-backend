@@ -1,7 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../db.js';
 import { lockAccountingPeriod } from '../controlOps.js';
+import { recordSupplierPayment } from '../writeOps.js';
 import {
+  correctSupplierPaymentAmount,
+  listEditableSupplierPayments,
   recordSupplierExcessPayment,
   recordSupplierOverpaymentReversal,
   supplierCashPosition,
@@ -180,5 +183,89 @@ describe.skipIf(!mysqlAvailable())('supplier overpayment', () => {
     });
     expect(other.ok).toBe(false);
     expect(other.error).toMatch(/BR-YOL/);
+  });
+
+  it('corrects a posted supplier payment to the amount that left the bank', () => {
+    seedPo(db, { poId: 'PO-FIX', paidNgn: 0, orderedNgn: 1_000_000 });
+    const posted = recordSupplierPayment(db, 'PO-FIX', 1_000_000, 'First settlement', {
+      treasuryAccountId,
+      dateISO: '2026-04-02',
+      reference: 'TRF-WRONG',
+      actor: ACTOR,
+      workspaceBranchId: 'BR-KD',
+    });
+    expect(posted.ok, posted.error).toBe(true);
+    const lines = listEditableSupplierPayments(db, 'PO-FIX');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].amountPaidNgn).toBe(1_000_000);
+    const before = balance(db, treasuryAccountId);
+
+    const up = correctSupplierPaymentAmount(db, 'PO-FIX', {
+      movementId: lines[0].id,
+      amountNgn: '1,200,000',
+      note: 'Bank alert was higher than entered',
+      actor: ACTOR,
+      workspaceBranchId: 'BR-KD',
+    });
+    expect(up.ok, up.error).toBe(true);
+    expect(up.settlementNgn).toBe(0);
+    expect(up.advanceNgn).toBe(200_000);
+    expect(up.position.supplierPaidNgn).toBe(1_200_000);
+    expect(up.position.excessNgn).toBe(200_000);
+    expect(balance(db, treasuryAccountId)).toBe(before - 200_000);
+
+    const same = correctSupplierPaymentAmount(db, 'PO-FIX', {
+      movementId: lines[0].id,
+      amountNgn: 1_200_000,
+      note: 'Bank alert was higher than entered',
+      actor: ACTOR,
+      workspaceBranchId: 'BR-KD',
+    });
+    expect(same.ok, same.error).toBe(true);
+    expect(same.noOp).toBe(true);
+    expect(balance(db, treasuryAccountId)).toBe(before - 200_000);
+
+    const down = correctSupplierPaymentAmount(db, 'PO-FIX', {
+      movementId: lines[0].id,
+      amountNgn: 800_000,
+      note: 'Correct figure from the bank alert',
+      actor: ACTOR,
+      workspaceBranchId: 'BR-KD',
+    });
+    expect(down.ok, down.error).toBe(true);
+    expect(down.position.supplierPaidNgn).toBe(800_000);
+    expect(down.position.stillOwedNgn).toBe(200_000);
+    expect(down.position.excessNgn).toBe(0);
+    expect(balance(db, treasuryAccountId)).toBe(before + 200_000);
+    const movement = db.prepare(`SELECT amount_ngn FROM treasury_movements WHERE id = ?`).get(lines[0].id);
+    expect(Number(movement.amount_ngn)).toBe(-800_000);
+
+    const missing = correctSupplierPaymentAmount(db, 'PO-FIX', {
+      movementId: 'TM-NOT-HERE',
+      amountNgn: 100,
+      note: 'This payment is not on the order',
+      actor: ACTOR,
+      workspaceBranchId: 'BR-KD',
+    });
+    expect(missing.ok).toBe(false);
+  });
+
+  it('corrects an extra payment down without a separate refund', () => {
+    seedPo(db, { poId: 'PO-EDIT-EXTRA', paidNgn: 1_000_000, orderedNgn: 1_000_000 });
+    const extra = pay('PO-EDIT-EXTRA', 1_000_000, 'TRF-EXTRA');
+    expect(extra.ok, extra.error).toBe(true);
+    const before = balance(db, treasuryAccountId);
+    const fixed = correctSupplierPaymentAmount(db, 'PO-EDIT-EXTRA', {
+      movementId: extra.treasuryMovementId,
+      amountNgn: 400_000,
+      note: 'Only 400,000 of the second transfer left the bank',
+      actor: ACTOR,
+      workspaceBranchId: 'BR-KD',
+    });
+    expect(fixed.ok, fixed.error).toBe(true);
+    expect(fixed.unwindAdvanceNgn).toBe(600_000);
+    expect(fixed.position.supplierPaidNgn).toBe(1_400_000);
+    expect(fixed.position.excessNgn).toBe(400_000);
+    expect(balance(db, treasuryAccountId)).toBe(before + 600_000);
   });
 });

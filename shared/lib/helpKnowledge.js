@@ -925,6 +925,9 @@ const CORE_HELP_ARTICLES = [
       'overpaid a supplier',
       'duplicate supplier payment',
       'supplier overpayments',
+      'wrong supplier payment amount',
+      'edit supplier payment',
+      'correct supplier amount paid',
     ],
     answer:
       'A second payment to a supplier, and cash the supplier sends back for an overpayment, are not normal invoice settlements. Finance records them on **Supplier overpayments** so the extra cash sits as an amount the supplier owes back, and the refund reduces it.',
@@ -933,6 +936,7 @@ const CORE_HELP_ARTICLES = [
       'Read the order value, what is already paid, and how much is above the order.',
       'To record the second payment (or the part of a transfer above the order value): choose the bank account the money left, the date, the bank reference, and a short note. The amount must be more than what is still owed — a normal balance is still paid from Finance as a supplier payment.',
       'When the supplier refunds the extra, or the bank reverses it: record the reversal for no more than the amount above the order value. Cash comes back into the treasury account you select, and the purchase order paid total drops by that amount.',
+      'If a payment was entered at the wrong amount: open Correct a wrong payment, choose that bank line, and type the amount that actually left the account. The difference updates the bank, the paid total, and the accounts. Use a reversal only when cash really comes back, not to fix a typing error.',
       'A fully paid invoice will refuse another Pay. That is expected — use this screen for the extra payment and for the refund.',
     ],
     links: [

@@ -4,6 +4,7 @@
  * Provides a dedicated, high-clarity interface for recording:
  * 1. Second / duplicate disbursements or payments exceeding purchase order obligations.
  * 2. Overpayment reversals when a supplier refunds the excess cash or a bank recalls the transfer.
+ * 3. Correcting a supplier payment that was entered at the wrong amount.
  */
 import crypto from 'node:crypto';
 import express from 'express';
@@ -13,6 +14,8 @@ import { listBranches } from '../branches.js';
 import { branchWhere, getPurchaseOrder, listTreasuryAccounts } from '../readModel.js';
 import { withWriteDelta } from '../workspaceWriteDelta.js';
 import {
+  correctSupplierPaymentAmount,
+  listEditableSupplierPayments,
   listSupplierOverpaymentMovements,
   recordSupplierExcessPayment,
   recordSupplierOverpaymentReversal,
@@ -72,6 +75,7 @@ export function renderSupplierOverpaymentPage(model = {}) {
   const position = model.position || null;
   const accounts = Array.isArray(model.accounts) ? model.accounts : [];
   const movements = Array.isArray(model.movements) ? model.movements : [];
+  const payments = Array.isArray(model.payments) ? model.payments : [];
   const poId = String(model.poId || '');
   const selectedAccount = String(model.treasuryAccountId || '');
   const recentOrders = Array.isArray(model.recentOrders) ? model.recentOrders : [];
@@ -211,6 +215,13 @@ export function renderSupplierOverpaymentPage(model = {}) {
               <span class="tab-sub">${excess > 0 ? `₦${formatNgn(excess)} refundable` : 'Supplier refund / bank recall'}</span>
             </div>
             ${excess > 0 ? `<span class="tab-badge-pill">Ready</span>` : ''}
+          </button>
+          <button type="button" class="tab-btn" id="tab-btn-edit" onclick="switchActionTab('edit')" role="tab" aria-selected="false">
+            <span class="tab-icon">✎</span>
+            <div class="tab-text-group">
+              <span class="tab-title">3. Correct a Wrong Payment</span>
+              <span class="tab-sub">${payments.length ? `${payments.length} posted payment${payments.length === 1 ? '' : 's'}` : 'Change the amount entered'}</span>
+            </div>
           </button>
         </div>
 
@@ -380,6 +391,65 @@ export function renderSupplierOverpaymentPage(model = {}) {
                     <span class="action-subtext">Will credit Prepayments (GL 1400), debit Treasury, and drop cumulative PO paid.</span>
                   </div>
                 </form>`
+          }
+        </div>
+
+        <div class="tab-content" id="tab-panel-edit" role="tabpanel" style="display:none;">
+          <div class="form-banner banner-info">
+            <span class="banner-icon">✎</span>
+            <div class="banner-body">
+              <strong>Use this when the payment was typed wrong.</strong>
+              Pick the bank line and enter the amount that actually left the account. The difference updates the bank balance, the paid total on this order, and the accounts. The original line stays in the books with the corrected figure.
+            </div>
+          </div>
+          ${
+            payments.length
+              ? `<div class="payment-edit-list">
+                  ${payments
+                    .map((row) => {
+                      const acctLabel = row.accountName
+                        ? `${row.accountName}${row.accountType ? ` (${row.accountType})` : ''}`
+                        : `Account #${row.treasuryAccountId}`;
+                      return `<article class="payment-edit-card">
+                        <div class="payment-edit-head">
+                          <div>
+                            <div class="payment-edit-kind">${esc(row.kindLabel || 'Supplier payment')}</div>
+                            <div class="payment-edit-meta">${esc(String(row.postedAtISO || '').slice(0, 10))} · ${esc(acctLabel)} · <code>${esc(row.reference || 'no reference')}</code></div>
+                          </div>
+                          <div class="payment-edit-amount">Entered ₦${formatNgn(row.amountPaidNgn)}</div>
+                        </div>
+                        <form method="post" action="${SUPPLIER_OVERPAYMENT_PATH}" class="workflow-form" onsubmit="handleFormSubmit(this, 'Saving correction...')">
+                          <input type="hidden" name="csrf" value="${esc(model.csrf)}" />
+                          <input type="hidden" name="action" value="correct" />
+                          <input type="hidden" name="poId" value="${esc(position.poId)}" />
+                          <input type="hidden" name="movementId" value="${esc(row.id)}" />
+                          <div class="form-row-grid">
+                            <div class="form-group">
+                              <label>Correct amount paid</label>
+                              <input type="text" name="amountNgn" required inputmode="numeric" value="${formatNgn(row.amountPaidNgn)}" class="input-control correction-amount" data-current="${Number(row.amountPaidNgn) || 0}" oninput="previewPaymentCorrection(this)" />
+                            </div>
+                            <div class="form-group">
+                              <label>Why the figure was wrong</label>
+                              <input type="text" name="note" required minlength="8" placeholder="e.g. Bank alert was ₦800,000, not ₦1,000,000" class="input-control" />
+                            </div>
+                          </div>
+                          <div class="correction-preview"></div>
+                          <div class="form-actions-footer">
+                            <button type="submit" class="btn btn-primary" ${allowed ? '' : 'disabled'}>Save corrected amount</button>
+                          </div>
+                        </form>
+                      </article>`;
+                    })
+                    .join('')}
+                </div>`
+              : `<div class="empty-table-state">
+                  <span class="empty-table-icon">✎</span>
+                  <p>${
+                    paid > 0
+                      ? `This order shows ₦${formatNgn(paid)} paid, but there is no bank payment line to edit. Post the payment from Finance first if the cash left the bank and was never recorded.`
+                      : 'No supplier payment has been posted on this purchase order yet.'
+                  }</p>
+                </div>`
           }
         </div>
       </section>
@@ -795,9 +865,35 @@ export function renderSupplierOverpaymentPage(model = {}) {
     .dot-excess { background: #9333ea; }
     .tabs-nav {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 0.65rem;
       margin-bottom: 1.35rem;
+    }
+    .payment-edit-list { display: flex; flex-direction: column; gap: 0.85rem; }
+    .payment-edit-card {
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 0.95rem 1rem;
+      background: #f8fafc;
+    }
+    .payment-edit-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: flex-start;
+      margin-bottom: 0.75rem;
+    }
+    .payment-edit-kind { font-weight: 700; }
+    .payment-edit-meta { color: var(--text-muted); font-size: 0.82rem; margin-top: 0.15rem; }
+    .payment-edit-amount { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .correction-preview {
+      display: none;
+      margin-top: 0.65rem;
+      padding: 0.65rem 0.75rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      font-size: 0.86rem;
     }
     .tab-btn {
       display: flex;
@@ -1088,27 +1184,35 @@ export function renderSupplierOverpaymentPage(model = {}) {
 
   <script>
     function switchActionTab(tabKey) {
-      var payBtn = document.getElementById('tab-btn-pay');
-      var revBtn = document.getElementById('tab-btn-rev');
-      var payPanel = document.getElementById('tab-panel-pay');
-      var revPanel = document.getElementById('tab-panel-rev');
-      if (!payBtn || !revBtn || !payPanel || !revPanel) return;
+      ['pay', 'rev', 'edit'].forEach(function (key) {
+        var btn = document.getElementById('tab-btn-' + key);
+        var panel = document.getElementById('tab-panel-' + key);
+        if (!btn || !panel) return;
+        var on = key === tabKey;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        panel.style.display = on ? 'block' : 'none';
+      });
+    }
 
-      if (tabKey === 'pay') {
-        payBtn.classList.add('active');
-        payBtn.setAttribute('aria-selected', 'true');
-        revBtn.classList.remove('active');
-        revBtn.setAttribute('aria-selected', 'false');
-        payPanel.style.display = 'block';
-        revPanel.style.display = 'none';
-      } else {
-        revBtn.classList.add('active');
-        revBtn.setAttribute('aria-selected', 'true');
-        payBtn.classList.remove('active');
-        payBtn.setAttribute('aria-selected', 'false');
-        revPanel.style.display = 'block';
-        payPanel.style.display = 'none';
+    function previewPaymentCorrection(input) {
+      var card = input.closest('.payment-edit-card');
+      if (!card) return;
+      var box = card.querySelector('.correction-preview');
+      if (!box) return;
+      var next = parseNumericInput(input.value);
+      var current = Number(input.getAttribute('data-current')) || 0;
+      var obligation = ${Number(position?.obligationNgn) || 0};
+      var paidNow = ${Number(position?.supplierPaidNgn) || 0};
+      if (next <= 0 || next === current) {
+        box.style.display = 'none';
+        return;
       }
+      var nextPaid = Math.max(0, paidNow + (next - current));
+      var nextOwed = Math.max(0, obligation - nextPaid);
+      var nextExcess = Math.max(0, nextPaid - obligation);
+      box.style.display = 'block';
+      box.textContent = 'Paid total becomes ₦' + formatNumberNgn(nextPaid) + '. Still owed ₦' + formatNumberNgn(nextOwed) + '. Excess ₦' + formatNumberNgn(nextExcess) + '.';
     }
 
     function formatNumberNgn(n) {
@@ -1268,6 +1372,7 @@ function pageModel(db, req, extra = {}) {
     position: position?.ok ? position : null,
     lookupError: position && !position.ok ? position.error : '',
     movements: position?.ok ? listSupplierOverpaymentMovements(db, poId) : [],
+    payments: position?.ok ? listEditableSupplierPayments(db, poId) : [],
     recentOrders: listRecentPurchaseOrders(db, branchId),
     overpaidOrders: listOverpaidPurchaseOrders(db, branchId),
     notice: extra.notice || String(req.query?.notice || ''),
@@ -1317,6 +1422,7 @@ export function registerSupplierOverpaymentRoutes(app, db) {
         ok: true,
         position,
         movements: listSupplierOverpaymentMovements(db, position.poId),
+        payments: listEditableSupplierPayments(db, position.poId),
       });
     }
   );
@@ -1352,6 +1458,21 @@ export function registerSupplierOverpaymentRoutes(app, db) {
         reference: body.reference,
         note: body.note,
         reason: body.reason,
+      });
+      return jsonResult(res, db, req.params.poId, result);
+    }
+  );
+
+  app.post(
+    '/api/purchase-orders/:poId/supplier-payment-correction',
+    requirePermission('finance.pay'),
+    (req, res) => {
+      const body = req.body || {};
+      const result = correctSupplierPaymentAmount(db, req.params.poId, {
+        ...workspaceFields(req),
+        movementId: body.movementId,
+        amountNgn: body.amountNgn,
+        note: body.note,
       });
       return jsonResult(res, db, req.params.poId, result);
     }
@@ -1412,7 +1533,14 @@ export function registerSupplierOverpaymentPage(app, db) {
         ? recordSupplierExcessPayment(db, body.poId, payload)
         : action === 'reversal'
           ? recordSupplierOverpaymentReversal(db, body.poId, payload)
-          : { ok: false, error: 'Choose a payment or a reversal.' };
+          : action === 'correct'
+            ? correctSupplierPaymentAmount(db, body.poId, {
+                ...workspaceFields(req),
+                movementId: body.movementId,
+                amountNgn: body.amountNgn,
+                note: body.note,
+              })
+            : { ok: false, error: 'Choose a payment, a reversal, or a correction.' };
     if (!result.ok) {
       return sendPage(res, renderSupplierOverpaymentPage({ ...modelBase, error: result.error }), 400);
     }
@@ -1421,7 +1549,11 @@ export function registerSupplierOverpaymentPage(app, db) {
       ? 'That bank reference was already recorded on this purchase order.'
       : action === 'excess'
         ? `Recorded ₦${formatNgn(result.amountNgn)} leaving the bank. ₦${formatNgn(result.advanceNgn)} is held as an excess advance.`
-        : `Recorded ₦${formatNgn(result.amountNgn)} coming back. Total paid on this order is now ₦${formatNgn(result.position?.supplierPaidNgn)}.`;
+        : action === 'correct'
+          ? result.noOp
+            ? `That payment is already ₦${formatNgn(result.amountNgn)}. Nothing was changed.`
+            : `Corrected the payment from ₦${formatNgn(result.previousAmountNgn)} to ₦${formatNgn(result.amountNgn)}. Total paid on this order is now ₦${formatNgn(result.position?.supplierPaidNgn)}.`
+          : `Recorded ₦${formatNgn(result.amountNgn)} coming back. Total paid on this order is now ₦${formatNgn(result.position?.supplierPaidNgn)}.`;
     const qs = new URLSearchParams({ poId, notice });
     return res.redirect(303, `${SUPPLIER_OVERPAYMENT_PATH}?${qs.toString()}`);
   });

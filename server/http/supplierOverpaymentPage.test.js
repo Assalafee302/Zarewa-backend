@@ -47,6 +47,18 @@ describe('renderSupplierOverpaymentPage', () => {
       overpaidOrders: [
         { po_id: 'PO-2026-0042', supplier_name: 'African Steel Mills Ltd' },
       ],
+      payments: [
+        {
+          id: 'TM-2026-1',
+          postedAtISO: '2026-10-01',
+          type: 'SUPPLIER_OVERPAYMENT',
+          kindLabel: 'Extra / duplicate payment',
+          amountPaidNgn: 2_500_000,
+          reference: 'NIP/991283',
+          accountName: 'Kaduna Bank (GTB)',
+          accountType: 'Bank',
+        },
+      ],
       movements: [
         {
           id: 'TM-2026-1',
@@ -76,6 +88,7 @@ describe('renderSupplierOverpaymentPage', () => {
     // Tabs
     expect(html).toContain('1. Record Second / Extra Payment');
     expect(html).toContain('2. Record Overpayment Reversal');
+    expect(html).toContain('3. Correct a Wrong Payment');
     expect(html).toContain('2,500,000 refundable');
 
     // Form inputs and quick fill
@@ -87,6 +100,8 @@ describe('renderSupplierOverpaymentPage', () => {
     expect(html).toContain('NIP/991283');
     expect(html).toContain('Duplicate transfer during payroll weekend');
     expect(html).toContain('−₦2,500,000');
+    expect(html).toContain('Save corrected amount');
+    expect(html).toContain('Correct amount paid');
   });
 
   it('renders confirmation notice or error when present', () => {

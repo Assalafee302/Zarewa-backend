@@ -52,6 +52,7 @@ import {
   matchesTransportService,
 } from '../shared/lib/refundQuotedServiceKind.js';
 import { coilProducedMetersFromProductionJobs, jobEffectiveOutputMetresForRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
+import { coilGaugeLabelAsOf } from './operations/coilGaugeRevisionOps.js';
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { quotedAboveFloorCreditNgn } from '../shared/lib/refundQuotedAboveFloor.js';
 import {
@@ -1287,24 +1288,51 @@ function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.005) 
 }
 
 /**
+ * Gauge as-of for refund variance. An existing refund keeps the gauge that was current
+ * when it was requested. A new refund uses now, so a coil edit applies to later payouts only.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} [payload]
+ * @param {string | null} [refundId]
+ */
+export function refundGaugeAsOfIso(db, payload = {}, refundId = null) {
+  const id = String(refundId || payload?.excludeRefundId || payload?.refundId || '').trim();
+  if (id) {
+    try {
+      const row = db.prepare(`SELECT requested_at_iso FROM customer_refunds WHERE refund_id = ?`).get(id);
+      const at = String(row?.requested_at_iso || '').trim();
+      if (at) return at;
+    } catch {
+      /* fixtures without customer_refunds */
+    }
+  }
+  return new Date().toISOString();
+}
+
+function gaugeLabelForRefundSlice(db, coilNo, snapshotLabel, asOfIso) {
+  const snap = String(snapshotLabel ?? '').trim();
+  if (!asOfIso) return snap;
+  return coilGaugeLabelAsOf(db, coilNo, asOfIso, snap);
+}
+
+/**
  * Produced metres substitution does not already credit (same gauge as the quote, unknown coil
  * gauge, or offcut remainder). Thinner-coil slices stay on Substitution Difference so the
  * quoted-above-floor margin is not double-counted.
  */
-function sameGaugeProducedMetresForFloorDelta(db, quote, productionJobs) {
+function sameGaugeProducedMetresForFloorDelta(db, quote, productionJobs, asOfIso = null) {
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
   let sameM = 0;
   for (const j of productionJobs || []) {
     const outputM = jobEffectiveOutputMetresForRefund(db, j);
     const jobId = String(j?.job_id ?? j?.jobID ?? '').trim();
-    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId).filter(
+    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId, asOfIso).filter(
       (g) => (Number(g.meters) || 0) > 0.001
     );
     const slices =
       gaugeGroups.length > 0
         ? gaugeGroups.map((g) => ({ meters: Number(g.meters) || 0, coilGauge: g.gaugeLabel }))
         : outputM > 0.001
-          ? [{ meters: outputM, coilGauge: producedGaugeLabelFromJobCoils(db, jobId) }]
+          ? [{ meters: outputM, coilGauge: producedGaugeLabelFromJobCoils(db, jobId, asOfIso) }]
           : [];
     if (slices.length === 0) {
       sameM += outputM;
@@ -1326,7 +1354,7 @@ function sameGaugeProducedMetresForFloorDelta(db, quote, productionJobs) {
 }
 
 /** Workbook (or list) floor ₦/m for the quoted gauge — same lookup family as substitution. */
-function quotedWorkbookFloorPpmForCommission(db, quote, productionJobs, pricingAsAtIso) {
+function quotedWorkbookFloorPpmForCommission(db, quote, productionJobs, pricingAsAtIso, asOfIso = null) {
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const sheetBranch = (branchId && String(branchId).trim()) || DEFAULT_BRANCH_ID;
   const quotedGd = quotedGaugeDesignForCommission(quote?.lines_json);
@@ -1345,7 +1373,7 @@ function quotedWorkbookFloorPpmForCommission(db, quote, productionJobs, pricingA
   // Coil-allocated fallback only when the quote has no material type — never for stone-coated.
   if (ctxJob && !mkFromQuote) {
     const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
-    const coilGauge = producedGaugeLabelFromJobCoils(db, ctxJob.job_id) || quotedGaugeRaw;
+    const coilGauge = producedGaugeLabelFromJobCoils(db, ctxJob.job_id, asOfIso) || quotedGaugeRaw;
     const lookup = listWorkbookPpmForJobAllocatedCoil(
       db,
       ctxJob,
@@ -1428,14 +1456,15 @@ function coilGaugeGroupKey(label) {
  * @param {string | null | undefined} jobId
  * @returns {{ gaugeLabel: string, meters: number }[]}
  */
-function coilGaugeMeterGroupsFromJob(db, jobId) {
+function coilGaugeMeterGroupsFromJob(db, jobId, asOfIso = null) {
   const jid = String(jobId ?? '').trim();
   if (!jid) return [];
   let rows = [];
   try {
     rows = db
       .prepare(
-        `SELECT COALESCE(NULLIF(TRIM(pjc.gauge_label), ''), NULLIF(TRIM(cl.gauge_label), '')) AS g,
+        `SELECT pjc.coil_no AS coil_no,
+                COALESCE(NULLIF(TRIM(pjc.gauge_label), ''), NULLIF(TRIM(cl.gauge_label), '')) AS g,
                 COALESCE(pjc.meters_produced, 0) AS meters
          FROM production_job_coils pjc
          LEFT JOIN coil_lots cl ON cl.coil_no = pjc.coil_no
@@ -1449,7 +1478,7 @@ function coilGaugeMeterGroupsFromJob(db, jobId) {
   /** @type {Map<string, { gaugeLabel: string, meters: number }>} */
   const byKey = new Map();
   for (const r of rows) {
-    const g = String(r?.g ?? '').trim();
+    const g = gaugeLabelForRefundSlice(db, r?.coil_no, r?.g, asOfIso);
     if (!g) continue;
     const meters = Number(r?.meters) || 0;
     const key = coilGaugeGroupKey(g);
@@ -1475,8 +1504,8 @@ function coilGaugeMeterGroupsFromJob(db, jobId) {
  * @param {import('better-sqlite3').Database} db
  * @param {string | null | undefined} jobId
  */
-function producedGaugeLabelFromJobCoils(db, jobId) {
-  const groups = coilGaugeMeterGroupsFromJob(db, jobId);
+function producedGaugeLabelFromJobCoils(db, jobId, asOfIso = null) {
+  const groups = coilGaugeMeterGroupsFromJob(db, jobId, asOfIso);
   if (groups.length === 0) return '';
   const withMetres = groups.find((g) => (Number(g.meters) || 0) > 0);
   return String((withMetres || groups[0]).gaugeLabel || '').trim();
@@ -1645,6 +1674,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
   const cashInNgn = roundMoney(opts.cashInNgn ?? 0);
   const priorRefundedNgn = roundMoney(opts.priorRefundedNgn ?? 0);
   const pricingAsAtIso = opts.pricingAsAtIso ?? null;
+  const gaugeAsOfIso = opts.gaugeAsOfIso ?? null;
   const overrideSubPpm = positiveNumber(opts.substitutePricePerMeterNgn);
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
@@ -1676,7 +1706,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
     const outputM = jobEffectiveOutputMetresForRefund(db, j);
     if (outputM <= 0) continue;
     const jobId = String(j.job_id ?? j.jobID ?? '').trim();
-    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId).filter((g) => (Number(g.meters) || 0) > 0.001);
+    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId, gaugeAsOfIso).filter((g) => (Number(g.meters) || 0) > 0.001);
     const coilMetersSum = gaugeGroups.reduce((s, g) => s + (Number(g.meters) || 0), 0);
 
     /** @type {{ meters: number, coilGaugeLabel: string | null }[]} */
@@ -1812,7 +1842,7 @@ export function dedupeRefundDataQualityIssues(issues) {
  * Quoted roofing gauge vs **allocated coil gauge** — workbook floor (material sheet) or list ₦/m must resolve when they differ.
  * @returns {{ code: string; message: string; jobId?: string; productId?: string }[]}
  */
-export function refundSubstitutionDataQualityIssues(db, quotationRef) {
+export function refundSubstitutionDataQualityIssues(db, quotationRef, asOfIso = null) {
   const ref = String(quotationRef ?? '').trim();
   if (!ref) return [];
   let quote;
@@ -1858,12 +1888,12 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
     for (const j of productionJobs) {
       const jobId = String(j.job_id ?? '').trim();
       const actualM = Number(j.actual_meters) || 0;
-      const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId).filter((g) => (Number(g.meters) || 0) > 0.001);
+      const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId, asOfIso).filter((g) => (Number(g.meters) || 0) > 0.001);
       const slices =
         gaugeGroups.length > 0
           ? gaugeGroups
           : actualM > 0
-            ? [{ gaugeLabel: producedGaugeLabelFromJobCoils(db, jobId), meters: actualM }]
+            ? [{ gaugeLabel: producedGaugeLabelFromJobCoils(db, jobId, asOfIso), meters: actualM }]
             : [];
       if (slices.length === 0) continue;
 
@@ -4299,7 +4329,7 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
  * Explains substitution preview per production job (gauge on quotation vs gauge on allocated coil; workbook ₦/m).
  * Used when `payload.substitutionDiagnosis` is true — not returned over HTTP by default callers.
  */
-function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter, overrideSubPpm, pricingAsAtIso) {
+function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter, overrideSubPpm, pricingAsAtIso, asOfIso = null) {
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
@@ -4307,12 +4337,12 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
   for (const j of productionJobs) {
     const jobLabel = String(j.product_name || j.job_id || 'Production job').trim();
     const actualM = Number(j.actual_meters) || 0;
-    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, j.job_id);
+    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, j.job_id, asOfIso);
     const positiveGroups = gaugeGroups.filter((g) => (Number(g.meters) || 0) > 0.001);
     const slices =
       positiveGroups.length > 0
         ? positiveGroups
-        : [{ gaugeLabel: producedGaugeLabelFromJobCoils(db, j.job_id), meters: actualM }];
+        : [{ gaugeLabel: producedGaugeLabelFromJobCoils(db, j.job_id, asOfIso), meters: actualM }];
 
     for (const slice of slices) {
       const coilGaugeRaw = String(slice.gaugeLabel || '').trim();
@@ -4471,6 +4501,7 @@ export function previewRefundRequest(db, payload) {
   );
   const excludeRefundIdForPreview =
     String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null;
+  const gaugeAsOfIso = refundGaugeAsOfIso(db, payload, excludeRefundIdForPreview);
   const existingRefunds = quotationRef
     ? (
         excludeRefundIdForPreview
@@ -4663,7 +4694,7 @@ export function previewRefundRequest(db, payload) {
       'quoted_gauge_missing',
       'quoted_blend_rate',
     ]);
-    for (const iss of refundSubstitutionDataQualityIssues(db, quotationRef)) {
+    for (const iss of refundSubstitutionDataQualityIssues(db, quotationRef, gaugeAsOfIso)) {
       if (substitutionPreviewWarningCodes.has(iss.code)) warnings.push(iss.message);
     }
     for (const iss of refundPaymentIntegrityIssues(db, quotationRef)) {
@@ -4975,7 +5006,7 @@ export function previewRefundRequest(db, payload) {
       if (!quotedGaugeRaw) continue;
 
       const actualM = Number(j.actual_meters) || 0;
-      const gaugeGroups = coilGaugeMeterGroupsFromJob(db, j.job_id).filter(
+      const gaugeGroups = coilGaugeMeterGroupsFromJob(db, j.job_id, gaugeAsOfIso).filter(
         (g) => (Number(g.meters) || 0) > 0.001
       );
       // Prefer per-coil metres so mixed gauges (e.g. 0.24 + 0.22 on one job) each get credit.
@@ -4984,7 +5015,7 @@ export function previewRefundRequest(db, payload) {
         gaugeGroups.length > 0
           ? gaugeGroups.map((g) => ({ meters: Number(g.meters) || 0, coilGauge: g.gaugeLabel }))
           : actualM > 0
-            ? [{ meters: actualM, coilGauge: producedGaugeLabelFromJobCoils(db, j.job_id) }]
+            ? [{ meters: actualM, coilGauge: producedGaugeLabelFromJobCoils(db, j.job_id, gaugeAsOfIso) }]
             : [];
       if (slices.length === 0) continue;
 
@@ -5355,7 +5386,8 @@ export function previewRefundRequest(db, payload) {
         productionJobs,
         pricePerMeter,
         positiveNumber(payload.substitutePricePerMeterNgn),
-        pricingAsAtIso
+        pricingAsAtIso,
+        gaugeAsOfIso
       ),
       substitutionPerMeterBreakdown,
       suggestedLinesSubstitution: suggestedLines.filter((l) => l.category === 'Substitution Difference'),
@@ -5363,7 +5395,7 @@ export function previewRefundRequest(db, payload) {
         (w) => /substitution/i.test(w) || /gauge/i.test(w) || /list ₦\/m/i.test(w)
       ),
       dataQualityIssues: dedupeRefundDataQualityIssues([
-        ...refundSubstitutionDataQualityIssues(db, quotationRef),
+        ...refundSubstitutionDataQualityIssues(db, quotationRef, gaugeAsOfIso),
         ...refundPaymentIntegrityIssues(db, quotationRef),
         ...refundCuttingListQuotationMetreIssues(db, quotationRef),
         ...refundProductionAlignmentWarnings(
@@ -5402,6 +5434,7 @@ export function previewRefundRequest(db, payload) {
       cashInNgn,
       priorRefundedNgn,
       pricingAsAtIso,
+      gaugeAsOfIso,
       substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),
     });
     if (economicFloor.incompleteFloorPricing) {
@@ -5793,12 +5826,23 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
        AND LOWER(TRIM(COALESCE(status, ''))) IN ('completed', 'cancelled')`
     )
     .all(ref);
-  const sameGaugeMetres = sameGaugeProducedMetresForFloorDelta(db, quote, productionJobs);
+    const sameGaugeMetres = sameGaugeProducedMetresForFloorDelta(
+      db,
+      quote,
+      productionJobs,
+      new Date().toISOString()
+    );
   if (sameGaugeMetres <= 0.001) return { maxNgn: 0, warnings };
 
   const quotedPpm =
     quotedRoofingSheetAmountPerMeter(quote.lines_json) ?? quotedAmountPerMeter(quote.lines_json);
-  let floorPpm = quotedWorkbookFloorPpmForCommission(db, quote, productionJobs, pricingAsAtIso);
+  let floorPpm = quotedWorkbookFloorPpmForCommission(
+    db,
+    quote,
+    productionJobs,
+    pricingAsAtIso,
+    new Date().toISOString()
+  );
   if (floorPpm == null || floorPpm <= 0) {
     floorPpm = blendedFloorPpmFromQuoteLineStamps(db, quote, pricingAsAtIso);
   }
@@ -6013,11 +6057,11 @@ function refundPickerListHint(db, row, jobs, {
   // overpay/unproduced is claimed never appears in the picker.
   if (!hardBlocked.has('Customer commission')) {
     const asAt = quotationPricingAsAtIso(row, db);
-    const sameGaugeM = sameGaugeProducedMetresForFloorDelta(db, row, closedJobs);
+    const sameGaugeM = sameGaugeProducedMetresForFloorDelta(db, row, closedJobs, new Date().toISOString());
     if (sameGaugeM > 0.001) {
       const quotedPpm =
         quotedRoofingSheetAmountPerMeter(row.lines_json) ?? quotedAmountPerMeter(row.lines_json);
-      let floorPpm = quotedWorkbookFloorPpmForCommission(db, row, closedJobs, asAt);
+      let floorPpm = quotedWorkbookFloorPpmForCommission(db, row, closedJobs, asAt, new Date().toISOString());
       if (floorPpm == null || floorPpm <= 0) {
         floorPpm = blendedFloorPpmFromQuoteLineStamps(db, row, asAt);
       }

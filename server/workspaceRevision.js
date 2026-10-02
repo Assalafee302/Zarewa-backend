@@ -39,6 +39,7 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
       // Refunds: credit/payout can change without date bumps.
       // Cutting lists: Draft→Waiting (Save list) keeps the same date_iso — fingerprint status.
       // Quotations: gauge/header edits keep date_iso — fingerprint lines_json + money/status.
+      // Coil lots: gauge edits keep received_at_iso — fingerprint gauge_revised_at_iso.
       const moneyExtra =
         table === 'customer_refunds'
           ? `, COALESCE(SUM(credit_applied_ngn),0) AS credit_sum, COALESCE(SUM(paid_amount_ngn),0) AS paid_sum`
@@ -46,7 +47,9 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
             ? `, COALESCE(SUM(CASE WHEN TRIM(status) = 'Draft' THEN 1 ELSE 0 END),0) AS draft_n, COALESCE(SUM(CASE WHEN TRIM(status) = 'Waiting' THEN 1 ELSE 0 END),0) AS wait_n, COALESCE(SUM(print_count),0) AS print_sum`
             : table === 'quotations'
               ? `, COALESCE(SUM(total_ngn),0) AS total_sum, COALESCE(SUM(paid_ngn),0) AS paid_sum, COALESCE(SUM(LENGTH(COALESCE(lines_json,''))),0) AS lines_len, COALESCE(SUM(CASE WHEN TRIM(status) = 'Draft' THEN 1 ELSE 0 END),0) AS draft_n`
-              : '';
+              : table === 'coil_lots'
+                ? `, COALESCE(MAX(gauge_revised_at_iso), '') AS gauge_rev`
+                : '';
       const row = db
         .prepare(
           `SELECT COUNT(*) AS c, MAX(${dateCol}) AS m${moneyExtra} FROM ${table} WHERE 1=1${b.sql}`
@@ -60,7 +63,9 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
             ? `${base}:${row?.draft_n ?? 0}:${row?.wait_n ?? 0}:${row?.print_sum ?? 0}`
             : table === 'quotations'
               ? `${base}:${row?.total_sum ?? 0}:${row?.paid_sum ?? 0}:${row?.lines_len ?? 0}:${row?.draft_n ?? 0}`
-              : base
+              : table === 'coil_lots'
+                ? `${base}:${row?.gauge_rev ?? ''}`
+                : base
       );
     } catch {
       parts.push(`${table}:na`);

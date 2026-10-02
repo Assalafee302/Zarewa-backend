@@ -251,6 +251,7 @@ import {
   quotationUnlinkedOverpayCreditOutNgn,
   updatePaymentRequest,
   refundSubstitutionDataQualityIssues,
+  refundGaugeAsOfIso,
   refundCuttingListQuotationMetreIssues,
   dedupeRefundDataQualityIssues,
   getEligibleRefundQuotations,
@@ -10340,7 +10341,11 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const { receipts, cuttingLists, summary } = getRefundIntelligenceForQuotation(db, quotationRef, branchScope);
       const dataQualityIssues = dedupeRefundDataQualityIssues([
-        ...refundSubstitutionDataQualityIssues(db, quotationRef),
+        ...refundSubstitutionDataQualityIssues(
+          db,
+          quotationRef,
+          refundGaugeAsOfIso(db, { excludeRefundId }, excludeRefundId)
+        ),
         ...refundPaymentIntegrityIssues(db, quotationRef),
         ...refundCuttingListQuotationMetreIssues(db, quotationRef),
         ...refundProductionAlignmentWarnings(db, quotationRef, undefined, { excludeRefundId }),

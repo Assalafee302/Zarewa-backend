@@ -47,6 +47,11 @@ import {
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { assertQuotationMaterialHeaderRequired, STAIN_SOURCE_MATERIAL_CODE } from '../shared/lib/quotationMaterialHeader.js';
 import { canonicalGaugeLabelForBranchInput } from '../shared/lib/gaugeDisplayAlias.js';
+import {
+  applyCoilGaugeRevisionTx,
+  formatStoredCoilGaugeLabel,
+  gaugeLabelsSameThickness,
+} from './operations/coilGaugeRevisionOps.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { resolveStainSourceMaterialTypeId } from './materialWorkbookQuotationPrice.js';
 import { isStainMaterialTypeId } from '../shared/lib/stainMaterialPolicy.js';
@@ -4143,6 +4148,8 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
   const args = [];
   const next = { ...prev };
   let receivedDelta = 0;
+  /** Thickness change only. Same mm with different spacing does not open a revision. */
+  let pendingGaugeRevision = null;
 
   if (Object.prototype.hasOwnProperty.call(b, 'colour')) {
     const v = b.colour == null ? '' : String(b.colour).trim();
@@ -4152,10 +4159,13 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(b, 'gaugeLabel') || Object.prototype.hasOwnProperty.call(b, 'gauge')) {
     const raw = Object.prototype.hasOwnProperty.call(b, 'gaugeLabel') ? b.gaugeLabel : b.gauge;
-    const v = raw == null ? '' : String(raw).trim();
+    const v = formatStoredCoilGaugeLabel(raw);
     sets.push('gauge_label = ?');
     args.push(v || null);
     next.gaugeLabel = v;
+    if (v && !gaugeLabelsSameThickness(prev.gaugeLabel, v)) {
+      pendingGaugeRevision = { from: String(prev.gaugeLabel || '').trim(), to: v };
+    }
   }
   if (Object.prototype.hasOwnProperty.call(b, 'materialTypeName')) {
     const v = b.materialTypeName == null ? '' : String(b.materialTypeName).trim();
@@ -4252,10 +4262,21 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     }
   }
 
+  let gaugeRevision = null;
   try {
     db.transaction(() => {
       if (sets.length) {
         db.prepare(`UPDATE coil_lots SET ${sets.join(', ')} WHERE coil_no = ?`).run(...args, cn);
+      }
+      if (pendingGaugeRevision) {
+        // Freeze blank job lines on the old gauge, then open the new effective date.
+        // Filled allocations and conversion checks stay as they were registered.
+        gaugeRevision = applyCoilGaugeRevisionTx(db, {
+          coilNo: cn,
+          previousLabel: pendingGaugeRevision.from,
+          nextLabel: pendingGaugeRevision.to,
+          actor: opts.actor,
+        });
       }
 
       if (didMass) {
@@ -4323,11 +4344,13 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     entityKind: 'coil_lot',
     entityId: cn,
     status: 'success',
-    note: 'Coil master data updated',
-    details: { previous: prev, next },
+    note: gaugeRevision?.changed
+      ? `Coil gauge ${gaugeRevision.previousLabel || '—'} → ${gaugeRevision.nextLabel}. Earlier jobs and refunds keep the old gauge; later ones use the new kg.`
+      : 'Coil master data updated',
+    details: { previous: prev, next, gaugeRevision },
   });
 
-  return { ok: true, coilNo: cn, ...next };
+  return { ok: true, coilNo: cn, ...next, gaugeRevision };
 }
 
 /**

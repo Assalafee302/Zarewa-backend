@@ -254,8 +254,22 @@ CREATE TABLE IF NOT EXISTS coil_lots (
   parent_coil_no TEXT,
   material_origin_note TEXT,
   landed_cost_ngn INTEGER,
-  unit_cost_ngn_per_kg INTEGER
+  unit_cost_ngn_per_kg INTEGER,
+  gauge_revised_at_iso TEXT
 );
+
+-- Physical gauge history. Refunds and production registered before a change keep the prior label.
+CREATE TABLE IF NOT EXISTS coil_gauge_revisions (
+  id TEXT PRIMARY KEY,
+  coil_no TEXT NOT NULL,
+  gauge_label TEXT,
+  effective_from_iso TEXT NOT NULL,
+  changed_by_user_id TEXT,
+  changed_by_display TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_coil_gauge_revisions_coil_from
+  ON coil_gauge_revisions(coil_no, effective_from_iso DESC);
 
 -- Store asks to fix a mistyped coil number. The number does not change until a branch manager approves.
 CREATE TABLE IF NOT EXISTS coil_number_corrections (

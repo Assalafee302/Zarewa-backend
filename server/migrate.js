@@ -759,6 +759,21 @@ function runMigrationsUnlocked(db) {
   if (!coilLots.has('gauge_label')) {
     db.exec(`ALTER TABLE coil_lots ADD COLUMN gauge_label TEXT`);
   }
+  if (!coilLots.has('gauge_revised_at_iso')) {
+    db.exec(`ALTER TABLE coil_lots ADD COLUMN gauge_revised_at_iso TEXT`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS coil_gauge_revisions (
+      id TEXT PRIMARY KEY,
+      coil_no TEXT NOT NULL,
+      gauge_label TEXT,
+      effective_from_iso TEXT NOT NULL,
+      changed_by_user_id TEXT,
+      changed_by_display TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_coil_gauge_revisions_coil_from
+      ON coil_gauge_revisions(coil_no, effective_from_iso DESC);
+  `);
   if (!coilLots.has('material_type_name')) {
     db.exec(`ALTER TABLE coil_lots ADD COLUMN material_type_name TEXT`);
   }

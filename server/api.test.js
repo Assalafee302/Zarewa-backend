@@ -3530,7 +3530,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const lot = boot.body.coilLots.find((c) => c.coilNo === coilA);
     const prod = boot.body.products.find((p) => p.productID === 'COIL-ALU');
     expect(lot.colour).toBe('RAL 9005');
-    expect(lot.gaugeLabel).toBe('0.50 mm');
+    expect(lot.gaugeLabel).toBe('0.50mm');
     expect(lot.materialTypeName).toBe('Alu zinc');
     expect(Number(lot.qtyReceived)).toBeCloseTo(3100, 2);
     expect(Number(lot.currentWeightKg || lot.qtyRemaining)).toBeCloseTo(rem0 + 100, 2);

@@ -100,6 +100,7 @@ import {
 import { insertStockMovementTx } from './stockMovementOps.js';
 import { validateConversionVarianceReason } from '../shared/productionConversionReasons.js';
 import { persistProductionConversionVarianceReason } from './operations/productionConversionVariancePersist.js';
+import { coilForAllocationGauge } from './operations/coilGaugeRevisionOps.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 
 function nextId(prefix) {
@@ -1417,7 +1418,12 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         if (partialPreview) continue;
         throw new Error(`Coil ${rowLabel} does not have enough remaining kg.`);
       }
-      const references = buildReferenceSet(db, coil, actualConversionKgPerM, jobID);
+      const references = buildReferenceSet(
+        db,
+        coilForAllocationGauge(coil, allocation),
+        actualConversionKgPerM,
+        jobID
+      );
       const alert = determineAlertState(actualConversionKgPerM, references);
       conversionRows.push({
         allocationId: allocation.id,
@@ -1814,12 +1820,16 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
         const actual =
           p.meters > 0.0001 && consumed > 0.0001 ? consumed / p.meters : null;
         const newCoilRow = coilRow(db, p.nextCoil);
+        const sameCoil = p.nextCoil === oldCoil;
+        const gaugeLabel = sameCoil
+          ? String(p.row.gauge_label || '').trim() || newCoilRow?.gauge_label || null
+          : newCoilRow?.gauge_label ?? null;
         const sm = allocationCoilSpecMismatched(db, job, p.nextCoil, masterDataForCoil);
         updFull.run(
           p.nextCoil,
           newCoilRow?.product_id ?? null,
           newCoilRow?.colour ?? null,
-          newCoilRow?.gauge_label ?? null,
+          gaugeLabel,
           p.nextOpening,
           p.closing,
           consumed,
@@ -3914,7 +3924,17 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     for (const p of parsed) {
       const act = p.nextConsumed / p.nextMeters;
       const coilForRef = coilRow(db, p.nextCoil);
-      const references = buildReferenceSet(db, coilForRef, act, jobId);
+      const sameCoil =
+        !p.isNew && p.nextCoil === String(p.row?.coil_no ?? '').trim();
+      const gaugeLabel = sameCoil
+        ? String(p.row?.gauge_label || '').trim() || coilForRef?.gauge_label || null
+        : coilForRef?.gauge_label ?? null;
+      const references = buildReferenceSet(
+        db,
+        coilForRef ? { ...coilForRef, gauge_label: gaugeLabel } : coilForRef,
+        act,
+        jobId
+      );
       const alert = determineAlertState(act, references);
       alertStates.push(alert.alertState);
       if (alert.managerReviewRequired) anyMgr = true;
@@ -3946,7 +3966,7 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
           p.nextCoil,
           coilForRef?.product_id ?? null,
           coilForRef?.colour ?? null,
-          coilForRef?.gauge_label ?? null,
+          gaugeLabel,
           p.nextOpening,
           p.nextClosing,
           p.nextConsumed,
@@ -3962,7 +3982,7 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
           p.nextCoil,
           coilForRef?.product_id ?? null,
           coilForRef?.colour ?? null,
-          coilForRef?.gauge_label ?? null,
+          gaugeLabel,
           p.nextOpening,
           p.nextClosing,
           p.nextConsumed,

@@ -9730,7 +9730,7 @@ export function payAccountsPayable(db, apId, payload) {
     return {
       ok: false,
       error:
-        'Invoice is already fully paid. A second payment, or the reversal of an overpayment, is recorded on Supplier overpayments (/supplier-overpayments), not as another settlement of this invoice.',
+        'Invoice is already fully paid. A second payment, a wrong amount, or the reversal of an overpayment is recorded under Procurement → Payments → Second payment & corrections, not as another settlement of this invoice.',
     };
   }
   const apply = Math.min(amountNgn, outstanding);

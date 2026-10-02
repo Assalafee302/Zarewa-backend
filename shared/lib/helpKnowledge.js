@@ -930,9 +930,9 @@ const CORE_HELP_ARTICLES = [
       'correct supplier amount paid',
     ],
     answer:
-      'A second payment to a supplier, and cash the supplier sends back for an overpayment, are not normal invoice settlements. Finance records them on **Supplier overpayments** so the extra cash sits as an amount the supplier owes back, and the refund reduces it.',
+      'A second payment to a supplier, and cash the supplier sends back for an overpayment, are not normal invoice settlements. Record them under **Procurement → Payments → Second payment & corrections** so the extra cash sits as an amount the supplier owes back, and the refund reduces it.',
     steps: [
-      'Open **Supplier overpayments** (`/supplier-overpayments`) and enter the purchase order.',
+      'Open **Procurement → Payments**, then **Second payment & corrections**, and enter the purchase order.',
       'Read the order value, what is already paid, and how much is above the order.',
       'To record the second payment (or the part of a transfer above the order value): choose the bank account the money left, the date, the bank reference, and a short note. The amount must be more than what is still owed — a normal balance is still paid from Finance as a supplier payment.',
       'When the supplier refunds the extra, or the bank reverses it: record the reversal for no more than the amount above the order value. Cash comes back into the treasury account you select, and the purchase order paid total drops by that amount.',
@@ -940,7 +940,11 @@ const CORE_HELP_ARTICLES = [
       'A fully paid invoice will refuse another Pay. That is expected — use this screen for the extra payment and for the refund.',
     ],
     links: [
-      { label: 'Supplier overpayments', to: '/supplier-overpayments' },
+      {
+        label: 'Procurement — Payments',
+        to: '/procurement',
+        state: { focusTab: 'payables', paymentsView: 'adjustments' },
+      },
       { label: 'Procurement', to: '/procurement' },
       { label: 'Finance', to: '/accounts' },
     ],

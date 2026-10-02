@@ -609,6 +609,7 @@ import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWa
 import { recordBankCharge } from './bankChargeOps.js';
 import * as refundCreditApplyOps from './refundCreditApplyOps.js';
 import { healReceiptsNeedingOverpayConfirm } from './sales/receiptOverpayConfirmHeal.js';
+import { healRefundFundedReceiptEffects } from './sales/receiptRefundFundTreasuryHeal.js';
 import { resolveReceiptPostingCustomer } from './sales/receiptQuotationCustomer.js';
 import {
   allocateBankDepositTx,
@@ -4259,6 +4260,20 @@ export function registerHttpApi(app, db) {
       const r = write.reapplyFinanceReconciledReceiptAmountsForBranchScope(db, branchScope, req.user, {
         quotationRef: quotationRef || undefined,
       });
+      try {
+        const refundFundTill = healRefundFundedReceiptEffects(db, req.user, {
+          branchId: branchScope,
+          limit: 500,
+        });
+        r.refundFundTillHeal = {
+          count: refundFundTill.count,
+          healed: refundFundTill.healed,
+          failures: refundFundTill.failures?.length ?? 0,
+        };
+      } catch (healErr) {
+        console.error('[refund-fund-till-heal]', healErr);
+        r.refundFundTillHeal = { count: 0, healed: 0, failures: 1, error: String(healErr?.message || healErr) };
+      }
       appendAuditLog(db, {
         actor: req.user,
         action: 'admin.reapply_finance_reconciled_receipts',
@@ -6192,6 +6207,16 @@ export function registerHttpApi(app, db) {
             );
             if (!r.ok) return r;
             const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
+            if (receipt?.customerID) {
+              try {
+                healRefundFundedReceiptEffects(db, req.user, {
+                  customerId: receipt.customerID,
+                  limit: 40,
+                });
+              } catch (healErr) {
+                console.error('[refund-fund-till-heal]', healErr);
+              }
+            }
             /** @type {Record<string, unknown[]>} */
             const bags = { receipts: receipt ? [receipt] : [] };
             const qRef = String(receipt?.quotationRef || '').trim();
@@ -10453,6 +10478,10 @@ export function registerHttpApi(app, db) {
           healReceiptsNeedingOverpayConfirm(db, req.user, {
             customerId: healMeta.customer_id,
             afterIso: healMeta.requested_at_iso,
+            limit: 40,
+          });
+          healRefundFundedReceiptEffects(db, req.user, {
+            customerId: healMeta.customer_id,
             limit: 40,
           });
         } catch (healErr) {

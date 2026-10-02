@@ -681,6 +681,90 @@ export function tryPostCustomerReceiptReversalGl(db, payload) {
   }
 }
 
+/**
+ * Take cash GL off a receipt that cashier confirmed from refund fund.
+ * Dr the original credit account, Cr 1000, for the portion that was not real bank cash.
+ * Idempotent: a second call only posts the amount not already unwound.
+ */
+export function tryPostCustomerReceiptRefundFundUnwindGl(db, payload) {
+  if (!isGlPostingEnabled()) return skippedGlPostingResult();
+  const original = String(payload.ledgerEntryId || '').trim();
+  if (!original) return { ok: true, skipped: true };
+  let journal;
+  try {
+    journal = db
+      .prepare(`SELECT id FROM gl_journal_entries WHERE source_kind = 'CUSTOMER_RECEIPT_GL' AND source_id = ?`)
+      .get(original);
+  } catch {
+    return { ok: true, skipped: true };
+  }
+  if (!journal) return { ok: true, skipped: true };
+
+  const cashRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(l.debit_ngn), 0) AS s
+       FROM gl_journal_lines l
+       JOIN gl_accounts a ON a.id = l.account_id
+       WHERE l.journal_id = ? AND a.code = '1000'`
+    )
+    .get(journal.id);
+  const glCash = Math.round(Number(cashRow?.s) || 0);
+  const keep = Math.max(0, Math.round(Number(payload.keepCashNgn) || 0));
+  const need = Math.max(0, glCash - keep);
+  if (need <= 0) return { ok: true, skipped: true };
+
+  let already = 0;
+  try {
+    const prior = db
+      .prepare(
+        `SELECT COALESCE(SUM(l.credit_ngn), 0) AS s
+         FROM gl_journal_lines l
+         JOIN gl_accounts a ON a.id = l.account_id
+         JOIN gl_journal_entries j ON j.id = l.journal_id
+         WHERE j.source_kind = 'CUSTOMER_RECEIPT_REFUND_FUND_GL'
+           AND (j.source_id = ? OR j.source_id LIKE ?)
+           AND a.code = '1000'`
+      )
+      .get(`${original}:refund-fund`, `${original}:refund-fund:%`);
+    already = Math.round(Number(prior?.s) || 0);
+  } catch {
+    already = 0;
+  }
+  const delta = need - already;
+  if (delta <= 0) return { ok: true, skipped: true, duplicate: true };
+
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid refund-fund GL date.' };
+  const resolved = resolveReceiptReversalAccountFromMetaOrJournalLines(db, original);
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      error: resolved.message,
+      code: resolved.reasonCode,
+      requiresManualReview: true,
+    };
+  }
+  const sourceId = already > 0 ? `${original}:refund-fund:${need}` : `${original}:refund-fund`;
+  try {
+    const result = postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: `Refund fund replaced till cash on receipt ${original}`,
+      sourceKind: 'CUSTOMER_RECEIPT_REFUND_FUND_GL',
+      sourceId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: resolved.accountCode, debitNgn: delta, memo: `Refund fund ${original}` },
+        { accountCode: '1000', creditNgn: delta, memo: `Refund fund ${original}` },
+      ],
+    });
+    if (result.ok) result.unwoundNgn = delta;
+    return result;
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 /** Reverses advance GL (Dr advances, Cr cash) when an advance GL journal exists for the original entry. */
 export function tryPostCustomerAdvanceReversalGl(db, payload) {
   const original = String(payload.originalAdvanceLedgerId || '').trim();
@@ -922,6 +1006,64 @@ export function tryPostBankDepositAllocationGl(db, payload) {
       lines: [
         { accountCode: '2150', debitNgn: amt, memo: ledgerEntryId },
         { accountCode: creditAccount, creditNgn: amt, memo: ledgerEntryId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
+ * Undo a deposit-to-receipt link (Dr the account that was credited, Cr suspense)
+ * when that receipt is confirmed from refund fund instead of the deposit.
+ */
+export function tryPostBankDepositAllocationUnwindGl(db, payload) {
+  if (!isGlPostingEnabled()) return skippedGlPostingResult();
+  const depositId = String(payload.depositId || '').trim();
+  const ledgerEntryId = String(payload.ledgerEntryId || '').trim();
+  const allocId = String(payload.allocationId || `${depositId}:${ledgerEntryId}`).trim();
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  if (!depositId || !ledgerEntryId || !allocId || amt <= 0) return { ok: true, skipped: true };
+  let has;
+  try {
+    has = db
+      .prepare(`SELECT 1 FROM gl_journal_entries WHERE source_kind = 'BANK_DEPOSIT_ALLOC_GL' AND source_id = ?`)
+      .get(allocId);
+  } catch {
+    return { ok: true, skipped: true };
+  }
+  if (!has) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid allocation unwind GL date.' };
+  ensureSupplementalGlAccounts(db);
+  const kind = String(payload.allocKind || '').trim().toLowerCase();
+  let debitAccount = '1200';
+  if (kind === 'advance') {
+    debitAccount = '2500';
+  } else {
+    let le = null;
+    try {
+      le = db.prepare(`SELECT quotation_ref, at_iso FROM ledger_entries WHERE id = ?`).get(ledgerEntryId);
+    } catch {
+      le = null;
+    }
+    debitAccount = resolveCustomerReceiptGlCreditAccount(db, {
+      quotationRef: le?.quotation_ref,
+      entryDateISO: date,
+      receiptAtISO: le?.at_iso || date,
+    });
+  }
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: `Unlink bank deposit ${depositId} from refund-funded receipt ${ledgerEntryId}`,
+      sourceKind: 'BANK_DEPOSIT_ALLOC_UNWIND_GL',
+      sourceId: allocId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: debitAccount, debitNgn: amt, memo: ledgerEntryId },
+        { accountCode: '2150', creditNgn: amt, memo: depositId },
       ],
     });
   } catch (e) {

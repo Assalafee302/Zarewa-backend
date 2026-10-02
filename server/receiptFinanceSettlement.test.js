@@ -6,7 +6,9 @@ import {
   reapplyFinanceReconciledReceiptAmountsForBranchScope,
   syncQuotationPaidFromReceipts,
   unconfirmSalesReceiptFinanceClearance,
+  unwindRefundFundedReceiptEffectsTx,
 } from './writeOps.js';
+import { healRefundFundedReceiptEffectsTx } from './sales/receiptRefundFundTreasuryHeal.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import { previewRefundRequest, quotationMeetsRefundEligibility } from './controlOps.js';
 
@@ -324,6 +326,99 @@ describe('receipt finance settlement aligns paid amount', () => {
     expect(String(done.status)).toBe('Cleared');
     expect(done.bank_received_amount_ngn).toBe(95_200);
     expect(done.finance_reconciliation_saved_at_iso).toBeTruthy();
+  });
+
+  it('takes the original till line off the account when the receipt is confirmed from refund fund', () => {
+    db.prepare(`UPDATE treasury_accounts SET balance = 415350 WHERE id = 1`).run();
+    db.prepare(`UPDATE sales_receipts SET method = 'Transfer' WHERE id = 'LE-261'`).run();
+
+    const unwind = unwindRefundFundedReceiptEffectsTx(
+      db,
+      'LE-261',
+      0,
+      { id: 'USR-FIN', displayName: 'Finance' },
+      { alignBooks: true }
+    );
+    expect(unwind.ok).toBe(true);
+
+    const net = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements
+         WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = 'LE-261'`
+      )
+      .get();
+    expect(Number(net.s)).toBe(0);
+    const bal = db.prepare(`SELECT balance FROM treasury_accounts WHERE id = 1`).get();
+    expect(Number(bal.balance)).toBe(0);
+    const rec = db.prepare(`SELECT method, amount_ngn FROM sales_receipts WHERE id = 'LE-261'`).get();
+    expect(rec.method).toBe('Refund fund');
+    expect(Number(rec.amount_ngn)).toBe(0);
+    const led = db.prepare(`SELECT payment_method FROM ledger_entries WHERE id = 'LE-261'`).get();
+    expect(led.payment_method).toBe('Refund fund');
+
+    const again = unwindRefundFundedReceiptEffectsTx(
+      db,
+      'LE-261',
+      0,
+      { id: 'USR-FIN', displayName: 'Finance' },
+      { alignBooks: true }
+    );
+    expect(again.ok).toBe(true);
+    const balAgain = db.prepare(`SELECT balance FROM treasury_accounts WHERE id = 1`).get();
+    expect(Number(balAgain.balance)).toBe(0);
+  });
+
+  it('still removes the till line when the account no longer has the cash', () => {
+    db.prepare(`UPDATE treasury_accounts SET balance = 1000 WHERE id = 1`).run();
+    const unwind = unwindRefundFundedReceiptEffectsTx(
+      db,
+      'LE-261',
+      0,
+      { id: 'USR-FIN', displayName: 'Finance' },
+      { alignBooks: true }
+    );
+    expect(unwind.ok).toBe(true);
+    const net = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements
+         WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = 'LE-261'`
+      )
+      .get();
+    expect(Number(net.s)).toBe(0);
+    const bal = db.prepare(`SELECT balance FROM treasury_accounts WHERE id = 1`).get();
+    expect(Number(bal.balance)).toBe(1000 - 415350);
+  });
+
+  it('heals an old refund-fund confirm that left the original payment on the till', () => {
+    db.prepare(`UPDATE treasury_accounts SET balance = 415350 WHERE id = 1`).run();
+    db.prepare(
+      `UPDATE sales_receipts SET
+         method = 'Transfer',
+         status = 'Cleared',
+         bank_received_amount_ngn = 0,
+         finance_reconciliation_saved_at_iso = '2026-05-21T12:00:00.000Z'
+       WHERE id = 'LE-261'`
+    ).run();
+    db.prepare(
+      `INSERT INTO refund_credit_applications (
+         application_id, customer_id, target_quotation_ref, refund_id, kind, amount_ngn,
+         status, created_at_iso, source_receipt_id
+       ) VALUES ('RCA-261', 'CUS-1', 'QT-146', 'RF-261', 'refund', 415350, 'Credit confirmation', ?, 'LE-261')`
+    ).run('2026-05-21T12:00:00.000Z');
+
+    const healed = healRefundFundedReceiptEffectsTx(db, 'LE-261', { id: 'USR-FIN', displayName: 'Finance' });
+    expect(healed.ok).toBe(true);
+    const net = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements
+         WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = 'LE-261'`
+      )
+      .get();
+    expect(Number(net.s)).toBe(0);
+    const rec = db.prepare(`SELECT method FROM sales_receipts WHERE id = 'LE-261'`).get();
+    expect(rec.method).toBe('Refund fund');
+    const bal = db.prepare(`SELECT balance FROM treasury_accounts WHERE id = 1`).get();
+    expect(Number(bal.balance)).toBe(0);
   });
 });
 

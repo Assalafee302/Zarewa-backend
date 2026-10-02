@@ -8,6 +8,8 @@ import { evaluateRefundPayoutGlPolicy } from './ap1cReversalRefundOps.js';
 import {
   tryPostCustomerAdvanceReversalGl,
   tryPostCustomerReceiptReversalGl,
+  tryPostCustomerReceiptRefundFundUnwindGl,
+  tryPostBankDepositAllocationUnwindGl,
   tryPostCustomerRefundPayoutGlTx,
   tryPostCustomerRefundPayoutReversalGlTx,
   tryPostGrnInventoryJournal,
@@ -1018,11 +1020,14 @@ export function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, 
       .prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = ?`)
       .get(row.id);
     if (exists) continue;
+    const amt = roundMoney(row.amount_ngn);
+    // A ₦0 line (older in-place zero) is not cash. Reversing it would throw.
+    if (!amt) continue;
     created.push(
       insertTreasuryMovementTx(db, {
         type: reversalType,
         treasuryAccountId: row.treasury_account_id,
-        amountNgn: -roundMoney(row.amount_ngn),
+        amountNgn: -amt,
         postedAtISO,
         reference: row.reference,
         counterpartyKind: row.counterparty_kind,
@@ -1034,6 +1039,7 @@ export function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, 
         createdBy: actorName(actor),
         reversesMovementId: row.id,
         batchId: row.batch_id || null,
+        allowNegativeBalance: opts.allowNegativeBalance === true,
       })
     );
   }
@@ -11526,7 +11532,7 @@ export function ledgerReceiptTreasuryMovementCorrectTx(
   actor = null,
   options = {}
 ) {
-  const { bypassReceiptLock = false, receiptId = '' } = options;
+  const { bypassReceiptLock = false, receiptId = '', allowNegativeBalance = false } = options;
   const mid = String(movementId || '').trim();
   if (!mid) return { ok: false, error: 'Movement id required.' };
 
@@ -11609,10 +11615,10 @@ export function ledgerReceiptTreasuryMovementCorrectTx(
   if (oldAcc === nextAcc) {
     const delta = nextAmt - oldAmt;
     if (delta !== 0) {
-      adjustTreasuryBalanceTx(db, oldAcc, delta, { allowNegativeBalance: false });
+      adjustTreasuryBalanceTx(db, oldAcc, delta, { allowNegativeBalance });
     }
   } else {
-    adjustTreasuryBalanceTx(db, oldAcc, -oldAmt, { allowNegativeBalance: false });
+    adjustTreasuryBalanceTx(db, oldAcc, -oldAmt, { allowNegativeBalance });
     adjustTreasuryBalanceTx(db, nextAcc, nextAmt, { allowNegativeBalance: false });
   }
 
@@ -11927,9 +11933,21 @@ function receiptLedgerEntryIdFromRow(rec) {
 
 /**
  * Align treasury LEDGER_RECEIPT splits with finance-confirmed cash when corrections were not sent line-by-line.
+ * @param {{ allowNegativeBalance?: boolean }} [options]
+ * Refund-fund confirm (confirmed cash ₦0) must come off the till even when later spending
+ * has already used the phantom inflow — blocking on "insufficient balance" left the original
+ * payment method sitting on the account.
  */
-function syncTreasuryMovementsToConfirmedReceiptAmountTx(db, receiptId, ledgerEntryId, confirmedAmountNgn, actor) {
+function syncTreasuryMovementsToConfirmedReceiptAmountTx(
+  db,
+  receiptId,
+  ledgerEntryId,
+  confirmedAmountNgn,
+  actor,
+  options = {}
+) {
   const confirmed = roundMoney(confirmedAmountNgn);
+  const allowNegativeBalance = Boolean(options.allowNegativeBalance);
   const ids = [String(receiptId || '').trim(), String(ledgerEntryId || '').trim()].filter(Boolean);
   const uniq = [...new Set(ids)];
   if (!uniq.length) return;
@@ -11946,38 +11964,19 @@ function syncTreasuryMovementsToConfirmedReceiptAmountTx(db, receiptId, ledgerEn
   const sum = movements.reduce((s, m) => s + roundMoney(m.amount_ngn), 0);
   if (sum === confirmed) return;
 
-  // Full overpay/refund-fund confirm: no new bank cash — zero RECEIPT_IN lines and reverse balances.
+  // No new bank cash: take the original receipt inflow off the till with a reversal,
+  // same as voiding the receipt. In-place ₦0 left the payment method on the account.
   if (confirmed <= 0) {
-    for (const m of movements) {
-      const oldAmt = roundMoney(m.amount_ngn);
-      if (oldAmt <= 0) continue;
-      adjustTreasuryBalanceTx(db, Number(m.treasury_account_id), -oldAmt, {
-        allowNegativeBalance: false,
-      });
-      const baseNote = m.note != null ? String(m.note) : '';
-      const zeroNote = 'Zeroed — covered by overpay/refund fund (not new bank cash)';
-      const merged =
-        baseNote && baseNote.includes('Zeroed — covered by overpay')
-          ? baseNote
-          : baseNote
-            ? `${baseNote} — ${zeroNote}`
-            : zeroNote;
-      db.prepare(`UPDATE treasury_movements SET amount_ngn = 0, note = ? WHERE id = ?`).run(
-        merged,
-        String(m.id)
-      );
-      appendAuditLog(db, {
+    for (const sourceId of uniq) {
+      reverseTreasurySourceTx(
+        db,
+        'LEDGER_RECEIPT',
+        sourceId,
+        'RECEIPT_REVERSAL_OUT',
+        'Reversed — receipt confirmed from refund fund, not new bank or cash',
         actor,
-        action: 'treasury.ledger_receipt_zero_for_credit',
-        entityKind: 'treasury_movement',
-        entityId: String(m.id),
-        note: zeroNote,
-        details: {
-          movementId: String(m.id),
-          previousAmountNgn: oldAmt,
-          receiptId: String(receiptId || '').trim() || null,
-        },
-      });
+        { allowNegativeBalance: true, postedAtISO: new Date().toISOString() }
+      );
     }
     return;
   }
@@ -11993,7 +11992,7 @@ function syncTreasuryMovementsToConfirmedReceiptAmountTx(db, receiptId, ledgerEn
         note: 'Finance reconciliation confirmed amount',
       },
       actor,
-      { bypassReceiptLock: true, receiptId }
+      { bypassReceiptLock: true, receiptId, allowNegativeBalance }
     );
     return;
   }
@@ -12011,8 +12010,159 @@ function syncTreasuryMovementsToConfirmedReceiptAmountTx(db, receiptId, ledgerEn
       note: 'Finance reconciliation confirmed amount',
     },
     actor,
-    { bypassReceiptLock: true, receiptId }
+    { bypassReceiptLock: true, receiptId, allowNegativeBalance }
   );
+}
+
+/** Shown on the receipt once refund fund replaced the till/bank method assigned at registration. */
+const REFUND_FUND_PAYMENT_METHOD = 'Refund fund';
+
+/**
+ * Drop bank-deposit links that were posted with the receipt. Confirming from refund fund
+ * means that deposit was not the money for this receipt.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} ledgerEntryId
+ */
+function releaseReceiptBankDepositLinksTx(db, ledgerEntryId) {
+  const leId = String(ledgerEntryId || '').trim();
+  if (!leId) return [];
+  let rows = [];
+  try {
+    rows = db.prepare(`SELECT * FROM bank_deposit_allocations WHERE allocated_to_id = ?`).all(leId);
+  } catch {
+    return [];
+  }
+  const released = [];
+  for (const row of rows) {
+    const amt = roundMoney(row.amount_ngn);
+    const depId = String(row.bank_deposit_id || '').trim();
+    db.prepare(`DELETE FROM bank_deposit_allocations WHERE id = ?`).run(row.id);
+    if (!depId) continue;
+    const dep = db
+      .prepare(`SELECT amount_ngn, allocated_ngn, status, branch_id, bank_date_iso FROM bank_deposits WHERE id = ?`)
+      .get(depId);
+    if (!dep) continue;
+    const nextAlloc = Math.max(0, roundMoney(dep.allocated_ngn) - amt);
+    db.prepare(`UPDATE bank_deposits SET allocated_ngn = ? WHERE id = ?`).run(nextAlloc, depId);
+    const status = String(dep.status || '');
+    if (status !== 'REVERSED' && status !== 'RECLASSED') {
+      const total = roundMoney(dep.amount_ngn);
+      let next = 'OPEN';
+      if (nextAlloc >= total && total > 0) next = 'ALLOCATED';
+      else if (nextAlloc > 0) next = 'PARTIAL';
+      db.prepare(
+        `UPDATE bank_deposits SET status = ?, reserved_at_iso = NULL, reserved_by_user_id = NULL, reserved_by_name = NULL, reserved_until_iso = NULL WHERE id = ?`
+      ).run(next, depId);
+    }
+    const gl = tryPostBankDepositAllocationUnwindGl(db, {
+      depositId: depId,
+      ledgerEntryId: leId,
+      allocationId: String(row.id || ''),
+      amountNgn: amt,
+      allocKind: row.allocated_to_kind,
+      entryDateISO: String(dep.bank_date_iso || new Date().toISOString()).slice(0, 10),
+      branchId: dep.branch_id,
+    });
+    released.push({
+      allocationId: String(row.id || ''),
+      depositId: depId,
+      amountNgn: amt,
+      glOk: Boolean(gl?.ok),
+      glSkipped: Boolean(gl?.skipped),
+    });
+  }
+  return released;
+}
+
+/**
+ * Undo the cash effects a receipt posted at registration when cashier confirms it from refund fund.
+ * Till inflow, payment method, GL cash, and bank-deposit link all move with the confirmed cash.
+ * Idempotent — old confirms that never took the till line off are corrected by the same path.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} receiptId
+ * @param {number} keepCashNgn bank/cash that really arrived; ₦0 when the refund fund covered it
+ * @param {object | null} actor
+ * @param {{ alignBooks?: boolean }} [options] alignBooks re-runs book + till sync (heal of old rows)
+ */
+export function unwindRefundFundedReceiptEffectsTx(db, receiptId, keepCashNgn, actor = null, options = {}) {
+  const id = String(receiptId || '').trim();
+  const keep = roundMoney(keepCashNgn);
+  if (!id) return { ok: false, error: 'Receipt id required.' };
+  const rec = db.prepare(`SELECT * FROM sales_receipts WHERE id = ?`).get(id);
+  if (!rec) return { ok: false, error: 'Receipt not found.' };
+  if (String(rec.status || '').toLowerCase() === 'reversed') return { ok: true, skipped: true };
+
+  if (options.alignBooks) {
+    const book = applyFinanceConfirmedReceiptBookAmountTx(db, id, keep, actor, {
+      allowZeroConfirmed: true,
+      allowNegativeBalance: true,
+    });
+    if (!book.ok) return book;
+  }
+
+  const ledgerId = receiptLedgerEntryIdFromRow(rec);
+  const today = new Date().toISOString().slice(0, 10);
+  let methodUpdated = false;
+  /** @type {Array<object>} */
+  let deposits = [];
+
+  if (keep <= 0) {
+    if (String(rec.method || '').trim().toLowerCase() !== REFUND_FUND_PAYMENT_METHOD.toLowerCase()) {
+      db.prepare(`UPDATE sales_receipts SET method = ? WHERE id = ?`).run(REFUND_FUND_PAYMENT_METHOD, id);
+      methodUpdated = true;
+    }
+    if (ledgerId) {
+      const ledgerRow = db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(ledgerId);
+      const overpayId = ledgerRow ? resolveOverpaySiblingId(db, ledgerRow) : null;
+      db.prepare(`UPDATE ledger_entries SET payment_method = ? WHERE id = ? AND type = 'RECEIPT'`).run(
+        REFUND_FUND_PAYMENT_METHOD,
+        ledgerId
+      );
+      if (overpayId) {
+        db.prepare(
+          `UPDATE ledger_entries SET payment_method = ? WHERE id = ? AND type = 'OVERPAY_ADVANCE'`
+        ).run(REFUND_FUND_PAYMENT_METHOD, overpayId);
+      }
+    }
+    deposits = releaseReceiptBankDepositLinksTx(db, ledgerId);
+  }
+
+  const gl = tryPostCustomerReceiptRefundFundUnwindGl(db, {
+    ledgerEntryId: ledgerId,
+    keepCashNgn: keep,
+    entryDateISO: today,
+    branchId: rec.branch_id,
+    createdByUserId: actor?.id ?? null,
+  });
+
+  appendAuditLog(db, {
+    actor,
+    action: 'receipt.refund_fund_unwind',
+    entityKind: 'sales_receipt',
+    entityId: id,
+    note:
+      keep <= 0
+        ? `Receipt ${id} confirmed from refund fund — original till payment method removed`
+        : `Receipt ${id} refund fund reduced till cash to ₦${keep.toLocaleString('en-NG')}`,
+    details: {
+      keepCashNgn: keep,
+      methodUpdated,
+      paymentMethod: keep <= 0 ? REFUND_FUND_PAYMENT_METHOD : null,
+      depositLinksReleased: deposits.length,
+      glOk: Boolean(gl?.ok),
+      glSkipped: Boolean(gl?.skipped),
+      glError: gl?.ok || gl?.skipped ? null : gl?.error || null,
+    },
+  });
+
+  return {
+    ok: true,
+    keepCashNgn: keep,
+    methodUpdated,
+    depositLinksReleased: deposits.length,
+    glOk: Boolean(gl?.ok),
+    glSkipped: Boolean(gl?.skipped),
+  };
 }
 
 /**
@@ -12204,7 +12354,9 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
 
   if (financeConfirmedReceiptAlreadyAligned(db, rec, ledgerRow, overpayId, confirmed)) {
     if (!options.skipTreasurySync) {
-      syncTreasuryMovementsToConfirmedReceiptAmountTx(db, id, ledgerId, confirmed, actor);
+      syncTreasuryMovementsToConfirmedReceiptAmountTx(db, id, ledgerId, confirmed, actor, {
+        allowNegativeBalance: Boolean(options.allowNegativeBalance),
+      });
     }
     const qrefEarly = String(rec.quotation_ref || '').trim();
     if (qrefEarly) syncQuotationPaidFromReceipts(db, qrefEarly);
@@ -12254,7 +12406,9 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
   );
 
   if (!options.skipTreasurySync) {
-    syncTreasuryMovementsToConfirmedReceiptAmountTx(db, id, ledgerId, confirmed, actor);
+    syncTreasuryMovementsToConfirmedReceiptAmountTx(db, id, ledgerId, confirmed, actor, {
+      allowNegativeBalance: Boolean(options.allowNegativeBalance),
+    });
   }
 
   if (qref) syncQuotationPaidFromReceipts(db, qref);
@@ -12639,11 +12793,21 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
 
       const finalizeReceipt =
         !usesSplitConfirm || allReceiptTreasurySplitsFinanceConfirmedDb(db, id);
+      // Refund fund with no new cash covers every till line, including a split receipt
+      // whose lines were never ticked one by one.
+      const refundCoversAll = applyingRefundFund && !(nextBankReceived > 0);
+      const finalizeNow = finalizeReceipt || refundCoversAll;
+      if (refundCoversAll) {
+        for (const s of splitRows) {
+          markTreasuryMovementFinanceConfirmedDb(db, String(s.id), actor, now);
+        }
+      }
 
-      if ((bankAmtResolved || applyingRefundFund || (usesSplitConfirm && nextBankReceived > 0)) && finalizeReceipt) {
+      if ((bankAmtResolved || applyingRefundFund || (usesSplitConfirm && nextBankReceived > 0)) && finalizeNow) {
         const bookSync = applyFinanceConfirmedReceiptBookAmountTx(db, id, nextBankReceived || 0, actor, {
-          skipTreasurySync: corrections.length > 0 && nextBankReceived > 0,
+          skipTreasurySync: corrections.length > 0 && nextBankReceived > 0 && !applyingRefundFund,
           allowZeroConfirmed: applyingRefundFund,
+          allowNegativeBalance: applyingRefundFund,
         });
         if (!bookSync.ok) {
           throw new Error(bookSync.error || 'Could not align receipt amount with confirmed bank total.');
@@ -12701,10 +12865,18 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
           }
         } else {
           creditResult = applied;
+          if (finalizeNow) {
+            const unwind = unwindRefundFundedReceiptEffectsTx(db, id, nextBankReceived || 0, actor, {
+              alignBooks: false,
+            });
+            if (!unwind.ok) {
+              throw new Error(unwind.error || 'Could not take this receipt off the original till account.');
+            }
+          }
         }
       }
 
-      if (finalizeReceipt) {
+      if (finalizeNow) {
         db.prepare(
           `UPDATE sales_receipts SET
             bank_received_amount_ngn = ?,

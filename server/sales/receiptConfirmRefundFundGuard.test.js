@@ -191,6 +191,19 @@ describe.skipIf(!mysqlOk)('confirm payment refuses cash while a refund is still 
     expect(settle.error ?? settle.ok).toBe(true);
     expect(settle.refundCreditAppliedNgn).toBe(60_000);
     expect(auditActions(receiptId)).not.toContain('receipt.refund_fund_not_used');
+    expect(auditActions(receiptId)).toContain('receipt.refund_fund_unwind');
+
+    const net = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements
+         WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = ?`
+      )
+      .get(receiptId);
+    expect(Number(net.s)).toBe(0);
+    const recMethod = db.prepare(`SELECT method FROM sales_receipts WHERE id = ?`).get(receiptId);
+    expect(recMethod.method).toBe('Refund fund');
+    const ledMethod = db.prepare(`SELECT payment_method FROM ledger_entries WHERE id = ?`).get(receiptId);
+    expect(ledMethod.payment_method).toBe('Refund fund');
 
     const refund = db
       .prepare(`SELECT credit_applied_ngn FROM customer_refunds WHERE refund_id = ?`)

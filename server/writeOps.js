@@ -12418,6 +12418,7 @@ function clearTreasuryMovementFinanceConfirmedDb(db, movementId) {
  * @param {string} receiptId
  * @param {{
  *   bankReceivedAmountNgn?: number | string | null,
+ *   treasuryAccountId?: number | string | null,
  *   clearForDelivery?: boolean,
  *   paymentLineCorrections?: Array<{
  *     movementId: string,
@@ -12569,9 +12570,41 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
   let creditResult = null;
   const splitRows = listReceiptTreasurySplitMovementsDb(db, id);
   const usesSplitConfirm = splitRows.length > 1;
+  const assignTreasuryAccountId = Number(payload?.treasuryAccountId);
+  if (splitRows.length === 0 && nextBankReceived > 0 && !assignTreasuryAccountId) {
+    return {
+      ok: false,
+      code: 'TREASURY_ACCOUNT_REQUIRED',
+      error: 'Select the bank or cash account this payment was received into.',
+    };
+  }
 
   try {
     db.transaction(() => {
+      if (splitRows.length === 0 && nextBankReceived > 0) {
+        const day = String(payload?.postedAtISO || row.date_iso || '').trim().slice(0, 10);
+        const postedAtISO = day ? `${day}T12:00:00.000Z` : new Date().toISOString();
+        recordCustomerReceiptCash(db, {
+          sourceId: receiptLedgerEntryIdFromRow(row),
+          customerID: row.customer_id,
+          customerName: row.customer_name,
+          dateISO: day || undefined,
+          reference: id,
+          note: `Finance confirmed receipt ${id}`,
+          paymentLines: [
+            {
+              treasuryAccountId: assignTreasuryAccountId,
+              amountNgn: nextBankReceived,
+              postedAtISO,
+            },
+          ],
+          createdBy: actorName(actor),
+          workspaceBranchId: payload?.workspaceBranchId,
+          workspaceViewAll: Boolean(payload?.workspaceViewAll),
+          actor,
+        });
+      }
+
       if (nextBankReceived > 0 || corrections.length > 0) {
         for (const c of corrections) {
           const mid = String(c?.movementId || '').trim();

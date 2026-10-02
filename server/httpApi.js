@@ -6180,7 +6180,16 @@ export function registerHttpApi(app, db) {
           'sales_receipt',
           rid,
           (stripped) => {
-            const r = write.patchSalesReceiptFinanceSettlement(db, rid, stripped || {}, req.user);
+            const r = write.patchSalesReceiptFinanceSettlement(
+              db,
+              rid,
+              {
+                ...(stripped || {}),
+                workspaceBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+                workspaceViewAll: Boolean(req.workspaceViewAll),
+              },
+              req.user
+            );
             if (!r.ok) return r;
             const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
             /** @type {Record<string, unknown[]>} */

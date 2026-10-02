@@ -73,10 +73,13 @@ describe.skipIf(!mysqlOk)('receipt clearance (integration)', () => {
     expect(String(row.status)).toBe('Pending clearance');
     expect(row.finance_reconciliation_saved_at_iso).toBeFalsy();
 
+    const treasuryAccountId = Number(
+      db.prepare(`SELECT id FROM treasury_accounts ORDER BY id ASC LIMIT 1`).get()?.id || 0
+    );
     const settle = patchSalesReceiptFinanceSettlement(
       db,
       receiptId,
-      { bankReceivedAmountNgn: 150_000 },
+      { bankReceivedAmountNgn: 150_000, ...(treasuryAccountId ? { treasuryAccountId } : {}) },
       { id: 'USR-ADMIN', displayName: 'Admin', roleKey: 'admin' }
     );
     expect(settle.ok).toBe(true);

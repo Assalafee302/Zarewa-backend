@@ -26,8 +26,9 @@ describe('receipt finance settlement aligns paid amount', () => {
       );
       INSERT INTO ledger_entries (id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, payment_method)
       VALUES ('LE-261', 'RECEIPT', 'CUS-1', 'Test Customer', 'QT-146', 415350, '2026-05-20T12:00:00.000Z', 'Transfer');
-      INSERT INTO treasury_accounts (id, name, account_type, balance_ngn, branch_id)
-      VALUES (1, 'Taj Bank', 'bank', 0, 'BR-001');
+      INSERT INTO treasury_accounts (id, name, type, balance, branch_id)
+      VALUES (1, 'Taj Bank', 'bank', 0, 'BR-001')
+      ON DUPLICATE KEY UPDATE name = 'Taj Bank', type = 'bank', balance = 0, branch_id = 'BR-001';
       INSERT INTO treasury_movements (
         id, type, source_kind, source_id, treasury_account_id, amount_ngn, posted_at_iso, counterparty_kind
       ) VALUES (
@@ -78,6 +79,43 @@ describe('receipt finance settlement aligns paid amount', () => {
     const cash = quotationPaymentCashBreakdown(db, 'QT-146');
     expect(cash.receiptCashNgn).toBe(620_000);
     expect(cash.cashInNgn).toBe(620_000);
+  });
+
+  it('posts the chosen bank when the receipt has no treasury payment line', () => {
+    db.prepare(`DELETE FROM treasury_movements WHERE source_id = 'LE-261'`).run();
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      { bankReceivedAmountNgn: 20_670, treasuryAccountId: 1 },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(true);
+
+    const mv = db
+      .prepare(
+        `SELECT type, source_kind, treasury_account_id, amount_ngn
+         FROM treasury_movements
+         WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = 'LE-261' AND amount_ngn > 0`
+      )
+      .get();
+    expect(mv.type).toBe('RECEIPT_IN');
+    expect(Number(mv.treasury_account_id)).toBe(1);
+    expect(mv.amount_ngn).toBe(20_670);
+
+    const bal = db.prepare(`SELECT balance FROM treasury_accounts WHERE id = 1`).get();
+    expect(bal.balance).toBe(20_670);
+  });
+
+  it('requires a bank when confirming cash on a receipt with no payment line', () => {
+    db.prepare(`DELETE FROM treasury_movements WHERE source_id = 'LE-261'`).run();
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      { bankReceivedAmountNgn: 20_670 },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(false);
+    expect(settle.code).toBe('TREASURY_ACCOUNT_REQUIRED');
   });
 
   it('unconfirm returns a cleared receipt to Pending clearance', () => {
@@ -377,6 +415,9 @@ describe('finance confirm replaces mistaken sales-posted overpay', () => {
         );
       INSERT INTO production_jobs (job_id, quotation_ref, status)
       VALUES ('PRO-566', 'QT-KD-26-0566', 'Completed');
+      INSERT INTO treasury_accounts (id, name, type, balance, branch_id)
+      VALUES (1, 'Taj Bank', 'bank', 0, 'BR-001')
+      ON DUPLICATE KEY UPDATE name = 'Taj Bank', type = 'bank', balance = 0, branch_id = 'BR-001';
     `);
   });
 
@@ -388,7 +429,7 @@ describe('finance confirm replaces mistaken sales-posted overpay', () => {
     const settle = patchSalesReceiptFinanceSettlement(
       db,
       'LE-566',
-      { bankReceivedAmountNgn: 1_150_000 },
+      { bankReceivedAmountNgn: 1_150_000, treasuryAccountId: 1 },
       { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
     );
     expect(settle.ok).toBe(true);

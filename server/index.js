@@ -141,3 +141,5 @@ if (listenHost) {
 } else {
   app.listen(port, onListen);
 }
+
+export { app, port, listenHost, bootDegraded, dbPath, onListen };

@@ -1,12 +1,16 @@
 /**
- * Record a second supplier payment, and the reversal when that overpayment comes back.
+ * Supplier Double Payment & Overpayment Reversal — Desk & REST API.
+ *
+ * Provides a dedicated, high-clarity interface for recording:
+ * 1. Second / duplicate disbursements or payments exceeding purchase order obligations.
+ * 2. Overpayment reversals when a supplier refunds the excess cash or a bank recalls the transfer.
  */
 import crypto from 'node:crypto';
 import express from 'express';
 import { requirePermission, userHasPermission } from '../auth.js';
 import { apiError } from '../apiError.js';
 import { listBranches } from '../branches.js';
-import { getPurchaseOrder, listTreasuryAccounts } from '../readModel.js';
+import { branchWhere, getPurchaseOrder, listTreasuryAccounts } from '../readModel.js';
 import { withWriteDelta } from '../workspaceWriteDelta.js';
 import {
   listSupplierOverpaymentMovements,
@@ -45,6 +49,19 @@ function canPost(user) {
   return userHasPermission(user, 'finance.pay') || userHasPermission(user, '*');
 }
 
+function normalizeStatus(st) {
+  return String(st || '').trim().toLowerCase();
+}
+
+function statusBadgeClass(status) {
+  const s = normalizeStatus(status);
+  if (s === 'received' || s === 'completed' || s === 'delivered') return 'badge-success';
+  if (s === 'in transit' || s === 'on loading' || s === 'approved') return 'badge-info';
+  if (s === 'ordered' || s === 'pending') return 'badge-warning';
+  if (s === 'rejected' || s === 'cancelled') return 'badge-danger';
+  return 'badge-neutral';
+}
+
 /**
  * @param {object} model
  */
@@ -57,131 +74,1179 @@ export function renderSupplierOverpaymentPage(model = {}) {
   const movements = Array.isArray(model.movements) ? model.movements : [];
   const poId = String(model.poId || '');
   const selectedAccount = String(model.treasuryAccountId || '');
+  const recentOrders = Array.isArray(model.recentOrders) ? model.recentOrders : [];
+  const overpaidOrders = Array.isArray(model.overpaidOrders) ? model.overpaidOrders : [];
+  const who = esc(user?.displayName || user?.username || 'Guest');
+
   const accountOptions = accounts
     .map((a) => {
       const id = String(a.id);
-      const label = `${a.name || 'Account ' + id}${a.type ? ` · ${a.type}` : ''} · ₦${formatNgn(a.balance)}`;
+      const label = `${a.name || 'Account ' + id}${a.type ? ` (${a.type})` : ''} · ₦${formatNgn(a.balance)}`;
       return `<option value="${esc(id)}"${id === selectedAccount ? ' selected' : ''}>${esc(label)}</option>`;
     })
     .join('');
-  const movementRows = movements
-    .map((row) => {
-      const inbound = Number(row.amountNgn) > 0;
-      return `<tr>
-        <td>${esc(String(row.postedAtISO || '').slice(0, 10))}</td>
-        <td>${esc(inbound ? 'Reversal (cash in)' : 'Extra payment (cash out)')}</td>
-        <td>${esc(row.reference)}</td>
-        <td>${esc(row.note)}</td>
-        <td class="num">${inbound ? '' : '−'}₦${formatNgn(Math.abs(row.amountNgn))}</td>
-      </tr>`;
-    })
+
+  const poSuggestions = recentOrders
+    .map((po) => `<option value="${esc(po.po_id)}">${esc(po.supplier_name || 'Supplier')} (${esc(po.status || 'open')})</option>`)
     .join('');
 
-  let positionCard = '';
+  const overpaidPills = overpaidOrders.length
+    ? `<div class="quick-pills-row">
+        <span class="quick-pills-label">Recent Overpayments:</span>
+        ${overpaidOrders
+          .map(
+            (o) =>
+              `<a class="pill-link ${o.po_id === poId ? 'active' : ''}" href="${SUPPLIER_OVERPAYMENT_PATH}?poId=${encodeURIComponent(o.po_id)}">
+                <strong>${esc(o.po_id)}</strong> · ${esc(o.supplier_name || 'Supplier')}
+              </a>`
+          )
+          .join('')}
+       </div>`
+    : '';
+
+  const recentPills = recentOrders.length && !overpaidOrders.length
+    ? `<div class="quick-pills-row">
+        <span class="quick-pills-label">Recent POs:</span>
+        ${recentOrders.slice(0, 6)
+          .map(
+            (o) =>
+              `<a class="pill-link ${o.po_id === poId ? 'active' : ''}" href="${SUPPLIER_OVERPAYMENT_PATH}?poId=${encodeURIComponent(o.po_id)}">
+                ${esc(o.po_id)} (${esc(o.supplier_name || '')})
+              </a>`
+          )
+          .join('')}
+       </div>`
+    : '';
+
+  let positionHtml = '';
   if (position?.ok) {
-    positionCard = `<section class="card">
-      <h2>${esc(position.supplierName || 'Supplier')} · ${esc(position.poId)}</h2>
-      <p class="hint">Status ${esc(position.status || '—')} · branch ${esc(position.branchId || '—')}</p>
-      <table>
-        <tbody>
-          <tr><th>Order value</th><td class="num">₦${formatNgn(position.obligationNgn)}</td></tr>
-          <tr><th>Already paid</th><td class="num">₦${formatNgn(position.supplierPaidNgn)}</td></tr>
-          <tr><th>Still owed on this order</th><td class="num">₦${formatNgn(position.stillOwedNgn)}</td></tr>
-          <tr><th>Above the order (supplier owes this back)</th><td class="num">₦${formatNgn(position.excessNgn)}</td></tr>
-        </tbody>
-      </table>
-      ${
-        movements.length
-          ? `<h2>Already recorded here</h2><table><thead><tr><th>Date</th><th>Kind</th><th>Reference</th><th>Note</th><th>Amount</th></tr></thead><tbody>${movementRows}</tbody></table>`
-          : '<p class="hint">Nothing has been recorded on this screen for this purchase order yet.</p>'
-      }
-    </section>
-    <form method="post" action="${SUPPLIER_OVERPAYMENT_PATH}" class="card">
-      <h2>Record the second payment</h2>
-      <p class="hint">Use this when the money has already left the bank a second time, or the transfer was more than the order. The part that clears what is still owed settles the invoice. The rest is an amount the supplier owes back.</p>
-      <input type="hidden" name="csrf" value="${esc(model.csrf)}" />
-      <input type="hidden" name="action" value="excess" />
-      <input type="hidden" name="poId" value="${esc(position.poId)}" />
-      <label>Why<select name="reason">
-        <option value="duplicate_payment">We paid this supplier twice</option>
-        <option value="overpayment">We paid more than the order</option>
-      </select></label>
-      <label>Amount that left the bank (₦)<input name="amountNgn" inputmode="numeric" required /></label>
-      <label>Bank / cash account<select name="treasuryAccountId" required>${accountOptions}</select></label>
-      <label>Date<input type="date" name="dateISO" value="${esc(model.dateISO || todayISO())}" required /></label>
-      <label>Bank reference<input name="reference" required /></label>
-      <label>Note<input name="note" required placeholder="Which transfer, and why it is extra" /></label>
-      <div class="row"><button type="submit"${allowed ? '' : ' disabled'}>Record extra payment</button></div>
-    </form>
-    <form method="post" action="${SUPPLIER_OVERPAYMENT_PATH}" class="card">
-      <h2>Record the reversal of the overpayment</h2>
-      <p class="hint">Use this when the supplier refunds the extra, or the bank reverses it. You cannot reverse more than the amount above the order (₦${formatNgn(position.excessNgn)}).</p>
-      <input type="hidden" name="csrf" value="${esc(model.csrf)}" />
-      <input type="hidden" name="action" value="reversal" />
-      <input type="hidden" name="poId" value="${esc(position.poId)}" />
-      <label>Why<select name="reason">
-        <option value="supplier_refund">Supplier refunded the overpayment</option>
-        <option value="bank_reversal">Bank reversed the extra payment</option>
-      </select></label>
-      <label>Amount coming back (₦)<input name="amountNgn" inputmode="numeric" required /></label>
-      <label>Bank / cash account the money entered<select name="treasuryAccountId" required>${accountOptions}</select></label>
-      <label>Date<input type="date" name="dateISO" value="${esc(model.dateISO || todayISO())}" required /></label>
-      <label>Bank reference<input name="reference" required /></label>
-      <label>Note<input name="note" required placeholder="Refund or reversal reference" /></label>
-      <div class="row"><button type="submit" class="secondary"${allowed ? '' : ' disabled'}>Record reversal</button></div>
-    </form>`;
+    const obligation = Number(position.obligationNgn) || 0;
+    const paid = Number(position.supplierPaidNgn) || 0;
+    const owed = Number(position.stillOwedNgn) || 0;
+    const excess = Number(position.excessNgn) || 0;
+
+    const settledPct = obligation > 0 ? Math.min(100, Math.round((Math.min(paid, obligation) / obligation) * 100)) : (paid > 0 ? 100 : 0);
+    const excessPct = obligation > 0 ? Math.max(0, Math.round((excess / obligation) * 100)) : 0;
+
+    const movementRows = movements.length
+      ? movements
+          .map((row) => {
+            const inbound = Number(row.amountNgn) > 0;
+            const badgeClass = inbound ? 'pill-inbound' : 'pill-outbound';
+            const badgeLabel = inbound ? '📥 Reversal (Cash In)' : '📤 Extra Pay (Cash Out)';
+            const acctLabel = row.accountName ? `${row.accountName}${row.accountType ? ` (${row.accountType})` : ''}` : `Account #${row.treasuryAccountId}`;
+            return `<tr>
+              <td><span class="cell-date">${esc(String(row.postedAtISO || '').slice(0, 10))}</span></td>
+              <td><span class="tx-badge ${badgeClass}">${badgeLabel}</span></td>
+              <td><span class="cell-account">${esc(acctLabel)}</span></td>
+              <td><code class="cell-ref">${esc(row.reference || '—')}</code></td>
+              <td><span class="cell-note">${esc(row.note || '—')}</span></td>
+              <td class="num ${inbound ? 'amt-in' : 'amt-out'}">${inbound ? '+' : '−'}₦${formatNgn(Math.abs(row.amountNgn))}</td>
+            </tr>`;
+          })
+          .join('')
+      : '';
+
+    positionHtml = `
+      <section class="po-dashboard-card card">
+        <div class="po-header">
+          <div class="po-title-block">
+            <span class="po-badge-id">#${esc(position.poId)}</span>
+            <h2 class="po-supplier-name">${esc(position.supplierName || 'Supplier')}</h2>
+          </div>
+          <div class="po-meta-tags">
+            <span class="meta-tag badge ${statusBadgeClass(position.status)}">${esc(position.status || 'Active')}</span>
+            <span class="meta-tag tag-branch">📍 Factory: ${esc(position.branchId || 'Kaduna')}</span>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card kpi-obligation">
+            <span class="kpi-label">Order Obligation</span>
+            <span class="kpi-value">₦${formatNgn(obligation)}</span>
+            <span class="kpi-sub">Landed coil cost / agreed line total</span>
+          </div>
+          <div class="kpi-card kpi-paid">
+            <span class="kpi-label">Total Disbursed</span>
+            <span class="kpi-value">₦${formatNgn(paid)}</span>
+            <span class="kpi-sub">All posted treasury payments to date</span>
+          </div>
+          <div class="kpi-card ${owed > 0 ? 'kpi-owed-active' : 'kpi-owed-settled'}">
+            <span class="kpi-label">Still Owed on Order</span>
+            <span class="kpi-value">₦${formatNgn(owed)}</span>
+            <span class="kpi-sub">${owed === 0 ? 'Paid in full ✓' : 'Outstanding on order'}</span>
+          </div>
+          <div class="kpi-card ${excess > 0 ? 'kpi-excess-active' : 'kpi-excess-zero'}">
+            <span class="kpi-label">Excess (Supplier Owes Back)</span>
+            <span class="kpi-value">₦${formatNgn(excess)}</span>
+            <span class="kpi-sub">${excess > 0 ? '⚡ Available for refund / reversal' : 'No excess holding'}</span>
+          </div>
+        </div>
+
+        <div class="progress-container">
+          <div class="progress-bar-track">
+            <div class="progress-bar-settled" style="width: ${settledPct}%;" title="Settled: ${settledPct}%"></div>
+            ${excessPct > 0 ? `<div class="progress-bar-excess" style="width: ${Math.min(excessPct, 60)}%;" title="Excess: ${excessPct}%"></div>` : ''}
+          </div>
+          <div class="progress-legend">
+            <span class="legend-item"><span class="legend-dot dot-settled"></span> Order Settled: ${settledPct}%</span>
+            ${excess > 0 ? `<span class="legend-item"><span class="legend-dot dot-excess"></span> Unapplied Advance: ₦${formatNgn(excess)}</span>` : ''}
+          </div>
+        </div>
+      </section>
+
+      <section class="action-tabs-wrapper card">
+        <div class="tabs-nav" role="tablist">
+          <button type="button" class="tab-btn active" id="tab-btn-pay" onclick="switchActionTab('pay')" role="tab" aria-selected="true">
+            <span class="tab-icon">📤</span>
+            <div class="tab-text-group">
+              <span class="tab-title">1. Record Second / Extra Payment</span>
+              <span class="tab-sub">Disburse duplicate or overpaid funds</span>
+            </div>
+          </button>
+          <button type="button" class="tab-btn ${excess > 0 ? 'tab-btn-highlight' : ''}" id="tab-btn-rev" onclick="switchActionTab('rev')" role="tab" aria-selected="false">
+            <span class="tab-icon">📥</span>
+            <div class="tab-text-group">
+              <span class="tab-title">2. Record Overpayment Reversal</span>
+              <span class="tab-sub">${excess > 0 ? `₦${formatNgn(excess)} refundable` : 'Supplier refund / bank recall'}</span>
+            </div>
+            ${excess > 0 ? `<span class="tab-badge-pill">Ready</span>` : ''}
+          </button>
+        </div>
+
+        <div class="tab-content" id="tab-panel-pay" role="tabpanel">
+          <form method="post" action="${SUPPLIER_OVERPAYMENT_PATH}" class="workflow-form" id="form-excess" onsubmit="handleFormSubmit(this, 'Recording payment...')">
+            <input type="hidden" name="csrf" value="${esc(model.csrf)}" />
+            <input type="hidden" name="action" value="excess" />
+            <input type="hidden" name="poId" value="${esc(position.poId)}" />
+
+            <div class="form-banner banner-info">
+              <span class="banner-icon">ℹ️</span>
+              <div class="banner-body">
+                <strong>When to use this form:</strong>
+                Money has already left your bank a second time, or a transfer was executed above the order value.
+                ${owed > 0 ? `The first <strong>₦${formatNgn(owed)}</strong> will clear the open balance on the PO invoice. ` : 'Since the PO is already paid in full, '}
+                all additional funds are credited to <strong>GL 1400 (Supplier Prepayments)</strong> and sit ready for reversal when refunded.
+              </div>
+            </div>
+
+            <div class="form-row-grid">
+              <div class="form-group span-2">
+                <label for="pay-reason">Disbursement Scenario</label>
+                <select id="pay-reason" name="reason" required class="input-control">
+                  <option value="duplicate_payment">We paid this supplier twice (Duplicate payment)</option>
+                  <option value="overpayment">Single transfer exceeded order value (Overpayment)</option>
+                </select>
+              </div>
+
+              <div class="form-group span-2">
+                <div class="label-with-actions">
+                  <label for="pay-amount">Amount That Left The Bank (₦)</label>
+                  <div class="quick-fill-buttons">
+                    ${owed > 0 ? `<button type="button" class="chip-btn" onclick="fillPayAmount(${owed + 100000})">Fill Balance + ₦100k</button>` : ''}
+                    <button type="button" class="chip-btn" onclick="fillPayAmount(${obligation > 0 ? obligation : 1000000})">Fill Full PO Value (${formatNgn(obligation)})</button>
+                  </div>
+                </div>
+                <div class="input-prefix-wrapper">
+                  <span class="input-prefix">₦</span>
+                  <input type="text" id="pay-amount" name="amountNgn" required inputmode="numeric" placeholder="e.g. 1,500,000" class="input-control has-prefix" oninput="updatePaySimulator(${owed})" />
+                </div>
+                <div id="pay-simulator-box" class="simulator-callout" style="display:none;"></div>
+              </div>
+
+              <div class="form-group">
+                <label for="pay-account">Disbursing Treasury Account</label>
+                <select id="pay-account" name="treasuryAccountId" required class="input-control">
+                  ${accountOptions}
+                </select>
+                <span class="form-hint">The bank account that sent the money.</span>
+              </div>
+
+              <div class="form-group">
+                <div class="label-with-actions">
+                  <label for="pay-date">Payment Date</label>
+                  <div class="quick-fill-buttons">
+                    <button type="button" class="chip-btn" onclick="setPayDate('today')">Today</button>
+                    <button type="button" class="chip-btn" onclick="setPayDate('yesterday')">Yesterday</button>
+                  </div>
+                </div>
+                <input type="date" id="pay-date" name="dateISO" value="${esc(model.dateISO || todayISO())}" required class="input-control" />
+              </div>
+
+              <div class="form-group">
+                <label for="pay-ref">Bank Reference / NIP Session ID</label>
+                <input type="text" id="pay-ref" name="reference" required minlength="3" placeholder="e.g. NIP/20261002/983719" class="input-control" />
+                <span class="form-hint">Must be at least 3 chars; prevents duplicate submissions.</span>
+              </div>
+
+              <div class="form-group">
+                <label for="pay-note">Audit Explanation Note</label>
+                <input type="text" id="pay-note" name="note" required minlength="8" placeholder="e.g. Duplicate transfer authorized during weekend shift" class="input-control" />
+                <span class="form-hint">Recorded on the treasury movement and audit log.</span>
+              </div>
+            </div>
+
+            <div class="form-actions-footer">
+              <button type="submit" class="btn btn-primary" ${allowed ? '' : 'disabled'}>
+                <span class="btn-icon">✓</span> Post Extra Supplier Payment
+              </button>
+              <span class="action-subtext">Will debit Prepayments/AP, credit Treasury, and update Cashier Acks.</span>
+            </div>
+          </form>
+        </div>
+
+        <div class="tab-content" id="tab-panel-rev" role="tabpanel" style="display:none;">
+          ${
+            excess <= 0
+              ? `<div class="empty-reversal-box">
+                  <div class="empty-icon">ℹ️</div>
+                  <h3>No Excess Available to Reverse</h3>
+                  <p>This purchase order does not currently have any funds paid above its obligation (Agreed: ₦${formatNgn(obligation)} vs Paid: ₦${formatNgn(paid)}).</p>
+                  <p class="empty-sub">If an extra payment was already sent from your bank, record it using the <strong>Record Second / Extra Payment</strong> tab first. Once recorded, the excess will appear here ready for reversal.</p>
+                </div>`
+              : `<form method="post" action="${SUPPLIER_OVERPAYMENT_PATH}" class="workflow-form" id="form-reversal" onsubmit="handleFormSubmit(this, 'Recording reversal...')">
+                  <input type="hidden" name="csrf" value="${esc(model.csrf)}" />
+                  <input type="hidden" name="action" value="reversal" />
+                  <input type="hidden" name="poId" value="${esc(position.poId)}" />
+
+                  <div class="form-banner banner-warning">
+                    <span class="banner-icon">⚡</span>
+                    <div class="banner-body">
+                      The supplier holds <strong>₦${formatNgn(excess)}</strong> in unapplied excess funds on this order.
+                      When the supplier returns this cash (or your bank recalls the transfer), book it here to return cash into your accounts and reduce the PO paid total.
+                      <strong>Maximum reversal allowed: ₦${formatNgn(excess)}</strong>.
+                    </div>
+                  </div>
+
+                  <div class="form-row-grid">
+                    <div class="form-group span-2">
+                      <label for="rev-reason">Reversal Scenario</label>
+                      <select id="rev-reason" name="reason" required class="input-control">
+                        <option value="supplier_refund">Supplier refunded the overpayment to our account</option>
+                        <option value="bank_reversal">Bank reversed / recalled the duplicate transfer</option>
+                      </select>
+                    </div>
+
+                    <div class="form-group span-2">
+                      <div class="label-with-actions">
+                        <label for="rev-amount">Refunded Amount Entering Bank (₦)</label>
+                        <div class="quick-fill-buttons">
+                          <button type="button" class="chip-btn chip-btn-fill" onclick="fillRevAmount(${excess})">Fill Full Excess (₦${formatNgn(excess)})</button>
+                        </div>
+                      </div>
+                      <div class="input-prefix-wrapper">
+                        <span class="input-prefix">₦</span>
+                        <input type="text" id="rev-amount" name="amountNgn" required inputmode="numeric" placeholder="e.g. ${formatNgn(excess)}" class="input-control has-prefix" oninput="updateRevSimulator(${excess}, ${paid})" />
+                      </div>
+                      <div id="rev-simulator-box" class="simulator-callout" style="display:none;"></div>
+                    </div>
+
+                    <div class="form-group">
+                      <label for="rev-account">Receiving Treasury Account</label>
+                      <select id="rev-account" name="treasuryAccountId" required class="input-control">
+                        ${accountOptions}
+                      </select>
+                      <span class="form-hint">The bank account the refund was deposited into.</span>
+                    </div>
+
+                    <div class="form-group">
+                      <div class="label-with-actions">
+                        <label for="rev-date">Date Received</label>
+                        <div class="quick-fill-buttons">
+                          <button type="button" class="chip-btn" onclick="setRevDate('today')">Today</button>
+                          <button type="button" class="chip-btn" onclick="setRevDate('yesterday')">Yesterday</button>
+                        </div>
+                      </div>
+                      <input type="date" id="rev-date" name="dateISO" value="${esc(model.dateISO || todayISO())}" required class="input-control" />
+                    </div>
+
+                    <div class="form-group">
+                      <label for="rev-ref">Bank Reference / Alert Session ID</label>
+                      <input type="text" id="rev-ref" name="reference" required minlength="3" placeholder="e.g. RET/20261002/819234" class="input-control" />
+                      <span class="form-hint">Credit alert session or bank reference from the supplier refund.</span>
+                    </div>
+
+                    <div class="form-group">
+                      <label for="rev-note">Audit Explanation Note</label>
+                      <input type="text" id="rev-note" name="note" required minlength="8" placeholder="e.g. Supplier refund for overpayment received via wire" class="input-control" />
+                      <span class="form-hint">Recorded on the treasury movement and audit trail.</span>
+                    </div>
+                  </div>
+
+                  <div class="form-actions-footer">
+                    <button type="submit" class="btn btn-secondary" ${allowed ? '' : 'disabled'}>
+                      <span class="btn-icon">↺</span> Post Overpayment Reversal
+                    </button>
+                    <span class="action-subtext">Will credit Prepayments (GL 1400), debit Treasury, and drop cumulative PO paid.</span>
+                  </div>
+                </form>`
+          }
+        </div>
+      </section>
+
+      <section class="movements-history-card card">
+        <div class="section-header-row">
+          <div>
+            <h3 class="section-title">Overpayment & Reversal Audit Trail</h3>
+            <p class="section-sub">History of all excess disbursements and supplier refunds posted against #${esc(position.poId)}.</p>
+          </div>
+          <span class="badge-count">${movements.length} record(s)</span>
+        </div>
+
+        ${
+          movements.length
+            ? `<div class="table-responsive">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Movement Kind</th>
+                      <th>Treasury Account</th>
+                      <th>Reference</th>
+                      <th>Reason & Note</th>
+                      <th class="num">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>${movementRows}</tbody>
+                </table>
+              </div>`
+            : `<div class="empty-table-state">
+                <span class="empty-table-icon">📋</span>
+                <p>No overpayment disbursements or refunds have been recorded on this screen for <strong>#${esc(position.poId)}</strong> yet.</p>
+              </div>`
+        }
+      </section>
+    `;
   } else if (poId && model.lookupError) {
-    positionCard = `<p class="err">${esc(model.lookupError)}</p>`;
+    positionHtml = `
+      <div class="alert alert-error">
+        <span class="alert-icon">⚠️</span>
+        <div class="alert-content">
+          <strong>Purchase order not found:</strong>
+          ${esc(model.lookupError)}
+        </div>
+      </div>
+    `;
   }
 
-  const body = `
-    ${signedIn ? `<p class="hint">Signed in as ${esc(user.displayName || user.username || '')}.</p>` : '<p class="err">Sign in first.</p>'}
-    ${allowed || !signedIn ? '' : '<p class="err">Recording these payments needs finance pay permission.</p>'}
-    ${model.notice ? `<p class="ok">${esc(model.notice)}</p>` : ''}
-    ${model.error ? `<p class="err">${esc(model.error)}</p>` : ''}
-    <p class="lead">A normal supplier payment stops once the purchase order is fully paid. Use this page for the two cases that payment cannot take: the <strong>second payment</strong> when a supplier was paid twice, and the <strong>reversal</strong> when an overpayment comes back.</p>
-    <form method="get" action="${SUPPLIER_OVERPAYMENT_PATH}" class="card">
-      <h2>Purchase order</h2>
-      <label>PO number<input name="poId" value="${esc(poId)}" required /></label>
-      <div class="row"><button type="submit">Show what is paid</button></div>
-    </form>
-    ${positionCard}
-    <p><a href="/">Back to Zarewa</a></p>`;
+  const noticeHtml = model.notice
+    ? `<div class="alert alert-success">
+        <span class="alert-icon">✓</span>
+        <div class="alert-content">
+          <strong>Transaction Confirmed:</strong>
+          ${esc(model.notice)}
+        </div>
+      </div>`
+    : '';
+
+  const errorHtml = model.error
+    ? `<div class="alert alert-error">
+        <span class="alert-icon">⚠️</span>
+        <div class="alert-content">
+          <strong>Transaction Blocked:</strong>
+          ${esc(model.error)}
+        </div>
+      </div>`
+    : '';
+
+  const permissionNotice = !signedIn
+    ? `<div class="alert alert-warning"><span class="alert-icon">🔒</span><div class="alert-content">Sign in to Zarewa first to record supplier payments.</div></div>`
+    : !allowed
+      ? `<div class="alert alert-warning"><span class="alert-icon">🔒</span><div class="alert-content">Signed in as <strong>${who}</strong>. Your role has read-only access here; <code>finance.pay</code> permission is required to post disbursements or reversals.</div></div>`
+      : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Supplier overpayments — Zarewa</title>
+  <title>Supplier Overpayments & Reversals — Zarewa</title>
   <style>
-    body { font-family: Georgia, "Times New Roman", serif; margin: 0; background: #f4f1ea; color: #1c1917; }
-    main { max-width: 52rem; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
-    h1 { font-size: 1.6rem; margin: 0 0 0.75rem; }
-    h2 { font-size: 1.15rem; margin: 0 0 0.6rem; }
-    .lead, .hint { line-height: 1.45; }
-    .hint { color: #57534e; }
-    .card { background: #fff; border: 1px solid #d6d3d1; border-radius: 12px; padding: 1.1rem 1.2rem; margin: 1rem 0; }
-    label { display: block; font-weight: 600; margin: 0.75rem 0; }
-    input, select { display: block; width: 100%; margin-top: 0.35rem; padding: 0.55rem 0.6rem; font-size: 1rem; box-sizing: border-box; }
-    .row { display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
-    button { background: #1e3a5f; color: #fff; border: 0; border-radius: 8px; padding: 0.7rem 1rem; font-size: 1rem; cursor: pointer; }
-    button.secondary { background: #57534e; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .ok { background: #dcfce7; color: #14532d; padding: 0.7rem 0.8rem; border-radius: 8px; }
-    .err { background: #fee2e2; color: #7f1d1d; padding: 0.7rem 0.8rem; border-radius: 8px; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-    th, td { text-align: left; padding: 0.35rem 0.4rem; border-bottom: 1px solid #e7e5e4; vertical-align: top; }
-    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    :root {
+      --bg-page: #f8fafc;
+      --card-bg: #ffffff;
+      --text-main: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+      --border-subtle: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --primary: #1e3a5f;
+      --primary-hover: #162c46;
+      --secondary: #0f766e;
+      --secondary-hover: #115e59;
+      --success-bg: #ecfdf5;
+      --success-border: #a7f3d0;
+      --success-text: #065f46;
+      --danger-bg: #fef2f2;
+      --danger-border: #fecaca;
+      --danger-text: #991b1b;
+      --warning-bg: #fffbeb;
+      --warning-border: #fde68a;
+      --warning-text: #92400e;
+      --info-bg: #eff6ff;
+      --info-border: #bfdbfe;
+      --info-text: #1e40af;
+      --highlight-bg: #f5f3ff;
+      --highlight-border: #ddd6fe;
+      --highlight-text: #6b21a8;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      background: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .top-nav {
+      background: #ffffff;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.88rem;
+    }
+    .top-nav-left {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+    .brand-badge {
+      background: #0f172a;
+      color: #ffffff;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 0.25rem 0.55rem;
+      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+    }
+    .nav-breadcrumb {
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .nav-breadcrumb strong {
+      color: var(--text-main);
+    }
+    .top-nav-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .user-pill {
+      background: #f1f5f9;
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .back-link {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+    .back-link:hover { text-decoration: underline; }
+    main {
+      max-width: 62rem;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    .page-header {
+      margin-bottom: 1.5rem;
+    }
+    .page-title {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 0 0 0.4rem;
+      letter-spacing: -0.02em;
+    }
+    .page-desc {
+      color: var(--text-secondary);
+      font-size: 0.98rem;
+      margin: 0;
+      max-width: 48rem;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 1.35rem 1.5rem;
+      margin-bottom: 1.35rem;
+      box-shadow: var(--shadow-sm);
+    }
+    .alert {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.9rem 1.1rem;
+      border-radius: var(--radius-md);
+      margin-bottom: 1.25rem;
+      font-size: 0.94rem;
+      line-height: 1.45;
+    }
+    .alert-icon { font-size: 1.15rem; flex-shrink: 0; }
+    .alert-success { background: var(--success-bg); border: 1px solid var(--success-border); color: var(--success-text); }
+    .alert-error { background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger-text); }
+    .alert-warning { background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); }
+    .search-card {
+      background: linear-gradient(to bottom, #ffffff, #fcfdfe);
+    }
+    .search-form-row {
+      display: flex;
+      gap: 0.6rem;
+      margin-top: 0.5rem;
+    }
+    .search-input-wrapper {
+      flex: 1;
+      position: relative;
+    }
+    .search-input {
+      width: 100%;
+      padding: 0.65rem 0.85rem;
+      font-size: 1rem;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      color: var(--text-main);
+      background: #ffffff;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .search-input:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 0.65rem 1.25rem;
+      border-radius: var(--radius-md);
+      border: 0;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background-color 0.15s, transform 0.05s;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: var(--primary); color: #ffffff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-secondary { background: var(--secondary); color: #ffffff; }
+    .btn-secondary:hover { background: var(--secondary-hover); }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .quick-pills-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.45rem;
+      margin-top: 0.85rem;
+      font-size: 0.82rem;
+    }
+    .quick-pills-label { color: var(--text-muted); font-weight: 600; }
+    .pill-link {
+      background: #f1f5f9;
+      color: var(--text-secondary);
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      text-decoration: none;
+      border: 1px solid var(--border-subtle);
+      transition: background-color 0.15s, border-color 0.15s;
+    }
+    .pill-link:hover { background: #e2e8f0; color: var(--text-main); }
+    .pill-link.active { background: #dbeafe; border-color: #93c5fd; color: #1e40af; font-weight: 600; }
+    .po-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 1.25rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .po-badge-id {
+      display: inline-block;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 0.15rem;
+    }
+    .po-supplier-name {
+      font-size: 1.45rem;
+      font-weight: 700;
+      margin: 0;
+      color: #0f172a;
+    }
+    .po-meta-tags {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .badge {
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.25rem 0.6rem;
+      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .badge-success { background: var(--success-bg); color: var(--success-text); border: 1px solid var(--success-border); }
+    .badge-info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+    .badge-warning { background: var(--warning-bg); color: var(--warning-text); border: 1px solid var(--warning-border); }
+    .badge-danger { background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--danger-border); }
+    .badge-neutral { background: #f1f5f9; color: var(--text-secondary); border: 1px solid var(--border-subtle); }
+    .tag-branch {
+      background: #f8fafc;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      font-weight: 500;
+      padding: 0.25rem 0.65rem;
+      border-radius: var(--radius-sm);
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+      gap: 0.85rem;
+      margin-bottom: 1.25rem;
+    }
+    .kpi-card {
+      background: #f8fafc;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1rem 1.15rem;
+      display: flex;
+      flex-direction: column;
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      margin-bottom: 0.3rem;
+    }
+    .kpi-value {
+      font-size: 1.45rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #0f172a;
+      line-height: 1.2;
+    }
+    .kpi-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+    }
+    .kpi-owed-settled .kpi-value { color: var(--success-text); }
+    .kpi-owed-active .kpi-value { color: var(--warning-text); }
+    .kpi-excess-active {
+      background: var(--highlight-bg);
+      border-color: var(--highlight-border);
+    }
+    .kpi-excess-active .kpi-label { color: var(--highlight-text); }
+    .kpi-excess-active .kpi-value { color: var(--highlight-text); }
+    .kpi-excess-active .kpi-sub { color: #7e22ce; font-weight: 600; }
+    .progress-container {
+      margin-top: 0.5rem;
+    }
+    .progress-bar-track {
+      height: 10px;
+      background: #e2e8f0;
+      border-radius: 9999px;
+      overflow: hidden;
+      display: flex;
+    }
+    .progress-bar-settled {
+      background: #2563eb;
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+    .progress-bar-excess {
+      background: #9333ea;
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+    .progress-legend {
+      display: flex;
+      gap: 1.25rem;
+      margin-top: 0.45rem;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot-settled { background: #2563eb; }
+    .dot-excess { background: #9333ea; }
+    .tabs-nav {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.65rem;
+      margin-bottom: 1.35rem;
+    }
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.9rem 1.15rem;
+      background: #f8fafc;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      text-align: left;
+      transition: background-color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover {
+      background: #f1f5f9;
+      border-color: var(--border-strong);
+    }
+    .tab-btn.active {
+      background: #ffffff;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px #2563eb;
+    }
+    .tab-icon { font-size: 1.4rem; flex-shrink: 0; }
+    .tab-text-group { display: flex; flex-direction: column; flex: 1; }
+    .tab-title { font-size: 0.95rem; font-weight: 700; color: #0f172a; }
+    .tab-sub { font-size: 0.78rem; color: var(--text-muted); }
+    .tab-badge-pill {
+      background: #fae8ff;
+      color: #86198f;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.2rem 0.5rem;
+      border-radius: 9999px;
+      border: 1px solid #f0abfc;
+    }
+    .workflow-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1.15rem;
+    }
+    .form-banner {
+      display: flex;
+      gap: 0.75rem;
+      padding: 0.85rem 1rem;
+      border-radius: var(--radius-md);
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+    .banner-info { background: var(--info-bg); border: 1px solid var(--info-border); color: var(--info-text); }
+    .banner-warning { background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); }
+    .form-row-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .span-2 { grid-column: span 2; }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .form-group label {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    .label-with-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .quick-fill-buttons {
+      display: flex;
+      gap: 0.35rem;
+    }
+    .chip-btn {
+      background: #f1f5f9;
+      border: 1px solid var(--border-strong);
+      color: var(--text-secondary);
+      font-size: 0.76rem;
+      font-weight: 600;
+      padding: 0.2rem 0.55rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .chip-btn:hover { background: #e2e8f0; color: #0f172a; }
+    .chip-btn-fill { background: #fdf4ff; border-color: #f0abfc; color: #a21caf; }
+    .chip-btn-fill:hover { background: #fae8ff; color: #86198f; }
+    .input-control {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.95rem;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      background: #ffffff;
+      color: var(--text-main);
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .input-control:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+    .input-prefix-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .input-prefix {
+      position: absolute;
+      left: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      pointer-events: none;
+    }
+    .has-prefix { padding-left: 1.85rem; }
+    .form-hint {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+    }
+    .simulator-callout {
+      background: #f8fafc;
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius-sm);
+      padding: 0.65rem 0.85rem;
+      margin-top: 0.45rem;
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+    .form-actions-footer {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 0.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .action-subtext {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .empty-reversal-box {
+      text-align: center;
+      padding: 2rem 1rem;
+      background: #f8fafc;
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius-md);
+    }
+    .empty-icon { font-size: 2rem; margin-bottom: 0.5rem; }
+    .empty-reversal-box h3 { margin: 0 0 0.4rem; font-size: 1.1rem; color: #0f172a; }
+    .empty-reversal-box p { margin: 0 0 0.5rem; color: var(--text-secondary); font-size: 0.92rem; }
+    .empty-sub { color: var(--text-muted) !important; font-size: 0.82rem !important; }
+    .section-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 1rem;
+    }
+    .section-title { font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 0 0 0.2rem; }
+    .section-sub { font-size: 0.82rem; color: var(--text-muted); margin: 0; }
+    .badge-count {
+      background: #f1f5f9;
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.2rem 0.55rem;
+      border-radius: var(--radius-sm);
+    }
+    .table-responsive { overflow-x: auto; }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    .data-table th, .data-table td {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .data-table th {
+      background: #f8fafc;
+      font-weight: 600;
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .data-table td.num, .data-table th.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .tx-badge {
+      display: inline-block;
+      font-size: 0.76rem;
+      font-weight: 600;
+      padding: 0.2rem 0.55rem;
+      border-radius: var(--radius-sm);
+      white-space: nowrap;
+    }
+    .pill-outbound { background: #fee2e2; color: #991b1b; }
+    .pill-inbound { background: #dcfce7; color: #166534; }
+    .amt-out { color: #991b1b; font-weight: 700; }
+    .amt-in { color: #166534; font-weight: 700; }
+    .cell-date { color: var(--text-muted); font-size: 0.82rem; }
+    .cell-ref { background: #f1f5f9; padding: 0.15rem 0.35rem; border-radius: 4px; font-size: 0.82rem; }
+    .empty-table-state {
+      text-align: center;
+      padding: 2.2rem 1rem;
+      color: var(--text-muted);
+      font-size: 0.92rem;
+    }
+    .empty-table-icon { font-size: 1.8rem; display: block; margin-bottom: 0.4rem; }
+    @media (max-width: 680px) {
+      .form-row-grid { grid-template-columns: 1fr; }
+      .span-2 { grid-column: span 1; }
+      .tabs-nav { grid-template-columns: 1fr; }
+      .po-header { flex-direction: column; gap: 0.75rem; }
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .top-nav { flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+    }
+    @media print {
+      body { background: #fff; }
+      .top-nav, .search-card, .action-tabs-wrapper { display: none !important; }
+      .card { box-shadow: none; border: 1px solid #ccc; }
+    }
   </style>
 </head>
 <body>
+  <header class="top-nav">
+    <div class="top-nav-left">
+      <span class="brand-badge">ZAREWA ERP</span>
+      <span class="nav-breadcrumb">Finance &rsaquo; Payables &rsaquo; <strong>Supplier Overpayments</strong></span>
+    </div>
+    <div class="top-nav-right">
+      <span class="user-pill">👤 ${who} ${allowed ? '· <strong style="color:#059669;">Pay Authorized</strong>' : ''}</span>
+      <a class="back-link" href="/">← Back to Desk</a>
+    </div>
+  </header>
+
   <main>
-    <h1>Supplier double payment and overpayment</h1>
-    ${body}
+    <div class="page-header">
+      <h1 class="page-title">Supplier Double Payments & Overpayments</h1>
+      <p class="page-desc">
+        Record duplicate disbursements and excess payments above purchase order commitments without distorting normal payables.
+        When the supplier refunds the cash or the bank recalls the wire, post the reversal to return cash to company accounts.
+      </p>
+    </div>
+
+    ${noticeHtml}
+    ${errorHtml}
+    ${permissionNotice}
+
+    <section class="search-card card">
+      <form method="get" action="${SUPPLIER_OVERPAYMENT_PATH}">
+        <label for="search-po-input" style="font-size: 0.88rem; font-weight: 600; color: #1e293b;">
+          Select Purchase Order
+        </label>
+        <div class="search-form-row">
+          <div class="search-input-wrapper">
+            <input
+              type="text"
+              id="search-po-input"
+              name="poId"
+              value="${esc(poId)}"
+              list="po-datalist"
+              placeholder="Enter or select PO Number (e.g. PO-ACK-1)"
+              required
+              class="search-input"
+              autocomplete="off"
+            />
+            <datalist id="po-datalist">
+              ${poSuggestions}
+            </datalist>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            Inspect Balances &rsaquo;
+          </button>
+        </div>
+      </form>
+      ${overpaidPills}
+      ${recentPills}
+    </section>
+
+    ${positionHtml}
   </main>
+
+  <script>
+    function switchActionTab(tabKey) {
+      var payBtn = document.getElementById('tab-btn-pay');
+      var revBtn = document.getElementById('tab-btn-rev');
+      var payPanel = document.getElementById('tab-panel-pay');
+      var revPanel = document.getElementById('tab-panel-rev');
+      if (!payBtn || !revBtn || !payPanel || !revPanel) return;
+
+      if (tabKey === 'pay') {
+        payBtn.classList.add('active');
+        payBtn.setAttribute('aria-selected', 'true');
+        revBtn.classList.remove('active');
+        revBtn.setAttribute('aria-selected', 'false');
+        payPanel.style.display = 'block';
+        revPanel.style.display = 'none';
+      } else {
+        revBtn.classList.add('active');
+        revBtn.setAttribute('aria-selected', 'true');
+        payBtn.classList.remove('active');
+        payBtn.setAttribute('aria-selected', 'false');
+        revPanel.style.display = 'block';
+        payPanel.style.display = 'none';
+      }
+    }
+
+    function formatNumberNgn(n) {
+      return Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 0 });
+    }
+
+    function parseNumericInput(val) {
+      if (typeof val === 'number') return Math.round(val);
+      var cleaned = String(val || '').replace(/[^0-9]/g, '');
+      return Number(cleaned) || 0;
+    }
+
+    function fillPayAmount(amt) {
+      var inp = document.getElementById('pay-amount');
+      if (!inp) return;
+      inp.value = formatNumberNgn(amt);
+      inp.dispatchEvent(new Event('input'));
+      inp.focus();
+    }
+
+    function fillRevAmount(amt) {
+      var inp = document.getElementById('rev-amount');
+      if (!inp) return;
+      inp.value = formatNumberNgn(amt);
+      inp.dispatchEvent(new Event('input'));
+      inp.focus();
+    }
+
+    function setPayDate(mode) {
+      var inp = document.getElementById('pay-date');
+      if (!inp) return;
+      var d = new Date();
+      if (mode === 'yesterday') d.setDate(d.getDate() - 1);
+      inp.value = d.toISOString().slice(0, 10);
+    }
+
+    function setRevDate(mode) {
+      var inp = document.getElementById('rev-date');
+      if (!inp) return;
+      var d = new Date();
+      if (mode === 'yesterday') d.setDate(d.getDate() - 1);
+      inp.value = d.toISOString().slice(0, 10);
+    }
+
+    function updatePaySimulator(stillOwed) {
+      var inp = document.getElementById('pay-amount');
+      var box = document.getElementById('pay-simulator-box');
+      if (!inp || !box) return;
+      var raw = parseNumericInput(inp.value);
+      if (raw <= 0) {
+        box.style.display = 'none';
+        return;
+      }
+      box.style.display = 'block';
+      if (stillOwed > 0 && raw <= stillOwed) {
+        box.innerHTML = '<strong>⚠️ Regular Settlement:</strong> ₦' + formatNumberNgn(raw) + ' is within what this order still owes (₦' + formatNumberNgn(stillOwed) + '). A normal payment from the Procurement or Finance desk handles this. Use this screen for payments that exceed the order balance.';
+        box.style.borderColor = '#f59e0b';
+        box.style.background = '#fffbeb';
+      } else {
+        var settlement = Math.min(raw, stillOwed);
+        var advance = Math.max(0, raw - settlement);
+        box.innerHTML = '<strong>📊 Financial Allocation:</strong> ₦' + formatNumberNgn(settlement) + ' will clear the remaining order balance, and <strong style=\"color:#7e22ce;\">₦' + formatNumberNgn(advance) + '</strong> will be booked as an excess supplier advance (GL 1400) ready for reversal.';
+        box.style.borderColor = '#93c5fd';
+        box.style.background = '#eff6ff';
+      }
+    }
+
+    function updateRevSimulator(maxExcess, currentPaid) {
+      var inp = document.getElementById('rev-amount');
+      var box = document.getElementById('rev-simulator-box');
+      if (!inp || !box) return;
+      var raw = parseNumericInput(inp.value);
+      if (raw <= 0) {
+        box.style.display = 'none';
+        return;
+      }
+      box.style.display = 'block';
+      if (raw > maxExcess) {
+        box.innerHTML = '<strong>⚠️ Amount Exceeds Excess:</strong> You cannot reverse more than ₦' + formatNumberNgn(maxExcess) + '. Only funds paid above the order obligation can be reversed here.';
+        box.style.borderColor = '#ef4444';
+        box.style.background = '#fef2f2';
+      } else {
+        var remainingExcess = Math.max(0, maxExcess - raw);
+        var nextPaid = Math.max(0, currentPaid - raw);
+        box.innerHTML = '<strong>↺ Reversal Impact:</strong> Cumulative PO paid will drop from ₦' + formatNumberNgn(currentPaid) + ' to <strong style=\"color:#047857;\">₦' + formatNumberNgn(nextPaid) + '</strong>. Remaining excess held: ₦' + formatNumberNgn(remainingExcess) + '.';
+        box.style.borderColor = '#86efac';
+        box.style.background = '#f0fdf4';
+      }
+    }
+
+    function handleFormSubmit(form, loadingText) {
+      var btn = form.querySelector('button[type=\"submit\"]');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class=\"btn-icon\">⏳</span> ' + (loadingText || 'Processing...');
+      }
+      return true;
+    }
+  </script>
 </body>
 </html>`;
+}
+
+function listRecentPurchaseOrders(db, branchScope = 'ALL', limit = 12) {
+  try {
+    const b = branchWhere(db, 'purchase_orders', branchScope);
+    const sql = `
+      SELECT po.po_id, po.supplier_name, po.status, po.supplier_paid_ngn, po.branch_id
+      FROM purchase_orders po
+      WHERE LOWER(TRIM(COALESCE(po.status, ''))) != 'rejected'
+      ${b.sql}
+      ORDER BY po.order_date_iso DESC, po.po_id DESC
+      LIMIT ?
+    `;
+    return db.prepare(sql).all(...b.args, limit);
+  } catch {
+    return [];
+  }
+}
+
+function listOverpaidPurchaseOrders(db, branchScope = 'ALL', limit = 8) {
+  try {
+    const b = branchWhere(db, 'purchase_orders', branchScope);
+    const sql = `
+      SELECT DISTINCT po.po_id, po.supplier_name, po.status, po.supplier_paid_ngn, po.branch_id
+      FROM purchase_orders po
+      WHERE po.po_id IN (
+        SELECT DISTINCT source_id FROM treasury_movements
+        WHERE source_kind IN ('SUPPLIER_OVERPAYMENT', 'SUPPLIER_OVERPAYMENT_REVERSAL')
+      )
+      ${b.sql}
+      ORDER BY po.po_id DESC
+      LIMIT ?
+    `;
+    return db.prepare(sql).all(...b.args, limit);
+  } catch {
+    return [];
+  }
 }
 
 function pageModel(db, req, extra = {}) {
@@ -203,6 +1268,8 @@ function pageModel(db, req, extra = {}) {
     position: position?.ok ? position : null,
     lookupError: position && !position.ok ? position.error : '',
     movements: position?.ok ? listSupplierOverpaymentMovements(db, poId) : [],
+    recentOrders: listRecentPurchaseOrders(db, branchId),
+    overpaidOrders: listOverpaidPurchaseOrders(db, branchId),
     notice: extra.notice || String(req.query?.notice || ''),
     error: extra.error || '',
   };
@@ -353,8 +1420,8 @@ export function registerSupplierOverpaymentPage(app, db) {
     const notice = result.duplicate
       ? 'That bank reference was already recorded on this purchase order.'
       : action === 'excess'
-        ? `Recorded ₦${formatNgn(result.amountNgn)} leaving the bank. ₦${formatNgn(result.advanceNgn)} is above the order.`
-        : `Recorded ₦${formatNgn(result.amountNgn)} coming back. Paid on this order is now ₦${formatNgn(result.position?.supplierPaidNgn)}.`;
+        ? `Recorded ₦${formatNgn(result.amountNgn)} leaving the bank. ₦${formatNgn(result.advanceNgn)} is held as an excess advance.`
+        : `Recorded ₦${formatNgn(result.amountNgn)} coming back. Total paid on this order is now ₦${formatNgn(result.position?.supplierPaidNgn)}.`;
     const qs = new URLSearchParams({ poId, notice });
     return res.redirect(303, `${SUPPLIER_OVERPAYMENT_PATH}?${qs.toString()}`);
   });

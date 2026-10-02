@@ -82,11 +82,13 @@ export function listSupplierOverpaymentMovements(db, poId) {
   if (!id) return [];
   const rows = db
     .prepare(
-      `SELECT id, posted_at_iso, type, amount_ngn, reference, note, treasury_account_id
-       FROM treasury_movements
-       WHERE source_id = ?
-         AND source_kind IN ('SUPPLIER_OVERPAYMENT', 'SUPPLIER_OVERPAYMENT_REVERSAL')
-       ORDER BY posted_at_iso DESC, id DESC`
+      `SELECT tm.id, tm.posted_at_iso, tm.type, tm.amount_ngn, tm.reference, tm.note, tm.treasury_account_id,
+              ta.name AS account_name, ta.type AS account_type, ta.bank_name
+       FROM treasury_movements tm
+       LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
+       WHERE tm.source_id = ?
+         AND tm.source_kind IN ('SUPPLIER_OVERPAYMENT', 'SUPPLIER_OVERPAYMENT_REVERSAL')
+       ORDER BY tm.posted_at_iso DESC, tm.id DESC`
     )
     .all(id);
   return rows.map((row) => ({
@@ -97,6 +99,8 @@ export function listSupplierOverpaymentMovements(db, poId) {
     reference: row.reference || '',
     note: row.note || '',
     treasuryAccountId: Number(row.treasury_account_id) || 0,
+    accountName: String(row.account_name || row.bank_name || '').trim(),
+    accountType: String(row.account_type || '').trim(),
   }));
 }
 

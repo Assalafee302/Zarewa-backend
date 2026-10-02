@@ -35,10 +35,16 @@ function lastSupplierPaymentDate(db, poId) {
     .prepare(
       `SELECT MAX(substr(${treasuryMovementDateExpr(db)},1,10)) AS d
        FROM treasury_movements
-       WHERE source_kind = 'PURCHASE_ORDER' AND source_id = ?
-         AND UPPER(TRIM(COALESCE(type,''))) IN ('SUPPLIER_PAYMENT','PO_SUPPLIER_PAYMENT')`
+       WHERE (
+           source_kind = 'PURCHASE_ORDER' AND source_id = ?
+           AND UPPER(TRIM(COALESCE(type,''))) IN ('SUPPLIER_PAYMENT','PO_SUPPLIER_PAYMENT')
+         )
+         OR (
+           source_kind = 'SUPPLIER_OVERPAYMENT' AND source_id = ?
+           AND UPPER(TRIM(COALESCE(type,''))) = 'SUPPLIER_OVERPAYMENT'
+         )`
     )
-    .get(poId);
+    .get(poId, poId);
   return row?.d || null;
 }
 

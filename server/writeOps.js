@@ -9703,7 +9703,13 @@ export function payAccountsPayable(db, apId, payload) {
   const amountNgn = roundMoney(payload.amountNgn);
   if (amountNgn <= 0) return { ok: false, error: 'Payment amount must be positive.' };
   const outstanding = effectiveOutstandingNgn(roundMoney(row.amount_ngn), roundMoney(row.paid_ngn));
-  if (outstanding <= 0) return { ok: false, error: 'Invoice is already fully paid.' };
+  if (outstanding <= 0) {
+    return {
+      ok: false,
+      error:
+        'Invoice is already fully paid. A second payment, or the reversal of an overpayment, is recorded on Supplier overpayments (/supplier-overpayments), not as another settlement of this invoice.',
+    };
+  }
   const apply = Math.min(amountNgn, outstanding);
   const defaultDay =
     String(payload.dateISO ?? payload.paidAtISO ?? '').trim().slice(0, 10) ||
@@ -11708,8 +11714,8 @@ function assertExpenseOutflowBranchGate(db, row, workspaceBranchId, workspaceVie
     const r = db.prepare(`SELECT COALESCE(branch_id, '') AS branch_id FROM customer_refunds WHERE refund_id = ?`).get(sid);
     bid = String(r?.branch_id || '').trim();
   } else if (
-    (t === 'SUPPLIER_PAYMENT' || t === 'TRANSPORT_PAYMENT') &&
-    sk === 'PURCHASE_ORDER'
+    ((t === 'SUPPLIER_PAYMENT' || t === 'TRANSPORT_PAYMENT') && sk === 'PURCHASE_ORDER') ||
+    (t === 'SUPPLIER_OVERPAYMENT' && sk === 'SUPPLIER_OVERPAYMENT')
   ) {
     bid = '';
   } else if (t === 'AP_PAYMENT' && sk === 'ACCOUNTS_PAYABLE') {
@@ -11749,6 +11755,7 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
     (t === 'PAYMENT_REQUEST_OUT' && sk === 'PAYMENT_REQUEST') ||
     (t === 'REFUND_PAYOUT' && sk === 'REFUND') ||
     (t === 'SUPPLIER_PAYMENT' && sk === 'PURCHASE_ORDER') ||
+    (t === 'SUPPLIER_OVERPAYMENT' && sk === 'SUPPLIER_OVERPAYMENT') ||
     (t === 'TRANSPORT_PAYMENT' && sk === 'PURCHASE_ORDER') ||
     (t === 'AP_PAYMENT' && sk === 'ACCOUNTS_PAYABLE');
   if (!allowed) {
@@ -11790,6 +11797,13 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
   }
   if (nextAmt >= 0) {
     return { ok: false, error: 'Amount must remain an outflow (negative), matching a bank/cash debit.' };
+  }
+  if (t === 'SUPPLIER_OVERPAYMENT' && sk === 'SUPPLIER_OVERPAYMENT' && oldAmt !== nextAmt) {
+    return {
+      ok: false,
+      error:
+        'Change the bank account here if this extra payment left the wrong account. To change the amount, record the reversal and then the payment again.',
+    };
   }
 
   const accRow = db.prepare(`SELECT id FROM treasury_accounts WHERE id = ?`).get(nextAcc);

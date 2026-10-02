@@ -116,16 +116,20 @@ export function purchasesOrderedRows(purchaseOrders = [], startDate, endDate) {
  * Supplier payments from treasury (posted date in period).
  */
 export function purchasesPaidRows(treasuryMovements = [], startDate, endDate) {
-  const PAY_TYPES = new Set(['SUPPLIER_PAYMENT', 'PO_SUPPLIER_PAYMENT']);
+  const PAY_TYPES = new Set(['SUPPLIER_PAYMENT', 'PO_SUPPLIER_PAYMENT', 'SUPPLIER_OVERPAYMENT']);
+  const REVERSAL_TYPES = new Set(['SUPPLIER_OVERPAYMENT_REVERSAL']);
   const rows = [];
   for (const t of treasuryMovements || []) {
-    if (!PAY_TYPES.has(String(t.type || ''))) continue;
+    const type = String(t.type || '');
+    const cashIn = REVERSAL_TYPES.has(type);
+    if (!PAY_TYPES.has(type) && !cashIn) continue;
     if (String(t.counterpartyKind || '').toUpperCase() !== 'SUPPLIER') continue;
     const iso = toIsoDate(t.postedAtISO);
     if (!iso) continue;
     if (startDate && iso < startDate) continue;
     if (endDate && iso > endDate) continue;
-    const amt = Math.round(Math.abs(Number(t.amountNgn) || 0));
+    const magnitude = Math.round(Math.abs(Number(t.amountNgn) || 0));
+    const amt = cashIn ? -magnitude : magnitude;
     const isCash = String(t.accountType || '').trim().toLowerCase() === 'cash';
     const bankCode = isCash ? '' : abbreviateBankName(t.bankName);
     rows.push({

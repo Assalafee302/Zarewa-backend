@@ -914,6 +914,34 @@ const CORE_HELP_ARTICLES = [
     links: [{ label: 'Finance — Payments', to: '/accounts', state: { tab: 'payments' } }],
   },
   {
+    id: 'supplier-double-payment-overpayment',
+    title: 'Supplier double payment and overpayment reversal',
+    keywords: [
+      'double paid a supplier',
+      'double paid supplier',
+      'second supplier payment',
+      'supplier overpayment reversal',
+      'supplier refunded the overpayment',
+      'overpaid a supplier',
+      'duplicate supplier payment',
+      'supplier overpayments',
+    ],
+    answer:
+      'A second payment to a supplier, and cash the supplier sends back for an overpayment, are not normal invoice settlements. Finance records them on **Supplier overpayments** so the extra cash sits as an amount the supplier owes back, and the refund reduces it.',
+    steps: [
+      'Open **Supplier overpayments** (`/supplier-overpayments`) and enter the purchase order.',
+      'Read the order value, what is already paid, and how much is above the order.',
+      'To record the second payment (or the part of a transfer above the order value): choose the bank account the money left, the date, the bank reference, and a short note. The amount must be more than what is still owed — a normal balance is still paid from Finance as a supplier payment.',
+      'When the supplier refunds the extra, or the bank reverses it: record the reversal for no more than the amount above the order value. Cash comes back into the treasury account you select, and the purchase order paid total drops by that amount.',
+      'A fully paid invoice will refuse another Pay. That is expected — use this screen for the extra payment and for the refund.',
+    ],
+    links: [
+      { label: 'Supplier overpayments', to: '/supplier-overpayments' },
+      { label: 'Procurement', to: '/procurement' },
+      { label: 'Finance', to: '/accounts' },
+    ],
+  },
+  {
     id: 'manager-payment-hold-clearance',
     title: 'Manager payment hold and clearance',
     keywords: [
@@ -1554,6 +1582,7 @@ const PATH_ARTICLE_BOOSTS = {
     'grn-weight-variance',
     'in-transit-transport-link',
     'company-suppliers-branch-po',
+    'supplier-double-payment-overpayment',
   ],
   '/operations': [
     'operations-production',

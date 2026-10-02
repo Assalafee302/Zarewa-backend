@@ -82,4 +82,35 @@ describe('purchasesPaidRows', () => {
     expect(rows[1].paymentMethod).toBe('Cash');
     expect(rows[1].bankAccount).toBe('Cash');
   });
+
+  it('counts a second supplier payment and nets the overpayment reversal', () => {
+    const rows = purchasesPaidRows(
+      [
+        {
+          type: 'SUPPLIER_OVERPAYMENT',
+          counterpartyKind: 'SUPPLIER',
+          counterpartyName: 'Coil Mill',
+          postedAtISO: '2026-03-20',
+          amountNgn: -1_000_000,
+          accountType: 'Bank',
+          accountName: 'GTBank',
+          bankName: 'Guaranty Trust Bank',
+        },
+        {
+          type: 'SUPPLIER_OVERPAYMENT_REVERSAL',
+          counterpartyKind: 'SUPPLIER',
+          counterpartyName: 'Coil Mill',
+          postedAtISO: '2026-03-21',
+          amountNgn: 1_000_000,
+          accountType: 'Bank',
+          accountName: 'GTBank',
+          bankName: 'Guaranty Trust Bank',
+        },
+      ],
+      '2026-03-01',
+      '2026-03-31'
+    );
+    expect(rows.map((r) => r.amountNgn)).toEqual([1_000_000, -1_000_000]);
+    expect(rows.reduce((s, r) => s + r.amountNgn, 0)).toBe(0);
+  });
 });

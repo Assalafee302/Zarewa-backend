@@ -396,6 +396,23 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
   },
   {
     kind: 'nav',
+    id: 'nav-supplier-overpayments',
+    label: 'Supplier double payment and overpayment',
+    sublabel: 'Record a second supplier payment, or the refund of an overpayment',
+    path: '/supplier-overpayments',
+    keywords: [
+      'double paid',
+      'double payment',
+      'supplier overpayment',
+      'overpaid supplier',
+      'second payment',
+      'supplier refund',
+      'reverse supplier payment',
+    ],
+    permissions: ['finance.pay'],
+  },
+  {
+    kind: 'nav',
     id: 'nav-cashier-statement',
     label: 'Cashier statement (full dates)',
     sublabel: 'Print POS or Cash including 5–11 Sep',

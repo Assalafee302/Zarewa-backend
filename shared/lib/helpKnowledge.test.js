@@ -37,6 +37,12 @@ describe('helpKnowledge', () => {
     expect(m.article.id).toBe('overpayment-quotation-credit');
   });
 
+  it('matches a supplier double payment and overpayment reversal', () => {
+    const m = matchHelpArticle('we double paid a supplier and need the supplier overpayment reversal');
+    expect(m).not.toBeNull();
+    expect(m.article.id).toBe('supplier-double-payment-overpayment');
+  });
+
   it('matches cashier desk payout questions', () => {
     const m = matchHelpArticle('How do I pay an approved refund as cashier');
     expect(m).not.toBeNull();

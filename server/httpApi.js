@@ -1049,6 +1049,7 @@ import { workspaceRoomsHealthCapability } from './workspace/chatFlags.js';
 import { registerMaintenanceRoutes } from './http/maintenanceRoutes.js';
 import { registerChairmanOfficeRoutes } from './http/chairmanOfficeRoutes.js';
 import { registerPurchasePaymentCashierAckRoutes } from './http/purchasePaymentCashierAckRoutes.js';
+import { registerSupplierOverpaymentRoutes } from './http/supplierOverpaymentRoutes.js';
 import { registerBranchRefundFreezeRoutes } from './http/branchRefundFreezeRoutes.js';
 import { registerExpenseTreasuryCatchUpRoutes } from './http/expenseTreasuryCatchUpRoutes.js';
 import { registerCashierTillTruthRoutes } from './http/cashierTillTruthRoutes.js';
@@ -1127,6 +1128,7 @@ export function registerHttpApi(app, db) {
   registerMaintenanceRoutes(app, db);
   registerChairmanOfficeRoutes(app, db);
   registerPurchasePaymentCashierAckRoutes(app, db);
+  registerSupplierOverpaymentRoutes(app, db);
   registerBranchRefundFreezeRoutes(app, db);
   registerExpenseTreasuryCatchUpRoutes(app, db);
   registerCashierTillTruthRoutes(app, db);

@@ -10099,8 +10099,16 @@ export function registerHttpApi(app, db) {
         qRow != null && totalBooked != null && totalBooked > 0
           ? amountDueOnQuotationFromEntries([], { id: quotationRef, totalNgn: totalBooked, paidNgn: paidBooked })
           : null;
-      const isOrderFullySettledForPicker =
-        qRow == null ? null : totalBooked <= 0 ? true : isEffectivelyFullyPaid(paidBooked || 0, totalBooked);
+      // Receipt cash (inside meets) settles the order for the picker. Booked paid_ngn can lag the receipt.
+      const isOrderFullySettledForPicker = meets.ok
+        ? true
+        : meets.code === 'QUOTATION_EXCEEDS_RECEIPTS'
+          ? false
+          : qRow == null
+            ? null
+            : totalBooked <= 0
+              ? true
+              : isEffectivelyFullyPaid(paidBooked || 0, totalBooked);
       const productionJobs = db
         .prepare(
           `SELECT job_id, status FROM production_jobs WHERE quotation_ref = ? ORDER BY job_id ASC`
@@ -10191,11 +10199,6 @@ export function registerHttpApi(app, db) {
           `Automatic refund preview total is ₦${suggestedPreviewAmountNgn.toLocaleString('en-NG')} — refunds below ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} are not accepted.`
         );
       }
-      if (meets.ok && totalBooked > 0 && !isOrderFullySettledForPicker) {
-        blockingReasons.push(
-          `Order still has ₦${(orderOutstandingNgn ?? 0).toLocaleString('en-NG')} outstanding (picker only lists fully paid quotations; residuals under 0.01% are ignored).`
-        );
-      }
       if (meets.ok && remainingNgn > 0 && remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) {
         blockingReasons.push(
           `Remaining refundable amount ₦${remainingNgn.toLocaleString('en-NG')} must be at least ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} for the dropdown.`
@@ -10215,7 +10218,6 @@ export function registerHttpApi(app, db) {
         meets.ok &&
         categories.length > 0 &&
         remainingNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
-        isOrderFullySettledForPicker === true &&
         (suggestedPreviewAmountNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN || mdDiscountEligible);
       const wouldAppearInFreshDropdown =
         wouldAppearInPicklist &&

@@ -6156,7 +6156,9 @@ function closedProductionJobsByQuotationRef(db, quoteIds) {
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be covered by receipts (or cash-in when there are no receipt rows) when total is set
- * ({@link quotationReceiptsCoverQuoteTotal}). Booked paid_ngn alone is not enough.
+ * ({@link quotationReceiptsCoverQuoteTotal}). `quotations.paid_ngn` can lag the receipt; a short
+ * booked figure does not hide a quote whose receipts already cover the order. Booked paid_ngn
+ * alone is not enough.
  * The pick list never runs {@link previewRefundRequest}. Obvious overpayments (residual), void/cancelled jobs
  * (when Order cancellation is not already claimed), unproduced metres, and quoted-above-floor (same-gauge)
  * are classified cheaply so a follow-up commission refund still appears after overpay/unproduced is claimed.
@@ -6247,9 +6249,8 @@ export function getEligibleRefundQuotations(db, opts = {}) {
   for (const row of rows) {
     if (quotationRefundsBlocked(row)) continue;
     if (quotationRowHitsBranchRefundLock(row, freezeByBranch, receiptDatesByRef)) continue;
-    const total = roundMoney(row.total_ngn);
-    const paid = roundMoney(row.paid_ngn);
-    if (total > 0 && !isEffectivelyFullyPaid(paid, total)) continue;
+    // Receipt cash covers the order later (`quotationReceiptsCoverQuoteTotal`). Do not drop a
+    // quote here because quotations.paid_ngn is behind the sales receipt.
     if (
       quotationRefundBlockedPendingMdPriceConfirm({
         bmPriceExceptionApprovedAtISO: row.bm_price_exception_approved_at_iso,

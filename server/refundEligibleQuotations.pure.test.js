@@ -714,4 +714,60 @@ describe('getEligibleRefundQuotations fast list', () => {
 
     expect(getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 })).toHaveLength(0);
   });
+
+  it('lists a quote when the receipt covers the order even if booked paid_ngn is short', () => {
+    const quote = {
+      id: 'QT-YL-26-0277',
+      customer_id: 'CUS-1',
+      customer_name: 'Engr. Abubakar',
+      date_iso: '2026-10-02',
+      total_ngn: 2_075_000,
+      paid_ngn: 1_692_480,
+      status: 'Finished',
+      refunds_blocked_at_iso: null,
+      total_refunded: 0,
+    };
+    const db = {
+      prepare(sql) {
+        const text = String(sql);
+        return {
+          all() {
+            if (text.includes('FROM quotations q')) return [quote];
+            if (text.includes('FROM sales_receipts')) {
+              return [
+                {
+                  id: 'RCT-2200',
+                  quotation_ref: 'QT-YL-26-0277',
+                  amount_ngn: 2_200_000,
+                  ledger_entry_id: null,
+                  finance_reconciliation_saved_at_iso: null,
+                  bank_received_amount_ngn: null,
+                  status: 'Pending clearance',
+                },
+              ];
+            }
+            if (text.includes('FROM ledger_entries')) return [];
+            if (text.includes('FROM customer_refunds')) return [];
+            if (text.includes('FROM production_jobs')) return [];
+            return [];
+          },
+          get() {
+            if (text.includes('FROM customer_refunds')) return { s: 0 };
+            if (text.includes('FROM production_jobs') && text.includes('NOT IN')) return undefined;
+            if (text.includes('FROM production_jobs')) return { 1: 1 };
+            if (text.includes('FROM ledger_entries')) return { s: 0 };
+            if (text.includes('FROM quotations')) return quote;
+            return undefined;
+          },
+        };
+      },
+    };
+
+    const rows = getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('QT-YL-26-0277');
+    expect(rows[0].eligible_refund_categories).toContain('Overpayment');
+    expect(rows[0].suggested_preview_amount_ngn).toBe(125_000);
+    expect(rows[0].cash_in_ngn).toBe(2_200_000);
+  });
 });

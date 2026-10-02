@@ -1414,7 +1414,7 @@ function jsonResult(res, db, poId, result) {
 export function registerSupplierOverpaymentRoutes(app, db) {
   app.get(
     '/api/purchase-orders/:poId/supplier-overpayment',
-    requirePermission('finance.pay'),
+    requirePermission(['finance.pay', 'procurement.view', 'inventory.view', 'finance.view', 'reports.view']),
     (req, res) => {
       const position = supplierCashPosition(db, req.params.poId);
       if (!position.ok) return apiError(res, { status: 404, code: 'PO_NOT_FOUND', error: position.error });

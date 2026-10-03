@@ -4,6 +4,7 @@ import {
   applyFinanceConfirmedReceiptBookAmountTx,
   patchSalesReceiptFinanceSettlement,
   reapplyFinanceReconciledReceiptAmountsForBranchScope,
+  reconcileSalesReceiptMirrorsForQuotation,
   syncQuotationPaidFromReceipts,
   unconfirmSalesReceiptFinanceClearance,
   unwindRefundFundedReceiptEffectsTx,
@@ -617,5 +618,50 @@ describe('finance confirm replaces mistaken sales-posted overpay', () => {
 
     const prev = previewRefundRequest(db, { quotationRef: 'QT-KD-26-0566' });
     expect(prev.preview.overpaymentExcessNgn).toBe(0);
+  });
+
+  it('reverses open bank cash on the original day when a ₦0 receipt mirror is dropped', () => {
+    db.prepare(
+      `INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)
+       VALUES ('QT-ZERO', 'CUS-1', 'Test Customer', 10000, 0, 'Unpaid', 'Finished', '{}', '2026-09-04')`
+    ).run();
+    db.prepare(
+      `INSERT INTO ledger_entries (id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, payment_method, note)
+       VALUES ('LE-ZERO', 'RECEIPT', 'CUS-1', 'Test Customer', 'QT-ZERO', 0, '2026-09-04T12:00:00.000Z', 'Bank', 'Full settlement (receipt)'),
+              ('LE-KEEP', 'RECEIPT', 'CUS-1', 'Test Customer', 'QT-ZERO', 10000, '2026-09-04T12:00:00.000Z', 'Bank', 'Full settlement (receipt)')`
+    ).run();
+    db.prepare(
+      `INSERT INTO sales_receipts (
+         id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso, ledger_entry_id
+       ) VALUES
+         ('LE-ZERO', 'CUS-1', 'Test Customer', 'QT-ZERO', 0, '₦0', 'Confirmed', '2026-09-04', 'LE-ZERO'),
+         ('LE-KEEP', 'CUS-1', 'Test Customer', 'QT-ZERO', 10000, '₦10,000', 'Confirmed', '2026-09-04', 'LE-KEEP')`
+    ).run();
+    db.prepare(`UPDATE treasury_accounts SET balance = 40550 WHERE id = 1`).run();
+    db.prepare(
+      `INSERT INTO treasury_movements (
+         id, type, source_kind, source_id, treasury_account_id, amount_ngn, posted_at_iso, counterparty_kind, reference
+       ) VALUES
+         ('TM-ZERO', 'RECEIPT_IN', 'LEDGER_RECEIPT', 'LE-ZERO', 1, 30550, '2026-09-04T12:00:00.000Z', 'CUSTOMER', 'qs'),
+         ('TM-KEEP', 'RECEIPT_IN', 'LEDGER_RECEIPT', 'LE-KEEP', 1, 10000, '2026-09-04T12:00:00.000Z', 'CUSTOMER', 'keep')`
+    ).run();
+
+    const result = reconcileSalesReceiptMirrorsForQuotation(db, 'QT-ZERO');
+    expect(result.ok).toBe(true);
+    expect(db.prepare(`SELECT id FROM sales_receipts WHERE id = 'LE-ZERO'`).get()).toBeFalsy();
+    expect(db.prepare(`SELECT id FROM sales_receipts WHERE id = 'LE-KEEP'`).get()).toBeTruthy();
+
+    const reversal = db
+      .prepare(
+        `SELECT type, amount_ngn, posted_at_iso FROM treasury_movements WHERE reverses_movement_id = 'TM-ZERO'`
+      )
+      .get();
+    expect(reversal.type).toBe('RECEIPT_REVERSAL_OUT');
+    expect(reversal.amount_ngn).toBe(-30550);
+    expect(String(reversal.posted_at_iso).slice(0, 10)).toBe('2026-09-04');
+    expect(
+      db.prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = 'TM-KEEP'`).get()
+    ).toBeFalsy();
+    expect(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = 1`).get().balance).toBe(10000);
   });
 });

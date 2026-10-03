@@ -6740,8 +6740,132 @@ export function reversedEntryIdsFromRows(rows) {
   return set;
 }
 
+function unreversedLedgerReceiptInflows(db, sourceIds) {
+  const ids = [...new Set((sourceIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+  const ph = ids.map(() => '?').join(',');
+  return db
+    .prepare(
+      `SELECT * FROM treasury_movements tm
+       WHERE tm.source_kind = 'LEDGER_RECEIPT' AND tm.source_id IN (${ph})
+         AND tm.type = 'RECEIPT_IN'
+         AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+         AND NOT EXISTS (
+           SELECT 1 FROM treasury_movements rev WHERE rev.reverses_movement_id = tm.id
+         )`
+    )
+    .all(...ids);
+}
+
+/**
+ * A ₦0 receipt is not new bank cash. Take any still-open RECEIPT_IN and its cash journal
+ * off on the original receipt day before the sales-receipt row is dropped.
+ * A locked period keeps the row so the cash does not disappear from the confirm desk.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ id: string, at_iso?: string, branch_id?: string }} ledgerRow
+ * @param {string} quotationId
+ */
+function releaseZeroedReceiptCashTx(db, ledgerRow, quotationId) {
+  const ledgerId = String(ledgerRow?.id || '').trim();
+  if (!ledgerId) return { ok: true, reversedNgn: 0 };
+  const mirrors = db
+    .prepare(
+      `SELECT id FROM sales_receipts
+       WHERE quotation_ref = ? AND (id = ? OR ledger_entry_id = ?)`
+    )
+    .all(quotationId, ledgerId, ledgerId);
+  const sourceIds = [ledgerId, ...mirrors.map((row) => String(row.id || '').trim())];
+  const movements = unreversedLedgerReceiptInflows(db, sourceIds);
+  const ledgerDay = String(ledgerRow.at_iso || '').slice(0, 10);
+  const days = movements
+    .map((row) => String(row.posted_at_iso || '').slice(0, 10))
+    .filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day));
+  if (!days.length && /^\d{4}-\d{2}-\d{2}$/.test(ledgerDay)) days.push(ledgerDay);
+  for (const day of new Set(days)) {
+    try {
+      assertPeriodOpen(db, day, 'Receipt cash reversal date');
+    } catch (e) {
+      return {
+        ok: false,
+        code: 'PERIOD_LOCKED',
+        error: String(e?.message || e),
+        retainIds: [ledgerId, ...mirrors.map((row) => String(row.id || ''))],
+      };
+    }
+  }
+
+  let reversedNgn = 0;
+  for (const row of movements) {
+    const amt = roundMoney(row.amount_ngn);
+    if (!amt) continue;
+    const day = String(row.posted_at_iso || '').slice(0, 10);
+    const postedDay = /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : ledgerDay;
+    const postedAtISO = /^\d{4}-\d{2}-\d{2}$/.test(postedDay)
+      ? `${postedDay}T12:00:00.000Z`
+      : new Date().toISOString();
+    insertTreasuryMovementTx(db, {
+      type: 'RECEIPT_REVERSAL_OUT',
+      treasuryAccountId: row.treasury_account_id,
+      amountNgn: -amt,
+      postedAtISO,
+      reference: row.reference,
+      counterpartyKind: row.counterparty_kind,
+      counterpartyId: row.counterparty_id,
+      counterpartyName: row.counterparty_name,
+      sourceKind: 'LEDGER_RECEIPT',
+      sourceId: row.source_id,
+      note: 'Reversed — receipt amount is ₦0, so this was not new bank cash',
+      createdBy: actorName(null),
+      reversesMovementId: row.id,
+      batchId: row.batch_id || null,
+      allowNegativeBalance: true,
+      branchId: ledgerRow.branch_id || null,
+    });
+    reversedNgn += amt;
+  }
+
+  const glDay = days.find((day) => /^\d{4}-\d{2}-\d{2}$/.test(day)) || '';
+  let receiptReversalGl = null;
+  try {
+    receiptReversalGl = db
+      .prepare(
+        `SELECT 1 AS ok FROM gl_journal_entries
+         WHERE source_kind = 'CUSTOMER_RECEIPT_REV_GL' AND INSTR(memo, ?) > 0`
+      )
+      .get(`Reverse receipt GL ${ledgerId}`);
+  } catch {
+    receiptReversalGl = null;
+  }
+  if (glDay && !receiptReversalGl) {
+    const gl = tryPostCustomerReceiptRefundFundUnwindGl(db, {
+      ledgerEntryId: ledgerId,
+      keepCashNgn: 0,
+      entryDateISO: glDay,
+      branchId: ledgerRow.branch_id || null,
+      createdByUserId: null,
+    });
+    if (!gl.ok && !gl.skipped) {
+      return { ok: false, error: gl.error || 'Could not reverse the receipt cash journal.' };
+    }
+  }
+
+  if (reversedNgn > 0) {
+    appendAuditLog(db, {
+      actor: null,
+      action: 'receipt.zero_cash_reverse',
+      entityKind: 'ledger_entry',
+      entityId: ledgerId,
+      note: `Reversed ₦${reversedNgn.toLocaleString('en-NG')} still on the bank for ₦0 receipt ${ledgerId}.`,
+      details: { quotationId, reversedNgn, movementIds: movements.map((row) => row.id) },
+    });
+  }
+  return { ok: true, reversedNgn };
+}
+
 /**
  * Rebuild `sales_receipts` from active RECEIPT ledger rows for one quotation, then sync `paid_ngn`.
+ * A ₦0 receipt is not kept as a mirror. Open bank cash for that receipt is reversed on its
+ * original day before the mirror row is deleted. A locked period keeps the mirror.
  * Use when mirrors drifted from the ledger so Sales / receipts and quotation paid match the books.
  */
 export function reconcileSalesReceiptMirrorsForQuotation(db, quotationId) {
@@ -6766,6 +6890,24 @@ export function reconcileSalesReceiptMirrorsForQuotation(db, quotationId) {
       upsertSalesReceiptForLedgerEntry(db, entry, qt, row.branch_id ?? null);
       keepIds.push(String(row.id));
       upserted++;
+    }
+    const keepSet = new Set(keepIds);
+    for (const row of rows) {
+      if (keepSet.has(String(row.id))) continue;
+      if (roundMoney(row.amount_ngn) > 0) continue;
+      const released = releaseZeroedReceiptCashTx(db, row, qid);
+      if (released.ok) continue;
+      if (released.code === 'PERIOD_LOCKED') {
+        for (const retainId of released.retainIds || []) {
+          const id = String(retainId || '').trim();
+          if (id && !keepSet.has(id)) {
+            keepIds.push(id);
+            keepSet.add(id);
+          }
+        }
+        continue;
+      }
+      throw new Error(released.error || 'Could not take ₦0 receipt cash off the account.');
     }
     let deletedMirrors = 0;
     if (keepIds.length === 0) {

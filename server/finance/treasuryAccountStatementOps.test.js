@@ -72,5 +72,59 @@ describe('buildTreasuryAccountStatement', () => {
     expect(stmt.outflowNgn).toBe(50_000);
     expect(stmt.closingBalanceNgn).toBe(450_000);
     expect(stmt.lines[0].balanceNgn).toBe(450_000);
+    expect(stmt.tieOut.equal).toBe(true);
+    expect(stmt.tieOut.treasuryThroughToNgn).toBe(450_000);
+  });
+
+  it('opens with movements before the from date and keeps a pending receipt in the total', () => {
+    const db = {
+      prepare: (sql) => {
+        const q = String(sql);
+        return {
+          get: () => {
+            if (q.includes('FROM treasury_accounts')) {
+              return {
+                id: 2,
+                name: 'Taj',
+                type: 'Bank',
+                balance: 180,
+                opening_balance_ngn: 100,
+                branch_id: 'BR-KD',
+              };
+            }
+            if (q.includes('<= ?')) return { s: 80 };
+            if (q.includes('< ?')) return { s: 50 };
+            return { s: 0 };
+          },
+          all: () => {
+            if (q.includes('sales_receipts')) return [{ id: 'LE-PENDING' }];
+            if (!q.includes('FROM treasury_movements tm')) return [];
+            return [
+              {
+                id: 'TM-P',
+                posted_at_iso: '2026-08-02T12:00:00.000Z',
+                type: 'RECEIPT_IN',
+                amount_ngn: 30,
+                source_kind: 'LEDGER_RECEIPT',
+                source_id: 'LE-PENDING',
+                counterparty_name: 'Customer',
+                reference: 'LE-PENDING',
+                note: '',
+              },
+            ];
+          },
+        };
+      },
+    };
+    const stmt = buildTreasuryAccountStatement(db, 2, '2026-08-02', '2026-10-03');
+    expect(stmt.openingBalanceNgn).toBe(150);
+    expect(stmt.lines[0].description).toMatch(/pending/);
+    expect(stmt.lines[0].inNgn).toBe(30);
+    expect(stmt.closingBalanceNgn).toBe(180);
+    expect(stmt.tieOut).toEqual({
+      statementClosingNgn: 180,
+      treasuryThroughToNgn: 180,
+      equal: true,
+    });
   });
 });

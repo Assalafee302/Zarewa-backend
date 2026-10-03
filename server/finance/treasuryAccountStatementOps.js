@@ -62,6 +62,8 @@ export function buildTreasuryAccountStatement(db, treasuryAccountId, fromISO, to
   if (!account) return { ok: false, error: 'Treasury account not found.' };
 
   const liveBalance = roundMoney(account.balance);
+  // Registered opening is the books' starting figure, not the balance on date D.
+  // Opening on D = that figure plus every movement posted before D.
   const openingRegistered = roundMoney(account.opening_balance_ngn);
   const sumThroughTo = db
     .prepare(
@@ -79,8 +81,20 @@ export function buildTreasuryAccountStatement(db, treasuryAccountId, fromISO, to
          AND SUBSTR(posted_at_iso, 1, 10) < ?`
     )
     .get(id, from);
-  const closingBalanceNgn = roundMoney(openingRegistered + roundMoney(sumThroughTo?.s));
+  const treasuryThroughToNgn = roundMoney(openingRegistered + roundMoney(sumThroughTo?.s));
   const openingBalanceNgn = roundMoney(openingRegistered + roundMoney(sumBeforeFrom?.s));
+
+  let pendingReceiptIds = new Set();
+  try {
+    const pendingRows = db
+      .prepare(
+        `SELECT id FROM sales_receipts WHERE LOWER(COALESCE(status, '')) LIKE '%pending%'`
+      )
+      .all();
+    pendingReceiptIds = new Set((pendingRows || []).map((r) => String(r.id || '').trim()).filter(Boolean));
+  } catch {
+    pendingReceiptIds = new Set();
+  }
 
   const rows = db
     .prepare(
@@ -102,12 +116,16 @@ export function buildTreasuryAccountStatement(db, treasuryAccountId, fromISO, to
     if (amountNgn > 0) inflowNgn += amountNgn;
     else outflowNgn += Math.abs(amountNgn);
     running = roundMoney(running + amountNgn);
+    const sourceId = String(row.source_id || '').trim();
+    const pending = pendingReceiptIds.has(sourceId);
+    const text = description(row);
     return {
       n: i + 1,
       id: row.id,
       date: dayIso(row.posted_at_iso),
       source: sourceLabel(row),
-      description: description(row),
+      description: pending ? (text ? `${text} · pending` : 'pending') : text,
+      pending,
       inNgn: amountNgn > 0 ? amountNgn : 0,
       outNgn: amountNgn < 0 ? Math.abs(amountNgn) : 0,
       balanceNgn: running,
@@ -117,6 +135,13 @@ export function buildTreasuryAccountStatement(db, treasuryAccountId, fromISO, to
       sourceId: row.source_id || '',
     };
   });
+
+  const statementClosingNgn = lines.length ? lines[lines.length - 1].balanceNgn : openingBalanceNgn;
+  const tieOut = {
+    statementClosingNgn,
+    treasuryThroughToNgn,
+    equal: statementClosingNgn === treasuryThroughToNgn,
+  };
 
   return {
     ok: true,
@@ -132,7 +157,8 @@ export function buildTreasuryAccountStatement(db, treasuryAccountId, fromISO, to
     fromISO: from,
     toISO: to,
     openingBalanceNgn,
-    closingBalanceNgn,
+    closingBalanceNgn: statementClosingNgn,
+    tieOut,
     inflowNgn: roundMoney(inflowNgn),
     outflowNgn: roundMoney(outflowNgn),
     lineCount: lines.length,

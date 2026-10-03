@@ -98,6 +98,20 @@ export function parseIsoTimestampOrThrow(value, label = 'Date') {
  * When the caller omitted a date, use now. Garbage is never treated as now.
  * @param {unknown} value
  */
+/**
+ * Treasury postedAtISO. An omitted date means now. A valid timestamp is kept as written.
+ * Day-only becomes noon UTC. Anything else, including TM-2780 "262026-09-T…", throws.
+ * @param {unknown} value
+ */
+export function normalizeTreasuryPostedAtISO(value) {
+  if (value == null || String(value).trim() === '') return new Date().toISOString();
+  const s = String(value).trim();
+  const parsed = parseIsoTimestamp(s);
+  if (!parsed.ok) throw new IsoTimestampError(parsed.error, parsed.code);
+  if (s.includes('T')) return s;
+  return parsed.iso;
+}
+
 export function normalizeIsoTimestampStrict(value, opts = {}) {
   const omitted = value == null || String(value).trim() === '';
   if (omitted) {

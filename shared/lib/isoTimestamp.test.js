@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertTreasuryPostingDate,
   normalizeIsoTimestampStrict,
+  normalizeTreasuryPostedAtISO,
   parseIsoTimestamp,
   periodKeyFromParsedDate,
 } from './isoTimestamp.js';
@@ -34,6 +35,15 @@ describe('periodKeyFromParsedDate', () => {
   it('accepts a YYYY-MM period key and a posting day', () => {
     expect(periodKeyFromParsedDate('2026-09')).toBe('2026-09');
     expect(periodKeyFromParsedDate('2026-09-07T12:00:00.000Z')).toBe('2026-09');
+  });
+});
+
+describe('normalizeTreasuryPostedAtISO', () => {
+  it('keeps a valid timestamp and rejects TM-2780', () => {
+    expect(normalizeTreasuryPostedAtISO('2026-09-26T12:00:00.000Z')).toBe('2026-09-26T12:00:00.000Z');
+    expect(normalizeTreasuryPostedAtISO('2026-09-26')).toBe('2026-09-26T12:00:00.000Z');
+    expect(parseIsoTimestamp(normalizeTreasuryPostedAtISO('')).ok).toBe(true);
+    expect(() => normalizeTreasuryPostedAtISO('262026-09-T12:00:00.000Z')).toThrow(/Invalid date/);
   });
 });
 

@@ -127,7 +127,16 @@ export function renderCashierStatementPage(model = {}) {
         <p class="hint">${stmt.lineCount} line(s). Live till balance now: ₦${esc(formatNgn(stmt.account.liveBalanceNgn))}.</p>
         <table>
           <thead><tr><th>#</th><th>Date</th><th>Source</th><th>Description</th><th>In</th><th>Out</th><th>Balance</th></tr></thead>
-          <tbody>${table || '<tr><td colspan="7">No movements in this date range.</td></tr>'}</tbody>
+          <tbody>${table || '<tr><td colspan="7">No movements in this date range.</td></tr>'}
+            ${
+              stmt.tieOut
+                ? `<tr>
+            <td colspan="4">Check: statement closing vs treasury movements through ${esc(dmy(stmt.toISO))}</td>
+            <td class="num" colspan="3">₦${esc(formatNgn(stmt.tieOut.statementClosingNgn))} vs ₦${esc(formatNgn(stmt.tieOut.treasuryThroughToNgn))}${stmt.tieOut.equal ? ' — equal' : ' — differs'}</td>
+          </tr>`
+                : ''
+            }
+          </tbody>
         </table>
       </article>`
           : ''

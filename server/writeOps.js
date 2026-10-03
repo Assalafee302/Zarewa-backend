@@ -1,9 +1,11 @@
 import { mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
+import { normalizeTreasuryPostedAtISO, parseIsoTimestamp } from '../shared/lib/isoTimestamp.js';
 import {
   receiptCountsTowardQuotationPaidSql,
   userMayManageInvestigations,
 } from '../shared/lib/investigationRegister.js';
 import { assertInvestigationAllowsMutation } from './office/investigationLock.js';
+import { heldReceiptClearanceBlock } from './sales/receiptClearanceHold.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import {
   validateSpecialLaneTreasuryPayout,
@@ -387,11 +389,7 @@ function assertServiceAssignments(db, linesJson, quotationBranchId = null) {
 }
 
 function normalizeIsoTimestamp(value) {
-  if (!value) return new Date().toISOString();
-  const s = String(value).trim();
-  if (!s) return new Date().toISOString();
-  if (s.includes('T')) return s;
-  return `${s}T12:00:00.000Z`;
+  return normalizeTreasuryPostedAtISO(value);
 }
 
 /**
@@ -12058,6 +12056,26 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
      WHERE id = ?`
   ).run(nextAcc, nextAmt, nextPosted, mergedNote || null, mid);
 
+  // A date-only correction must move the payment's paid day and its journal with the till line.
+  // Amount and account are unchanged here, so the stored till balance is not adjusted.
+  if (nextPosted !== String(row.posted_at_iso || '')) {
+    const newDay = String(nextPosted).slice(0, 10);
+    if (sk === 'PAYMENT_REQUEST' && row.source_id) {
+      const pr = db.prepare(`SELECT paid_at_iso FROM payment_requests WHERE request_id = ?`).get(row.source_id);
+      const paidAt = String(pr?.paid_at_iso || '').trim();
+      if (paidAt && !parseIsoTimestamp(paidAt).ok) {
+        db.prepare(`UPDATE payment_requests SET paid_at_iso = ? WHERE request_id = ?`).run(newDay, row.source_id);
+      }
+    }
+    if (tableExists(db, 'gl_journal_entries')) {
+      db.prepare(
+        `UPDATE gl_journal_entries
+         SET entry_date_iso = ?, period_key = ?
+         WHERE source_id = ?`
+      ).run(newDay, newDay.slice(0, 7), mid);
+    }
+  }
+
   if (t === 'REFUND_PAYOUT' && sk === 'REFUND' && oldAmt !== nextAmt) {
     const rid = String(row.source_id || '').trim();
     if (rid) {
@@ -12839,6 +12857,10 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
 
   const finalized =
     row.finance_reconciliation_saved_at_iso != null && String(row.finance_reconciliation_saved_at_iso).trim() !== '';
+  if (!finalized) {
+    const clearanceHold = heldReceiptClearanceBlock(id, actor);
+    if (clearanceHold) return clearanceHold;
+  }
 
   const corrections = Array.isArray(payload?.paymentLineCorrections) ? payload.paymentLineCorrections : [];
   let correctionsSum = 0;

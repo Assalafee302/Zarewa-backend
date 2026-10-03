@@ -120,6 +120,59 @@ export function closeRefundUnpaidRemainder(db, refundId, actor, kind = 'rounding
   };
 }
 
+/**
+ * Close one named unpaid remainder as rounding when a reconciliation has already
+ * shown the gap is not a further payout. The desk button stays capped at ₦200.
+ * Approved amount and paid amount are not changed, and no cash moves.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} refundId
+ * @param {number} expectedOutstandingNgn
+ * @param {object | null} actor
+ * @param {string} [note]
+ */
+export function closeNamedRefundRemainderAsRounding(db, refundId, expectedOutstandingNgn, actor, note = '') {
+  const id = String(refundId || '').trim();
+  const expected = roundMoney(expectedOutstandingNgn);
+  if (!id || expected <= 1) return { ok: false, error: 'Refund and the remainder to close are required.' };
+  ensureRefundRemainderClosedColumns(db);
+  const before = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  if (!before) return { ok: false, error: 'Refund not found.' };
+  const summary = buildRefundSettlementSummary(db, before);
+  const outstanding = roundMoney(summary.cashOutstandingNgn);
+  if (outstanding !== expected) {
+    return {
+      ok: false,
+      error: `Remainder is ₦${outstanding.toLocaleString('en-NG')}, not ₦${expected.toLocaleString('en-NG')}.`,
+    };
+  }
+  const sentence = `${ROUNDING_LABEL}. Remainder ₦${outstanding.toLocaleString('en-NG')} closed with no money out. ${String(note || '').trim() || NOTE}`;
+  const nextClosed = roundMoney(before.remainder_closed_ngn) + outstanding;
+  db.prepare(
+    `UPDATE customer_refunds
+     SET remainder_closed_ngn = ?, remainder_closed_reason = ?, payment_note = ?
+     WHERE refund_id = ?`
+  ).run(nextClosed, 'rounding', appendNote(before.payment_note, sentence), id);
+  const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  const nextStatus = resolveRefundStatus(db, row);
+  if (nextStatus && nextStatus !== String(row.status || '').trim()) {
+    db.prepare(`UPDATE customer_refunds SET status = ? WHERE refund_id = ?`).run(nextStatus, id);
+  }
+  appendAuditLog(db, {
+    actor,
+    action: 'refund.remainder_rounding',
+    entityKind: 'refund',
+    entityId: id,
+    note: sentence,
+    details: {
+      previousPaidNgn: roundMoney(before.paid_amount_ngn),
+      previousApprovedNgn: roundMoney(before.approved_amount_ngn),
+      remainderClosedNgn: outstanding,
+      paidAmountUnchanged: true,
+    },
+  });
+  return { ok: true, refundId: id, remainderClosedNgn: outstanding, status: nextStatus };
+}
+
 export function closePaymentRequestRemainderAsRounding(db, requestId, actor) {
   const id = String(requestId || '').trim();
   if (!id) return { ok: false, error: 'Payment request id is required.' };

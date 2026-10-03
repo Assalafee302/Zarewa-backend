@@ -908,6 +908,51 @@ export function amendBalancedJournalAmountTx(db, journalId, payload = {}) {
 }
 
 /**
+ * Point an existing journal at a new source and move its debit line to another account.
+ * Line amounts and the credit account stay as they are, so the cash credit does not move.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} journalId
+ * @param {{ sourceKind: string, sourceId: string, debitAccountCode: string, memo?: string }} payload
+ */
+export function reclassJournalDebitAccountTx(db, journalId, payload = {}) {
+  const id = String(journalId || '').trim();
+  const sourceKind = String(payload.sourceKind || '').trim();
+  const sourceId = String(payload.sourceId || '').trim();
+  const debitCode = String(payload.debitAccountCode || '').trim();
+  if (!id || !sourceKind || !sourceId || !debitCode) {
+    return { ok: false, error: 'Journal, source, and debit account are required.' };
+  }
+  const debitAccountId = getGlAccountIdByCode(db, debitCode);
+  if (!debitAccountId) return { ok: false, error: `GL account ${debitCode} was not found.` };
+  const dup = db
+    .prepare(`SELECT id FROM gl_journal_entries WHERE source_kind = ? AND source_id = ? AND id <> ?`)
+    .get(sourceKind, sourceId, id);
+  if (dup?.id) return { ok: false, error: 'Another journal already uses that source.' };
+  const lines = db
+    .prepare(`SELECT id, debit_ngn, credit_ngn FROM gl_journal_lines WHERE journal_id = ?`)
+    .all(id);
+  const debits = lines.filter((line) => Math.round(Number(line.debit_ngn) || 0) > 0);
+  if (debits.length !== 1) return { ok: false, error: 'Journal must have one debit line.' };
+  db.prepare(`UPDATE gl_journal_lines SET account_id = ? WHERE id = ?`).run(debitAccountId, debits[0].id);
+  const memo = payload.memo != null ? String(payload.memo) : null;
+  if (memo) {
+    db.prepare(`UPDATE gl_journal_entries SET source_kind = ?, source_id = ?, memo = ? WHERE id = ?`).run(
+      sourceKind,
+      sourceId,
+      memo,
+      id
+    );
+  } else {
+    db.prepare(`UPDATE gl_journal_entries SET source_kind = ?, source_id = ? WHERE id = ?`).run(
+      sourceKind,
+      sourceId,
+      id
+    );
+  }
+  return { ok: true, journalId: id, debitAccountCode: debitCode };
+}
+
+/**
  * Full reversal of recorded customer-refund treasury payouts: undo GL accrual (2500/1000) for the net paid amount.
  * Idempotent per reversal event via source_id = refundId:full:<reversal movement id(s)>, so a
  * second pay -> reverse cycle on the same refund posts its own reversal instead of colliding

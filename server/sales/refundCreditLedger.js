@@ -8,6 +8,7 @@
  */
 import {
   REFUND_CREDIT_REVERSED_STATUS,
+  refundAbsorbsQuoteToQuoteOverpay,
   refundCreditOpenAmountFromStoredRefund,
   refundOverpayConsumedNgn,
 } from '../../shared/lib/refundCreditApply.js';
@@ -313,6 +314,7 @@ export function unlinkedReceiptCreditByRefundId(db, rows) {
     let left = overshoot;
     for (const sib of siblings) {
       if (left <= 0) break;
+      if (!refundAbsorbsQuoteToQuoteOverpay(sib)) continue;
       const open = openPayoutBeforeUnlinkedNgn(db, sib);
       const take = Math.min(left, open);
       if (take > 0) map.set(String(sib.refund_id), take);

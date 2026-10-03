@@ -5,6 +5,7 @@
  */
 import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
+  refundAbsorbsQuoteToQuoteOverpay,
   refundCreditOpenAmountFromStoredRefund,
   refundOverpayConsumedNgn,
 } from '../../shared/lib/refundCreditApply.js';
@@ -145,7 +146,7 @@ export function healRefundCreditAppliedFromApplicationsTx(db, refundId) {
       const cashOut = refundCashOutstandingNgn(db, { ...fresh, credit_applied_ngn: nextCredit });
       if (cashOut > 0) {
         const overshoot = unlinkedOverpayOvershootNgn(db, qref);
-        if (overshoot > 0) {
+        if (overshoot > 0 && refundAbsorbsQuoteToQuoteOverpay(fresh)) {
           const siblings = db
             .prepare(
               `SELECT * FROM customer_refunds
@@ -157,6 +158,7 @@ export function healRefundCreditAppliedFromApplicationsTx(db, refundId) {
           let left = overshoot;
           for (const sib of siblings) {
             if (left <= 0) break;
+            if (!refundAbsorbsQuoteToQuoteOverpay(sib)) continue;
             const sibCredit =
               String(sib.refund_id) === rid ? nextCredit : roundMoney(sib.credit_applied_ngn);
             const sibOpen = refundCashOutstandingNgn(db, { ...sib, credit_applied_ngn: sibCredit });

@@ -163,6 +163,35 @@ export function refundIsEligibleCreditSourceKind(refund) {
   return status === 'Pending' || status === 'Approved' || status === 'Partially paid';
 }
 
+/**
+ * A quote-to-quote overpayment move is customer credit, not refund money.
+ * Only an overpayment-only refund that can itself be transferred as credit may absorb it.
+ * Transport, installation, and staff splits never do (RF-KD-26-9586).
+ * @param {object} row refund row, stored or API-shaped
+ */
+export function refundAbsorbsQuoteToQuoteOverpay(row) {
+  let calculationLines = row?.calculationLines;
+  if (!Array.isArray(calculationLines)) {
+    const raw = row?.calculation_lines_json;
+    if (Array.isArray(raw)) calculationLines = raw;
+    else {
+      try {
+        const parsed = JSON.parse(String(raw || '[]'));
+        calculationLines = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        calculationLines = [];
+      }
+    }
+  }
+  return refundIsEligibleCreditSourceKind({
+    status: row?.status,
+    reasonCategory: row?.reasonCategory ?? row?.reason_category,
+    calculationLines,
+    splitDistributions: row?.splitDistributions ?? row?.split_distributions_json,
+    customerID: row?.customerID ?? row?.customerId ?? row?.customer_id,
+  });
+}
+
 /** True when a ledger/credit error is the quotation-has-open-refund payment lock. */
 export function isQuotationActiveRefundLockError(error) {
   const s = String(error || '');

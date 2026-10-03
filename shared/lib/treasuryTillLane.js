@@ -1,7 +1,9 @@
 /**
- * One till truth: Cash / POS / Bank from live `treasury_accounts.balance`
- * (the same column payouts debit). Do not reconstruct from truncated
- * bootstrap movements — shell mode omits the movement register.
+ * Till figure the cashier desk shows. Prefer `computedBalanceNgn`
+ * (opening_balance_ngn + every treasury movement), the same total the
+ * account statement reaches at the latest movement date. Fall back to the
+ * stored `balance` column only when the server did not attach the computed
+ * figure. Do not sum the truncated bootstrap movement list on the client.
  *
  * Frontend copies via `npm run sync:shared` → src/shared/lib/treasuryTillLane.js
  */
@@ -12,6 +14,10 @@ export const TILL_LANE = {
 };
 
 export function treasuryPayoutAvailableNgn(account) {
+  const computed = account?.computedBalanceNgn;
+  if (computed != null && String(computed).trim() !== '' && Number.isFinite(Number(computed))) {
+    return Math.round(Number(computed));
+  }
   return Math.round(Number(account?.balance) || 0);
 }
 

@@ -6,6 +6,8 @@ import {
 } from '../shared/lib/investigationRegister.js';
 import { assertInvestigationAllowsMutation } from './office/investigationLock.js';
 import { heldReceiptClearanceBlock } from './sales/receiptClearanceHold.js';
+import { receiptInvestigationClearanceBlock } from './sales/receiptInvestigationClearance.js';
+import { poTransportPayoutHoldBlock } from './procurement/poTransportPayoutHold.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import {
   validateSpecialLaneTreasuryPayout,
@@ -1924,6 +1926,10 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
 
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false, error: 'PO not found.' };
+  if (wantsTreasury) {
+    const haulageHold = poTransportPayoutHoldBlock(row);
+    if (haulageHold) return haulageHold;
+  }
   const statusNorm = normalizePoTransitStatus(row.status);
   const hasTransportAgent = Boolean(String(row.transport_agent_id || '').trim());
   const transportFeeNgn = Number(row.transport_amount_ngn) || 0;
@@ -2125,6 +2131,8 @@ function postPurchaseOrderTransportTx(db, poID, row, opts, treasuryAccountId, am
 export function postPurchaseOrderTransport(db, poID, opts = {}) {
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false, error: 'PO not found.' };
+  const haulageHold = poTransportPayoutHoldBlock(row);
+  if (haulageHold) return haulageHold;
   if (!PO_TRANSIT_PAYABLE_STATUSES.has(normalizePoTransitStatus(row.status))) {
     return {
       ok: false,
@@ -12858,6 +12866,8 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
   const finalized =
     row.finance_reconciliation_saved_at_iso != null && String(row.finance_reconciliation_saved_at_iso).trim() !== '';
   if (!finalized) {
+    const investigationBlock = receiptInvestigationClearanceBlock(db, row);
+    if (investigationBlock) return investigationBlock;
     const clearanceHold = heldReceiptClearanceBlock(id, actor);
     if (clearanceHold) return clearanceHold;
   }

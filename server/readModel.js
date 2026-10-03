@@ -27,6 +27,7 @@ import { approvedRefundsAwaitingPayment, applyRefundSplitRemainingTillPayable, s
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
 import { displayNamesByUserIds } from './sales/receiptActorDisplayNames.js';
+import { attachReceiptInvestigationFlags } from './sales/receiptInvestigationClearance.js';
 import {
   RECEIPT_PENDING_PO_STATUS_KEYS,
   mapPoLineFromDb,
@@ -1802,10 +1803,14 @@ export function mergeOpenAccountsPayableWithPurchaseOrders(apFromRegister, outst
 export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'purchase_orders', branchScope);
   const statusIn = PO_TRANSPORT_TREASURY_PAYABLE_STATUSES.map((s) => `'${s}'`).join(', ');
+  const holdSql = hasColumn(db, 'purchase_orders', 'transport_payout_hold')
+    ? 'transport_payout_hold, transport_payout_hold_reason,'
+    : '0 AS transport_payout_hold, \'\' AS transport_payout_hold_reason,';
   const rows = db
     .prepare(
       `SELECT po_id, supplier_name, branch_id, status, procurement_kind,
               transport_agent_id, transport_agent_name, transport_reference, transport_finance_advice,
+              ${holdSql}
               transport_amount_ngn, transport_advance_ngn, transport_paid_ngn
        FROM purchase_orders
        WHERE LOWER(TRIM(COALESCE(status, ''))) IN (${statusIn})
@@ -1837,6 +1842,8 @@ export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
       transportAdvanceNgn: Number(row.transport_advance_ngn) || 0,
       transportPaidNgn: paid,
       outstandingNgn,
+      transportPayoutHold: Number(row.transport_payout_hold) === 1,
+      transportPayoutHoldReason: String(row.transport_payout_hold_reason || '').trim(),
     });
   }
   return out;
@@ -2588,7 +2595,7 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
       row.finance_delivery_cleared_by_user_id,
     ])
   );
-  return rows.map((row) => {
+  const mapped = rows.map((row) => {
     const savedById = String(row.finance_reconciliation_saved_by_user_id || '').trim();
     const bankById = String(row.bank_confirmed_by_user_id || '').trim();
     const clearedById = String(row.finance_delivery_cleared_by_user_id || '').trim();
@@ -2621,6 +2628,7 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
       financeReconciliationSavedBy: savedBy || bankConfirmedBy || financeDeliveryClearedBy,
     };
   });
+  return attachReceiptInvestigationFlags(db, mapped);
 }
 
 /**

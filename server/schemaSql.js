@@ -209,6 +209,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   transport_paid_ngn INTEGER NOT NULL DEFAULT 0,
   transport_paid INTEGER NOT NULL DEFAULT 0,
   transport_paid_at_iso TEXT,
+  transport_payout_hold INTEGER NOT NULL DEFAULT 0,
+  transport_payout_hold_reason TEXT,
   supplier_paid_ngn INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (supplier_id) REFERENCES suppliers(supplier_id)
 );
@@ -714,6 +716,8 @@ CREATE TABLE IF NOT EXISTS customer_refunds (
   hold_set_at TEXT,
   hold_cleared_by TEXT,
   hold_cleared_at TEXT,
+  remainder_closed_ngn INTEGER NOT NULL DEFAULT 0,
+  remainder_closed_reason TEXT,
   FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
 

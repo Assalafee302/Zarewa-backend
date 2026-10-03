@@ -17,7 +17,10 @@ describe('treasuryTillLane', () => {
     );
   });
 
-  it('uses live balance as payout available (not opening + movements)', () => {
+  it('uses opening + movements when the server attached it, else the stored balance', () => {
+    expect(
+      treasuryPayoutAvailableNgn({ balance: 44_018_462, computedBalanceNgn: 4_897_010 })
+    ).toBe(4_897_010);
     expect(treasuryPayoutAvailableNgn({ balance: 12_500.4, openingBalanceNgn: 1 })).toBe(12500);
   });
 

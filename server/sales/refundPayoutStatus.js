@@ -41,6 +41,11 @@ function roundMoney(value) {
   return Math.round(n);
 }
 
+/** Naira closed without a payout (rounding or a cancelled unpaid remainder). */
+function refundRemainderClosedNgn(row) {
+  return Math.max(0, roundMoney(row?.remainder_closed_ngn ?? row?.remainderClosedNgn));
+}
+
 /** Sum of partner-wallet withdrawal allocations linked to this refund. */
 export function refundWalletWithdrawnNgn(db, refundId) {
   const rid = String(refundId || '').trim();
@@ -283,7 +288,7 @@ export function refundCashOutstandingNgn(db, row, creditAppliedByRefundId = null
   const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
   const creditApplied = refundCreditSettledNgn(db, row, creditAppliedByRefundId);
-  return Math.max(0, netCashDue - treasuryPaid - walletWithdrawn - creditApplied);
+  return Math.max(0, netCashDue - treasuryPaid - walletWithdrawn - creditApplied - refundRemainderClosedNgn(row));
 }
 
 /** Money that has already discharged the payee obligation (not company cut). */
@@ -322,8 +327,9 @@ export function resolveRefundStatus(db, row, creditAppliedByRefundId = null, res
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
   const netCashDue = refundNetCashDueNgn(db, row, approved, resolveOpts);
   const payeeSettled = refundPayeeSettledNgn(db, row, creditAppliedByRefundId);
+  const covered = payeeSettled + refundRemainderClosedNgn(row);
 
-  if (payeeCoversNetCashDue(payeeSettled, netCashDue)) {
+  if (payeeCoversNetCashDue(covered, netCashDue)) {
     return 'Paid';
   }
   if (payeeSettled > 0) {
@@ -446,7 +452,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   const walletWithdrawnNgn = refundId ? refundWalletWithdrawnNgn(db, refundId) : 0;
   const creditAppliedNgn = refundPayoutCreditNgn(db, row, opts);
   const payeeSettledNgn = Math.max(0, treasuryPaidNgn + walletWithdrawnNgn + creditAppliedNgn);
-  const cashOutstandingNgn = Math.max(0, netCashDueNgn - payeeSettledNgn);
+  const cashOutstandingNgn = Math.max(0, netCashDueNgn - payeeSettledNgn - refundRemainderClosedNgn(row));
   const heldUnclearedNgn = needsOpenTargets
     ? refundHeldNetCashDueNgn(db, row, approvedNgn, targetOpts)
     : 0;
@@ -506,7 +512,9 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   let publicLabel = lifecycleStatus || 'Pending';
   if (PAYOUT_LIFECYCLE_STATUSES.has(lifecycleStatus) || lifecycleStatus === 'Paid') {
     if (cashOutstandingNgn <= PAYMENT_OUTSTANDING_TOLERANCE_NGN && walletOpenNgn <= 0) {
-      publicLabel = 'Settled';
+      const closedNgn = refundRemainderClosedNgn(row);
+      const closedReason = String(row?.remainder_closed_reason || row?.remainderClosedReason || '').trim();
+      publicLabel = closedNgn > 0 && closedReason === 'rounding' ? 'Settled – rounding' : 'Settled';
     } else if (walletOpenNgn > 0 && tillPayableNgn > 0) {
       publicLabel = 'Ready — till & wallet';
     } else if (walletOpenNgn > 0 && tillPayableNgn <= 0) {

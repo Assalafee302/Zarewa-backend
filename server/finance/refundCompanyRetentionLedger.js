@@ -25,6 +25,67 @@ function roundMoney(value) {
   return Math.round(n);
 }
 
+export const RETENTION_WITHDRAWAL_FREEZE_KEY = 'refund_company_retention.withdrawal_freeze';
+
+function policyTableReady(db) {
+  try {
+    db.prepare(`SELECT 1 FROM org_policy_kv LIMIT 1`).get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Global on/off for retention withdrawals. Missing key means not frozen. */
+export function getRetentionWithdrawalFreeze(db) {
+  if (!policyTableReady(db)) return { enabled: false, reason: '' };
+  try {
+    const row = db
+      .prepare(`SELECT value_json FROM org_policy_kv WHERE policy_key = ?`)
+      .get(RETENTION_WITHDRAWAL_FREEZE_KEY);
+    if (!row?.value_json) return { enabled: false, reason: '' };
+    const parsed = JSON.parse(String(row.value_json));
+    return {
+      enabled: parsed?.enabled === true,
+      reason: String(parsed?.reason || '').trim(),
+    };
+  } catch {
+    return { enabled: false, reason: '' };
+  }
+}
+
+export function retentionWithdrawalFreezeBlock(db) {
+  const freeze = getRetentionWithdrawalFreeze(db);
+  if (!freeze.enabled) return null;
+  return {
+    ok: false,
+    code: 'RETENTION_WITHDRAWAL_FROZEN',
+    error: freeze.reason
+      ? `Company retention withdrawals are frozen: ${freeze.reason}`
+      : 'Company retention withdrawals are frozen.',
+  };
+}
+
+/** @returns {Map<string, string[]>} refund id → investigation case ids */
+export function investigationCaseIdsByRefundId(db) {
+  const map = new Map();
+  try {
+    const rows = db
+      .prepare(`SELECT entity_id, case_id FROM investigation_links WHERE entity_type = 'refund'`)
+      .all();
+    for (const row of rows) {
+      const id = String(row.entity_id || '').trim();
+      const caseId = String(row.case_id || '').trim();
+      if (!id || !caseId) continue;
+      if (!map.has(id)) map.set(id, []);
+      if (!map.get(id).includes(caseId)) map.get(id).push(caseId);
+    }
+  } catch {
+    /* investigation tables may be absent */
+  }
+  return map;
+}
+
 function trim(v) {
   return String(v ?? '').trim();
 }
@@ -169,12 +230,22 @@ export function companyRetentionAvailability({
   totalOpenNgn = 0,
   reservedNgn = 0,
   cooldownActive = false,
+  excludedNgn = 0,
+  withdrawalFrozen = false,
 } = {}) {
   const open = roundMoney(totalOpenNgn);
   const reserved = Math.max(0, roundMoney(reservedNgn));
-  const availableNgn = cooldownActive ? 0 : Math.max(0, open - reserved);
+  const excluded = Math.max(0, roundMoney(excludedNgn));
+  const base = Math.max(0, open - reserved - excluded);
+  const availableNgn = cooldownActive || withdrawalFrozen ? 0 : base;
   const heldNgn = Math.max(0, open - availableNgn);
-  return { availableNgn, heldNgn, reservedNgn: Math.min(reserved, open) };
+  return {
+    availableNgn,
+    heldNgn,
+    reservedNgn: Math.min(reserved, open),
+    excludedNgn: Math.min(excluded, open),
+    withdrawalFrozen: Boolean(withdrawalFrozen),
+  };
 }
 
 export function mapWithdrawalRow(r) {
@@ -278,6 +349,8 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL', opts = {}) {
     };
   }
   const { sql, args } = branchScopeSql('e', branchScope);
+  const casesByRefund = investigationCaseIdsByRefundId(db);
+  const freeze = getRetentionWithdrawalFreeze(db);
   const credits = db
     .prepare(
       `SELECT e.id, e.branch_id, e.amount_ngn, e.open_ngn, e.refund_id, e.source_id,
@@ -289,21 +362,26 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL', opts = {}) {
     .all(...args)
     .map((r) => {
       const openNgn = roundMoney(r.open_ngn);
+      const refundId = trim(r.refund_id || r.source_id);
+      const investigationCaseIds = casesByRefund.get(refundId) || [];
       return {
         id: r.id,
         branchId: trim(r.branch_id),
         amountNgn: roundMoney(r.amount_ngn),
         openNgn,
-        refundId: trim(r.refund_id || r.source_id),
+        refundId,
+        investigationCaseIds,
+        excludedFromWithdrawal: investigationCaseIds.length > 0,
         // Legacy column kept; credits are no longer aged — always available re: credit age.
         availableAfterIso: trim(r.available_after_iso) || null,
-        available: true,
+        available: investigationCaseIds.length === 0 && !freeze.enabled,
         note: trim(r.note),
         createdAtIso: trim(r.created_at_iso),
       };
     });
 
   const totalOpenNgn = credits.reduce((s, c) => s + c.openNgn, 0);
+  const excludedNgn = credits.reduce((s, c) => s + (c.excludedFromWithdrawal ? c.openNgn : 0), 0);
   const cooldown = companyRetentionWithdrawalCooldown(db, branchScope);
 
   const { sql: wSql, args: wArgs } = branchScopeSql('w', branchScope);
@@ -326,6 +404,8 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL', opts = {}) {
     totalOpenNgn,
     reservedNgn: reservedRaw,
     cooldownActive: cooldown.cooldownActive,
+    excludedNgn,
+    withdrawalFrozen: freeze.enabled,
   });
 
   const recentWithdrawals = db
@@ -354,6 +434,9 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL', opts = {}) {
     availableNgn: availability.availableNgn,
     heldNgn: availability.heldNgn,
     reservedNgn: availability.reservedNgn,
+    excludedNgn: availability.excludedNgn,
+    withdrawalFrozen: freeze.enabled,
+    withdrawalFreezeReason: freeze.reason,
     paidOutNgn: roundMoney(paidRow?.s),
     holdDays: cooldownDays,
     cooldownDays,

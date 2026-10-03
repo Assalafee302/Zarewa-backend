@@ -21,10 +21,28 @@ describe('actorMayCashApproveCompanyRetentionWithdrawal', () => {
   it('locks an open withdrawal until it is paid or cancelled', () => {
     expect(
       companyRetentionAvailability({ totalOpenNgn: 961_510, reservedNgn: 50_000, cooldownActive: false })
-    ).toEqual({ availableNgn: 911_510, heldNgn: 50_000, reservedNgn: 50_000 });
+    ).toMatchObject({ availableNgn: 911_510, heldNgn: 50_000, reservedNgn: 50_000 });
     expect(
       companyRetentionAvailability({ totalOpenNgn: 911_510, reservedNgn: 0, cooldownActive: false })
-    ).toEqual({ availableNgn: 911_510, heldNgn: 0, reservedNgn: 0 });
+    ).toMatchObject({ availableNgn: 911_510, heldNgn: 0, reservedNgn: 0 });
+  });
+
+  it('keeps investigation-linked retention out of available, and freezes the rest', () => {
+    expect(
+      companyRetentionAvailability({
+        totalOpenNgn: 1_000_000,
+        reservedNgn: 0,
+        excludedNgn: 40_000,
+        withdrawalFrozen: false,
+      })
+    ).toMatchObject({ availableNgn: 960_000, excludedNgn: 40_000, heldNgn: 40_000 });
+    expect(
+      companyRetentionAvailability({
+        totalOpenNgn: 1_000_000,
+        excludedNgn: 40_000,
+        withdrawalFrozen: true,
+      })
+    ).toMatchObject({ availableNgn: 0, withdrawalFrozen: true });
   });
 
   it('locks the whole balance during the post-payout cooldown', () => {

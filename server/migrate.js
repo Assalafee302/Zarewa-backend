@@ -7398,6 +7398,8 @@ function migrateRefundPayoutHold2026(db) {
     ['hold_set_at', 'TEXT'],
     ['hold_cleared_by', 'TEXT'],
     ['hold_cleared_at', 'TEXT'],
+    ['remainder_closed_ngn', 'INTEGER NOT NULL DEFAULT 0'],
+    ['remainder_closed_reason', 'TEXT'],
   ];
   for (const [name, typ] of add) {
     if (cols.has(name)) continue;

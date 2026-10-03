@@ -17,6 +17,7 @@ import {
   mapWithdrawalRow,
   nextRetentionEntryId,
   refundCompanyRetentionTablesReady,
+  retentionWithdrawalFreezeBlock,
 } from './refundCompanyRetentionLedger.js';
 
 export {
@@ -68,6 +69,8 @@ export function requestCompanyRetentionWithdrawal(db, payload = {}) {
   const amountNgn = roundMoney(payload.amountNgn);
   if (amountNgn <= 0) return { ok: false, error: 'Withdrawal amount must be positive.' };
 
+  const frozen = retentionWithdrawalFreezeBlock(db);
+  if (frozen) return frozen;
   const summary = getCompanyRetentionSummary(db, branchId);
   if (summary.pendingWithdrawals?.length) {
     return {
@@ -257,6 +260,9 @@ export function decideCompanyRetentionWithdrawal(db, payload = {}) {
     }
   } else if (status !== 'pending_bm') {
     return { ok: false, error: `Request is ${status}, not awaiting Branch Manager.` };
+  } else {
+    const frozen = retentionWithdrawalFreezeBlock(db);
+    if (frozen) return frozen;
   }
 
   const branchGate = assertEntityBranchForWorkspaceWrite(
@@ -398,6 +404,8 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
   if (!refundCompanyRetentionTablesReady(db)) {
     return { ok: false, error: 'Company retention tables are not ready.' };
   }
+  const frozen = retentionWithdrawalFreezeBlock(db);
+  if (frozen) return frozen;
   const id = trim(payload.withdrawalId || payload.id);
   if (!id) return { ok: false, error: 'withdrawalId is required.' };
   const row = db.prepare(`SELECT * FROM refund_company_retention_withdrawals WHERE id = ?`).get(id);

@@ -54,16 +54,19 @@ export function pingMysqlServer(cfg = mysqlConfigFromEnv()) {
 
 /**
  * @param {MysqlEnvConfig} cfg
- * @param {{ reset?: boolean }} opts reset = wipe all tables before bootstrap (for tests)
+ * @param {{ reset?: boolean, bootstrap?: boolean }} opts reset = wipe all tables before bootstrap (for tests).
+ *   bootstrap false opens the existing schema and does not run DDL.
  */
 export function createMysqlDatabase(cfg, opts = {}) {
   const syncFn = mysqlSyncFn();
   try {
     syncFn({ op: 'init', config: cfg });
-    if (opts.reset) {
-      syncFn({ op: 'resetAndBootstrap', ddl: SCHEMA_SQL });
-    } else {
-      syncFn({ op: 'bootstrapSchema', ddl: SCHEMA_SQL });
+    if (opts.bootstrap !== false) {
+      if (opts.reset) {
+        syncFn({ op: 'resetAndBootstrap', ddl: SCHEMA_SQL });
+      } else {
+        syncFn({ op: 'bootstrapSchema', ddl: SCHEMA_SQL });
+      }
     }
   } catch (e) {
     try {

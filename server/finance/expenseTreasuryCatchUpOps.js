@@ -260,12 +260,14 @@ export function resolveTillForExpense(db, exp, fallbackAccountId = 0) {
 }
 
 /**
- * Set live till/bank balances to opening + every cash-book line (fixes drift when a movement
- * existed but `treasury_accounts.balance` was not updated).
+ * Set stored `treasury_accounts.balance` to opening_balance_ngn + SUM(movements).
+ * That is the account-statement closing once every movement date is on or before today.
+ * Opening plugs (for example TM-3021/3022/3023) are movements and are included.
  * @param {import('better-sqlite3').Database} db
  * @param {string} branchId
+ * @param {{ actor?: object, note?: string }} [opts]
  */
-export function rebuildTreasuryBalancesFromLedger(db, branchId) {
+export function rebuildTreasuryBalancesFromLedger(db, branchId, opts = {}) {
   const bid = String(branchId || '').trim();
   if (!bid) return { ok: false, error: 'Select a workspace branch first.' };
   const hasOpening = hasColumn(db, 'treasury_accounts', 'opening_balance_ngn');
@@ -299,6 +301,25 @@ export function rebuildTreasuryBalancesFromLedger(db, branchId) {
       nextBalanceNgn: next,
       deltaNgn: roundMoney(next - prev),
     });
+  }
+  const note = String(opts.note || '').trim();
+  if (opts.actor && note) {
+    for (const row of rebuilt) {
+      if (!row.deltaNgn) continue;
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'treasury_account.balance_rebuilt',
+        entityKind: 'treasury_account',
+        entityId: String(row.treasuryAccountId),
+        note,
+        details: {
+          accountName: row.accountName,
+          previousBalanceNgn: row.previousBalanceNgn,
+          nextBalanceNgn: row.nextBalanceNgn,
+          deltaNgn: row.deltaNgn,
+        },
+      });
+    }
   }
   return { ok: true, branchId: bid, accounts: rebuilt };
 }

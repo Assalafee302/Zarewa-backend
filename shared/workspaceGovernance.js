@@ -46,6 +46,34 @@ export function isManagerClearanceAuthorityRoleKey(roleKey) {
 }
 
 /**
+ * Branch manager month-end stock register clearance, line clearance, adjustments, and approvals.
+ * Permitted for Branch Managers, Executives (MD/Chairman/CEO), and Administrators.
+ * @param {{ roleKey?: string; role_key?: string; permissions?: string[] } | null | undefined} actor
+ * @returns {boolean}
+ */
+export function userMayPerformStockRegisterBmActions(actor) {
+  if (!actor) return false;
+  const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (perms.includes('*')) return true;
+  const rk = String(actor.roleKey || actor.role_key || '').trim().toLowerCase();
+  return isManagerClearanceAuthorityRoleKey(rk);
+}
+
+/**
+ * Executive sign-off on month-end stock register.
+ * Permitted for Executives (MD/Chairman/CEO) and Administrators.
+ * @param {{ roleKey?: string; role_key?: string; permissions?: string[] } | null | undefined} actor
+ * @returns {boolean}
+ */
+export function userMayPerformStockRegisterExecutiveActions(actor) {
+  if (!actor) return false;
+  const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (perms.includes('*')) return true;
+  const rk = String(actor.roleKey || actor.role_key || '').trim().toLowerCase();
+  return rk === 'admin' || isExecutiveRoleKey(rk);
+}
+
+/**
  * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
  */
 export function userMayPerformManagerQuotationClearance(actor) {

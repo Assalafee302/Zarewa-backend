@@ -4351,7 +4351,11 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         }
       }
     }
-    await admin.post('/api/stock-register/line-clearance').send({ periodKey: '2026-04', lineClearance: clearance });
+    const lineRes = await admin
+      .post('/api/stock-register/line-clearance')
+      .send({ periodKey: '2026-04', lineClearance: clearance });
+    expect(lineRes.status).toBe(200);
+    expect(lineRes.body.ok).toBe(true);
 
     const bmRes = await admin.post('/api/stock-register/workflow').send({
       action: 'bm_approve',

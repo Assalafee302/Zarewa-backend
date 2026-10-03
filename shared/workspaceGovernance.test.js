@@ -12,6 +12,8 @@ import {
   userMayOverrideProductionAlignment,
   userMayBlockBranchRefunds,
   userMayBlockQuotationRefunds,
+  userMayPerformStockRegisterBmActions,
+  userMayPerformStockRegisterExecutiveActions,
 } from './workspaceGovernance.js';
 
 describe('workspaceGovernance', () => {
@@ -120,5 +122,29 @@ describe('workspaceGovernance', () => {
     expect(userMayBlockBranchRefunds({ roleKey: 'sales_manager' })).toBe(false);
     expect(userMayBlockQuotationRefunds({ roleKey: 'md' })).toBe(true);
     expect(userMayBlockQuotationRefunds({ roleKey: 'admin' })).toBe(true);
+  });
+
+  it('allows branch manager, executive, and admin to perform stock register BM actions', () => {
+    expect(userMayPerformStockRegisterBmActions({ roleKey: 'admin' })).toBe(true);
+    expect(userMayPerformStockRegisterBmActions({ permissions: ['*'] })).toBe(true);
+    expect(userMayPerformStockRegisterBmActions({ roleKey: 'sales_manager' })).toBe(true);
+    expect(userMayPerformStockRegisterBmActions({ roleKey: 'branch_manager' })).toBe(true);
+    expect(userMayPerformStockRegisterBmActions({ roleKey: 'md' })).toBe(true);
+    expect(userMayPerformStockRegisterBmActions({ roleKey: 'ceo' })).toBe(true);
+    expect(userMayPerformStockRegisterBmActions({ roleKey: 'chairman' })).toBe(true);
+    expect(userMayPerformStockRegisterBmActions({ roleKey: 'storekeeper' })).toBe(false);
+    expect(userMayPerformStockRegisterBmActions({ roleKey: 'sales_staff' })).toBe(false);
+    expect(userMayPerformStockRegisterBmActions(null)).toBe(false);
+  });
+
+  it('allows executive and admin to perform stock register executive actions', () => {
+    expect(userMayPerformStockRegisterExecutiveActions({ roleKey: 'admin' })).toBe(true);
+    expect(userMayPerformStockRegisterExecutiveActions({ permissions: ['*'] })).toBe(true);
+    expect(userMayPerformStockRegisterExecutiveActions({ roleKey: 'md' })).toBe(true);
+    expect(userMayPerformStockRegisterExecutiveActions({ roleKey: 'ceo' })).toBe(true);
+    expect(userMayPerformStockRegisterExecutiveActions({ roleKey: 'chairman' })).toBe(true);
+    expect(userMayPerformStockRegisterExecutiveActions({ roleKey: 'sales_manager' })).toBe(false);
+    expect(userMayPerformStockRegisterExecutiveActions({ roleKey: 'storekeeper' })).toBe(false);
+    expect(userMayPerformStockRegisterExecutiveActions(null)).toBe(false);
   });
 });

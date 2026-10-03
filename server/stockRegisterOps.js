@@ -35,7 +35,12 @@ import { listMasterData } from './masterData.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { getProductRowForWorkspace } from './productBranchInventory.js';
 import { listProductionJobCoils } from './productionTraceability.js';
-import { isBranchManagerApprovalAuthority, isExecutiveRoleKey } from '../shared/workspaceGovernance.js';
+import {
+  isBranchManagerApprovalAuthority,
+  isExecutiveRoleKey,
+  userMayPerformStockRegisterBmActions,
+  userMayPerformStockRegisterExecutiveActions,
+} from '../shared/workspaceGovernance.js';
 import { purchaseUnitPriceMapByProductPrefix, resolveBranchCoilCostPerKg } from './materialPricingOps.js';
 import { materialIncidentDamageSummaryForPeriod } from './materialIncidentOps.js';
 
@@ -333,9 +338,9 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
       store_checklist_json: JSON.stringify(checklist),
       count_cutoff_iso: String(body?.countCutoffIso || row.count_cutoff_iso || now).slice(0, 19),
     });
-  } else if (action === 'bm_return_to_store') {
-    if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
-      return { ok: false, error: 'Branch manager required to return register to store.' };
+  } else if (action === 'bm_return_to_store' || action === 'bm_return') {
+    if (!userMayPerformStockRegisterBmActions(actor)) {
+      return { ok: false, error: 'Only a branch manager, executive, or admin can return the register to the storekeeper.' };
     }
     upsertPeriodRow(db, bid, pk, row.period_end_iso, {
       status: 'printed',
@@ -344,8 +349,8 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
       bm_approved_by_name: null,
     });
   } else if (action === 'bm_approve') {
-    if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
-      return { ok: false, error: 'Branch manager approval required.' };
+    if (!userMayPerformStockRegisterBmActions(actor)) {
+      return { ok: false, error: 'Branch manager, executive, or admin approval required.' };
     }
     if (!['store_confirmed', 'bm_approved'].includes(String(row.status))) {
       return { ok: false, error: 'Store must confirm the physical count before branch manager approval.' };
@@ -392,8 +397,8 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
       procurement_costed_by_name: actorName(actor),
     });
   } else if (action === 'md_approve') {
-    if (!isExecutiveRoleKey(rk)) {
-      return { ok: false, error: 'Managing director approval required.' };
+    if (!userMayPerformStockRegisterExecutiveActions(actor)) {
+      return { ok: false, error: 'Managing director or admin approval required.' };
     }
     if (String(row.status) !== 'procurement_costed') {
       return { ok: false, error: 'Procurement must complete costing before MD approval.' };
@@ -682,10 +687,7 @@ export function reopenStockRegisterClosing(db, branchId, periodEndIso, actor, re
   const { periodKey, end } = periodBoundsFromEndDate(periodEndIso);
   if (!periodKey || !end) return { ok: false, error: 'Valid period end date required (YYYY-MM-DD).' };
 
-  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
-  const perms = Array.isArray(actor?.permissions) ? actor.permissions : [];
-  const mayReopen =
-    isExecutiveRoleKey(rk) || rk === 'admin' || rk === 'md' || perms.includes('*');
+  const mayReopen = userMayPerformStockRegisterExecutiveActions(actor);
   if (!mayReopen) {
     return { ok: false, error: 'Only MD or admin can reopen a locked stock register.' };
   }
@@ -744,9 +746,8 @@ export function patchCoilStockForm(db, coilNo, stockForm, opts = {}) {
 export function saveStockRegisterBmAdjustments(db, branchId, periodKey, adjustments, actor) {
   const bid = String(branchId || '').trim();
   const pk = String(periodKey || '').trim();
-  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
-  if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
-    return { ok: false, error: 'Only a branch manager or executive can save BM stock-register adjustments.' };
+  if (!userMayPerformStockRegisterBmActions(actor)) {
+    return { ok: false, error: 'Only a branch manager, executive, or admin can record stock-register adjustments.' };
   }
   const row = getPeriodRow(db, bid, pk);
   if (!row) return { ok: false, error: 'Register period not found. Print the register first.' };
@@ -769,9 +770,8 @@ export function saveStockRegisterBmAdjustments(db, branchId, periodKey, adjustme
 export function saveStockRegisterLineClearance(db, branchId, periodKey, lineClearance, actor) {
   const bid = String(branchId || '').trim();
   const pk = String(periodKey || '').trim();
-  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
-  if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
-    return { ok: false, error: 'Only a branch manager or executive can save stock-register line clearance.' };
+  if (!userMayPerformStockRegisterBmActions(actor)) {
+    return { ok: false, error: 'Only a branch manager, executive, or admin can save stock-register line clearance.' };
   }
   const row = getPeriodRow(db, bid, pk);
   if (!row) return { ok: false, error: 'Register period not found. Print the register first.' };

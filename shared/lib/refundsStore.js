@@ -344,7 +344,18 @@ export function normalizeRefund(r) {
       r.quotationRefundsBlockedAtISO ?? r.quotation_refunds_blocked_at_iso ?? null,
     quotationRefundsBlockedReason:
       r.quotationRefundsBlockedReason ?? r.quotation_refunds_blocked_reason ?? '',
+    payoutHold: r.payoutHold === true || r.payoutHold === 1 || r.payout_hold === 1 || r.payout_hold === '1',
+    payoutHoldReason: String(r.payoutHoldReason ?? r.payout_hold_reason ?? '').trim(),
   };
+}
+
+export function refundIsOnPayoutHold(r) {
+  return r?.payoutHold === true || r?.payoutHold === 1 || r?.payout_hold === 1 || r?.payout_hold === '1';
+}
+
+export function refundPayoutHoldReason(r) {
+  if (!refundIsOnPayoutHold(r)) return '';
+  return String(r?.payoutHoldReason ?? r?.payout_hold_reason ?? '').trim();
 }
 
 export function isRefundPayable(r) {

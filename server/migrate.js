@@ -1498,6 +1498,7 @@ function runMigrationsUnlocked(db) {
   migrateFinanceDeskPerformanceIndexes(db);
   migrateOpsDeskPerformanceIndexes(db);
   migrateRefundCreditApplications(db);
+  migrateRefundPayoutHold2026(db);
   migrateUserProfileAndPasswordReset(db);
   migrateRepairMustChangePasswordLoop2026(db);
   migrateLoginSecurityPhase12(db);
@@ -7362,6 +7363,51 @@ function migrateOpsDeskPerformanceIndexes(db) {
 }
 
 /** Cross-quote refund/overpay credit apply onto a new quotation (no bank clearance). */
+/** Manager payout hold. Release refund and credit-apply both refuse a held refund. */
+function migrateRefundPayoutHold2026(db) {
+  const cols = (() => {
+    try {
+      const rows = db
+        .prepare(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'customer_refunds'`
+        )
+        .all();
+      if (rows.length) {
+        return new Set(
+          rows
+            .map((c) => String(c.column_name ?? c.COLUMN_NAME ?? '').toLowerCase())
+            .filter(Boolean)
+        );
+      }
+    } catch {
+      /* sqlite */
+    }
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(customer_refunds)`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  })();
+  if (!cols.size) return;
+  const add = [
+    ['payout_hold', 'INTEGER NOT NULL DEFAULT 0'],
+    ['payout_hold_reason', 'TEXT'],
+    ['hold_set_by', 'TEXT'],
+    ['hold_set_at', 'TEXT'],
+    ['hold_cleared_by', 'TEXT'],
+    ['hold_cleared_at', 'TEXT'],
+  ];
+  for (const [name, typ] of add) {
+    if (cols.has(name)) continue;
+    try {
+      db.exec(`ALTER TABLE customer_refunds ADD COLUMN ${name} ${typ}`);
+    } catch {
+      /* already present */
+    }
+  }
+}
+
 function migrateRefundCreditApplications(db) {
   try {
     db.exec(`

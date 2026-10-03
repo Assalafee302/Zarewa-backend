@@ -12,6 +12,7 @@ import {
   userMayOverrideProductionAlignment,
   userMayBlockBranchRefunds,
   userMayBlockQuotationRefunds,
+  userMaySetRefundPayoutHold,
   userMayPerformStockRegisterBmActions,
   userMayPerformStockRegisterExecutiveActions,
 } from './workspaceGovernance.js';
@@ -21,6 +22,17 @@ describe('workspaceGovernance', () => {
     expect(isExecutiveRoleKey('md')).toBe(true);
     expect(isExecutiveRoleKey('CEO')).toBe(true);
     expect(isExecutiveRoleKey('sales_manager')).toBe(false);
+  });
+
+  it('lets a manager set a refund payout hold and refuses a cashier', () => {
+    expect(userMaySetRefundPayoutHold({ roleKey: 'sales_manager' })).toBe(true);
+    expect(userMaySetRefundPayoutHold({ roleKey: 'finance_manager' })).toBe(true);
+    expect(userMaySetRefundPayoutHold({ roleKey: 'md' })).toBe(true);
+    expect(userMaySetRefundPayoutHold({ roleKey: 'admin' })).toBe(true);
+    expect(userMaySetRefundPayoutHold({ permissions: ['*'] })).toBe(true);
+    expect(userMaySetRefundPayoutHold({ roleKey: 'cashier', permissions: ['finance.pay'] })).toBe(false);
+    expect(userMaySetRefundPayoutHold({ roleKey: 'sales_staff' })).toBe(false);
+    expect(userMaySetRefundPayoutHold(null)).toBe(false);
   });
 
   it('detects branch expense approver roles', () => {

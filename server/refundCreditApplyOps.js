@@ -5,6 +5,7 @@
  */
 
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import { refundPayoutHoldBlock, refundPayoutHoldError, refundRowOnPayoutHold } from './sales/refundPayoutHoldOps.js';
 import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
   REFUND_CREDIT_LEDGER_REF_PREFIX,
@@ -367,6 +368,19 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     if (!refundsByQuote.has(qref)) refundsByQuote.set(qref, []);
     refundsByQuote.get(qref).push(row);
 
+    if (refundRowOnPayoutHold(row)) {
+      unavailableSources.push({
+        id: `refund:${shape.refundID}`,
+        kind: 'refund',
+        refundId: shape.refundID,
+        sourceQuotationRef: qref,
+        availableNgn: open,
+        status: shape.status,
+        overpaymentOnly: overpayOnly,
+        reason: refundPayoutHoldError(row.payout_hold_reason),
+      });
+      continue;
+    }
     const kindEligible = refundIsEligibleCreditSourceKind(shape);
     const eligible = kindEligible && open > 0;
     if (
@@ -718,6 +732,11 @@ export function applyRefundCreditToQuotation(db, payload) {
     const set = new Set(wanted);
     sources = selectable.filter((s) => set.has(s.id));
     if (!sources.length) return { ok: false, error: 'Selected credit source(s) are not available.' };
+  }
+  for (const src of sources) {
+    if (src.kind !== 'refund' || !src.refundId) continue;
+    const block = refundPayoutHoldBlock(db, src.refundId);
+    if (block) return block;
   }
 
   const availableNgn = sources.reduce((s, x) => s + roundMoney(x.availableNgn), 0);

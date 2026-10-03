@@ -708,6 +708,12 @@ CREATE TABLE IF NOT EXISTS customer_refunds (
   credit_applied_ngn INTEGER NOT NULL DEFAULT 0,
   credit_applied_to_quotation_ref TEXT,
   credit_confirmation_status TEXT,
+  payout_hold INTEGER NOT NULL DEFAULT 0,
+  payout_hold_reason TEXT,
+  hold_set_by TEXT,
+  hold_set_at TEXT,
+  hold_cleared_by TEXT,
+  hold_cleared_at TEXT,
   FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
 

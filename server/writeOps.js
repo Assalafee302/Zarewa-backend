@@ -205,6 +205,7 @@ import {
   reverseRefundCreditApplication,
   listActiveRefundCreditApplicationsBySourceReceipt,
 } from './refundCreditApplyOps.js';
+import { refundPayoutHoldBlock } from './sales/refundPayoutHoldOps.js';
 import {
   assertRefundMoneyOutWithinApproved,
   buildRefundSettlementSummary,
@@ -9972,6 +9973,8 @@ export function payAccountsPayable(db, apId, payload) {
 }
 
 export function payRefundEntry(db, refundId, payload) {
+  const holdBlock = refundPayoutHoldBlock(db, refundId);
+  if (holdBlock) return holdBlock;
   repairRefundPayoutStateTx(db, refundId);
   let row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
   if (!row) return { ok: false, error: 'Refund not found.' };

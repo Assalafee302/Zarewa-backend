@@ -4,6 +4,7 @@
  */
 import { withdrawPartnerWallet, listPartnerWalletOpenCreditsForRefund } from '../finance/partnerWalletOps.js';
 import { payRefundEntry } from '../writeOps.js';
+import { refundPayoutHoldBlock } from './refundPayoutHoldOps.js';
 
 function roundMoney(v) {
   return Math.round(Number(v) || 0);
@@ -17,6 +18,8 @@ function roundMoney(v) {
 export function payRefundEntryWithOptionalWalletRelease(db, refundId, payload = {}) {
   const rid = String(refundId || '').trim();
   if (!rid) return { ok: false, error: 'Refund id required.' };
+  const holdBlock = refundPayoutHoldBlock(db, rid);
+  if (holdBlock) return holdBlock;
 
   const releaseWallet = Boolean(
     payload.releasePartnerWallet === true ||

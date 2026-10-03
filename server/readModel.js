@@ -4032,6 +4032,12 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     creditAppliedNgn,
     creditAppliedToQuotationRef: row.credit_applied_to_quotation_ref ?? '',
     creditConfirmationStatus: row.credit_confirmation_status ?? '',
+    payoutHold: row.payout_hold === true || row.payout_hold === 1 || row.payout_hold === '1',
+    payoutHoldReason: String(row.payout_hold_reason || '').trim(),
+    holdSetBy: row.hold_set_by ?? '',
+    holdSetAt: row.hold_set_at ?? '',
+    holdClearedBy: row.hold_cleared_by ?? '',
+    holdClearedAt: row.hold_cleared_at ?? '',
     quotationRefundsBlockedAtISO: row.quotation_refunds_blocked_at_iso ?? null,
     quotationRefundsBlockedReason: row.quotation_refunds_blocked_reason ?? '',
   };

@@ -95,6 +95,22 @@ export function userMayReleaseQuotationPaymentHold(actor) {
 }
 
 /**
+ * Set or lift a customer-refund payout hold.
+ * Branch manager, Head of Accounts, MD/CEO/chairman, and Administrator.
+ * Cashiers cannot.
+ * @param {{ roleKey?: string; role_key?: string; permissions?: string[] } | null | undefined} actor
+ */
+export function userMaySetRefundPayoutHold(actor) {
+  if (!actor) return false;
+  const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (perms.includes('*')) return true;
+  const rk = String(actor.roleKey || actor.role_key || '').trim().toLowerCase();
+  if (rk === 'cashier') return false;
+  if (rk === 'finance_manager') return true;
+  return isManagerClearanceAuthorityRoleKey(rk);
+}
+
+/**
  * Material receivable write-off (bad debt / settlement) — MD / admin only.
  * Round-off within tolerance remains Branch Manager via waive_balance.
  * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor

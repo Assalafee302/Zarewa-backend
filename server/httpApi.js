@@ -607,6 +607,7 @@ import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import * as write from './writeOps.js';
 import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWalletOps.js';
+import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
 import { recordBankCharge } from './bankChargeOps.js';
 import * as refundCreditApplyOps from './refundCreditApplyOps.js';
 import { healReceiptsNeedingOverpayConfirm } from './sales/receiptOverpayConfirmHeal.js';
@@ -10567,6 +10568,23 @@ export function registerHttpApi(app, db) {
         return res.status(200).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
       }
       res.status(400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/refunds/:refundId/payout-hold', requireAuth, (req, res) => {
+    try {
+      const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
+      if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
+      const r = setRefundPayoutHold(db, req.params.refundId, req.body || {}, req.user);
+      if (!r.ok && r.code === 'FORBIDDEN') {
+        return res.status(403).json(r);
+      }
+      if (!r.ok) return res.status(400).json(r);
+      const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
+      return res.status(200).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

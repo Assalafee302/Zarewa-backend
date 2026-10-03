@@ -56,6 +56,7 @@ const SAFE_TABLES = new Set([
   'material_incidents',
   'incident_registry',
   'ot_requests',
+  'investigation_cases',
 ]);
 
 function assertSafeTable(table) {

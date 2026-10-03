@@ -8,6 +8,7 @@
  * - Company-wide counts: payroll MD sign-off, bank reconciliation (when not branch-filterable).
  */
 import { BI_ENGINE_REV } from '../shared/lib/businessIntelligence.js';
+import { investigationDashboardTile } from './office/investigationOps.js';
 import {
   firstProductionDateISO,
   receivableDueOnQuotationFromEntries,
@@ -1839,6 +1840,7 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
     degraded: !biPack.ok,
     degradedReason: biPack.ok ? null : biPack.error || 'Business intelligence pack unavailable',
     mdOperationsMonth: mdPack.ok ? mdPack : null,
+    openInvestigations: investigationDashboardTile(db),
   };
 }
 

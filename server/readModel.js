@@ -5,6 +5,7 @@ import {
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { jobTotalOutputMetres } from '../shared/lib/jobOutputMetres.js';
+import { quotationUnderInvestigation } from './office/investigationLock.js';
 import {
   effectiveOutstandingNgn,
   PAYMENT_OUTSTANDING_TOLERANCE_NGN,
@@ -436,6 +437,7 @@ function mapQuotationRow(db, row, opts = {}) {
     totalNgn: row.total_ngn,
     paidNgn: row.paid_ngn,
     paymentStatus: row.payment_status,
+    investigationUnderReview: quotationUnderInvestigation(db, row.id).underInvestigation,
     status: row.status,
     approvalDate: row.approval_date,
     customerFeedback: row.customer_feedback,

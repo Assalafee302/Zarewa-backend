@@ -16,6 +16,7 @@ import { appendAuditLog } from '../controlOps.js';
 import { isPrivilegedTreasuryActor, lagosCalendarDay } from '../../shared/lib/isoTimestamp.js';
 import { branchDisplaysComputedBalance, getTreasuryPostingPolicy } from './treasuryPostingPolicy.js';
 import { resetTreasuryColumnCache, tableColumnSet } from './treasuryMovementWrite.js';
+import { investigationSuspenseTieOut } from '../office/investigationOps.js';
 
 const MOVEMENT_COLUMNS = [
   ['created_at_iso', 'TEXT'],
@@ -322,6 +323,7 @@ export function computeTreasuryBalanceIntegrity(db, branchId = 'ALL') {
           note: 'This event removed cash-book lines without recording which account they were on.',
         }
       : null,
+    investigationSuspense: investigationSuspenseTieOut(db),
   };
 }
 

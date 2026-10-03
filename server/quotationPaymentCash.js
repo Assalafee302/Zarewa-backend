@@ -2,6 +2,7 @@
  * Per-quotation cash totals for refunds (receipt cash + deposit applied; no double-counted overpay).
  */
 import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
+import { receiptCountsTowardQuotationPaidSql } from '../shared/lib/investigationRegister.js';
 import { SETTLED_QUOTE_OVERPAY_NOTE_SNIP } from '../shared/lib/customerPaymentIntegrity.js';
 import { quotationActualCashInNgn } from '../shared/lib/refundQuotationMoney.js';
 import {
@@ -165,7 +166,7 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
       `SELECT id, amount_ngn, ledger_entry_id, finance_reconciliation_saved_at_iso, bank_received_amount_ngn, status
        FROM sales_receipts
        WHERE quotation_ref = ?
-         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))`
+         AND ${receiptCountsTowardQuotationPaidSql('status')}`
     )
     .all(ref);
 
@@ -217,7 +218,7 @@ export function quotationPaymentCashBreakdownByRef(db, quotationRefs) {
                 bank_received_amount_ngn, status
          FROM sales_receipts
          WHERE quotation_ref IN (${placeholders})
-           AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))`
+           AND ${receiptCountsTowardQuotationPaidSql('status')}`
       )
       .all(...chunk);
     for (const row of receiptRows) {

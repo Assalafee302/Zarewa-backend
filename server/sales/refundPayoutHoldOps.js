@@ -66,6 +66,18 @@ export function setRefundPayoutHold(db, refundId, payload, actor) {
 
   if (hold) {
     if (!reason) return { ok: false, error: 'A hold reason is required.' };
+    if (payload?.reasonOnly && refundRowOnPayoutHold(row)) {
+      db.prepare(`UPDATE customer_refunds SET payout_hold_reason = ? WHERE refund_id = ?`).run(reason, id);
+      appendAuditLog(db, {
+        actor,
+        action: 'refund.payout_hold.reason',
+        entityKind: 'refund',
+        entityId: id,
+        note: 'Sept 2026 bank reconciliation – investigation',
+        details: { refundId: id, previousReason: String(row.payout_hold_reason || '').trim(), reason },
+      });
+      return { ok: true, refundId: id, payoutHold: true, payoutHoldReason: reason };
+    }
     db.prepare(
       `UPDATE customer_refunds
        SET payout_hold = 1,

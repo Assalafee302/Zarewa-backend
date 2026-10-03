@@ -2764,4 +2764,44 @@ CREATE INDEX IF NOT EXISTS idx_ppca_branch_status
   ON purchase_payment_cashier_acks(branch_id, status, paid_at_iso);
 CREATE INDEX IF NOT EXISTS idx_ppca_source
   ON purchase_payment_cashier_acks(source_kind, source_id);
+
+CREATE TABLE IF NOT EXISTS investigation_cases (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  case_type TEXT NOT NULL,
+  amount_at_risk_ngn INTEGER NOT NULL DEFAULT 0,
+  amount_recovered_ngn INTEGER NOT NULL DEFAULT 0,
+  suspended_ngn INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'open',
+  owner_user_id TEXT,
+  review_date TEXT,
+  opened_by_user_id TEXT,
+  opened_at_iso TEXT NOT NULL,
+  closed_by_user_id TEXT,
+  closed_at_iso TEXT,
+  decision_note TEXT,
+  branch_id TEXT,
+  customer_id TEXT,
+  staff_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_inv_cases_status ON investigation_cases(status, review_date);
+CREATE INDEX IF NOT EXISTS idx_inv_cases_owner ON investigation_cases(owner_user_id);
+CREATE TABLE IF NOT EXISTS investigation_links (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  role TEXT,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_inv_links_case ON investigation_links(case_id);
+CREATE INDEX IF NOT EXISTS idx_inv_links_entity ON investigation_links(entity_type, entity_id);
+CREATE TABLE IF NOT EXISTS investigation_notes (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  author TEXT,
+  at_iso TEXT NOT NULL,
+  text MEDIUMTEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_inv_notes_case ON investigation_notes(case_id, at_iso);
 `;

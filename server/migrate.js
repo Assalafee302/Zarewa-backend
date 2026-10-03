@@ -23,6 +23,7 @@ import { closeHangingCoilShortReceipts } from './procurement/coilShortReceiptClo
 import {
   ensureTreasuryBalanceIntegritySchema,
 } from './finance/treasuryBalanceIntegrityOps.js';
+import { ensureInvestigationSchema } from './office/investigationOps.js';
 import { seedTreasuryPostingPolicyIfAbsent } from './finance/treasuryPostingPolicy.js';
 import {
   SCHEMA_MIGRATION_FTS,
@@ -7691,6 +7692,11 @@ function migrateHrRoleComplianceLifecycle2026(db) {
 
   try {
     ensureTreasuryBalanceIntegritySchema(db);
+  } catch {
+    /* host dialect */
+  }
+  try {
+    ensureInvestigationSchema(db);
   } catch {
     /* host dialect */
   }

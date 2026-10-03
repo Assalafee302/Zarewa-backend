@@ -1,4 +1,9 @@
 import { mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
+import {
+  receiptCountsTowardQuotationPaidSql,
+  userMayManageInvestigations,
+} from '../shared/lib/investigationRegister.js';
+import { assertInvestigationAllowsMutation } from './office/investigationLock.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import {
   validateSpecialLaneTreasuryPayout,
@@ -649,7 +654,7 @@ export function syncQuotationPaidFromReceipts(db, quotationId) {
          END
        ), 0) AS s FROM sales_receipts
        WHERE quotation_ref = ?
-         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))`
+         AND ${receiptCountsTowardQuotationPaidSql('status')}`
     )
     .get(qid);
   const receiptSum = Math.round(Number(r1?.s) || 0);
@@ -9975,6 +9980,11 @@ export function payAccountsPayable(db, apId, payload) {
 export function payRefundEntry(db, refundId, payload) {
   const holdBlock = refundPayoutHoldBlock(db, refundId);
   if (holdBlock) return holdBlock;
+  const refundLock = assertInvestigationAllowsMutation(db, 'refund', refundId);
+  const investigationCaseId = String(payload.investigationCaseId || '').trim();
+  if (!refundLock.ok && !(investigationCaseId && userMayManageInvestigations(payload.actor))) {
+    return refundLock;
+  }
   repairRefundPayoutStateTx(db, refundId);
   let row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
   if (!row) return { ok: false, error: 'Refund not found.' };
@@ -10286,8 +10296,8 @@ export function payRefundEntry(db, refundId, payload) {
           type: 'REFUND_PAYOUT',
           postedAtISO: payoutLinePostedAtISO({ dateISO: paidAtISO }, defaultPaidDay, normalizeIsoTimestamp),
           counterpartyKind: 'CUSTOMER',
-          counterpartyId: fresh.customer_id,
-          counterpartyName: fresh.customer_name,
+          counterpartyId: payload.payeeCustomerId || fresh.customer_id,
+          counterpartyName: payload.payeeName || fresh.customer_name,
           sourceKind: 'REFUND',
           sourceId: refundId,
           reference: payload.reference || refundId,
@@ -11487,6 +11497,8 @@ export function deleteSalesReceiptIfAllowed(db, receiptOrLedgerId) {
     )
     .get(token, token);
   if (!row) return { ok: false, error: 'Receipt not found.' };
+  const deleteLock = assertInvestigationAllowsMutation(db, 'receipt', row.id);
+  if (!deleteLock.ok) return deleteLock;
 
   const receiptId = String(row.id || '').trim();
   const ledgerId = String(row.ledger_entry_id || '').trim();
@@ -11715,6 +11727,10 @@ export function ledgerReceiptTreasuryMovementCorrectTx(
   if (row.reverses_movement_id) {
     return { ok: false, error: 'Cannot correct a reversal or adjustment line.' };
   }
+  const receiptLineLock = assertInvestigationAllowsMutation(db, 'treasury_movement', row.id);
+  if (!receiptLineLock.ok) return receiptLineLock;
+  const receiptSourceLock = assertInvestigationAllowsMutation(db, 'receipt', row.source_id);
+  if (!receiptSourceLock.ok) return receiptSourceLock;
   if (String(row.type) !== 'RECEIPT_IN' || String(row.source_kind) !== 'LEDGER_RECEIPT') {
     return { ok: false, error: 'Only customer receipt inflow lines (ledger payment splits) can be corrected here.' };
   }
@@ -11932,6 +11948,12 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
       error:
         'Only expense, purchase (supplier/AP/transport), payment-request, or customer-refund payout lines can be corrected here.',
     };
+  }
+  const outflowLock = assertInvestigationAllowsMutation(db, 'treasury_movement', row.id);
+  if (!outflowLock.ok) return outflowLock;
+  if (String(row.source_kind) === 'REFUND' && row.source_id) {
+    const refundOutLock = assertInvestigationAllowsMutation(db, 'refund', row.source_id);
+    if (!refundOutLock.ok) return refundOutLock;
   }
 
   const gate = assertExpenseOutflowBranchGate(
@@ -12812,6 +12834,8 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
 
   const row = db.prepare(`SELECT * FROM sales_receipts WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Receipt not found.' };
+  const settlementLock = assertInvestigationAllowsMutation(db, 'receipt', row.id);
+  if (!settlementLock.ok) return settlementLock;
 
   const finalized =
     row.finance_reconciliation_saved_at_iso != null && String(row.finance_reconciliation_saved_at_iso).trim() !== '';
@@ -13184,6 +13208,8 @@ export function unconfirmSalesReceiptFinanceClearance(db, receiptId, actor = nul
 
   const row = db.prepare(`SELECT * FROM sales_receipts WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Receipt not found.' };
+  const unconfirmLock = assertInvestigationAllowsMutation(db, 'receipt', row.id);
+  if (!unconfirmLock.ok) return unconfirmLock;
   if (String(row.status || '').toLowerCase() === 'reversed') {
     return { ok: false, error: 'Reversed receipts cannot be unconfirmed.' };
   }

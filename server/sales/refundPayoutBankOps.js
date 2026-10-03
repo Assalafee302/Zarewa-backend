@@ -179,3 +179,51 @@ export function clearSavedCustomerPayoutAccountNoTx(db, accountNo, actor = null,
   }
   return { ok: true, changed };
 }
+
+/**
+ * Record who the bank paid on the refund row only.
+ * Does not write customers.bank_account_no, so a cleared profile default stays cleared.
+ * Does not change approved or paid amounts.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} refundId
+ * @param {{ payeeName: string, payeeBankName?: string, payeeAccountNo?: string, note?: string }} payload
+ * @param {object | null} actor
+ */
+export function recordRefundBankPayeeTx(db, refundId, payload = {}, actor = null) {
+  const id = trim(refundId);
+  const payeeName = trim(payload.payeeName);
+  if (!id) return { ok: false, error: 'Refund id is required.' };
+  if (!payeeName) return { ok: false, error: 'Payee name is required.' };
+  const row = db.prepare(`SELECT refund_id, payee_name, payment_note FROM customer_refunds WHERE refund_id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Refund not found.' };
+  const payeeBankName = trim(payload.payeeBankName);
+  const payeeAccountNo = trim(payload.payeeAccountNo).replace(/\s+/g, '');
+  const extra = trim(payload.note);
+  const prev = trim(row.payment_note);
+  const paymentNote = extra && !prev.includes(extra) ? (prev ? `${prev} ${extra}` : extra) : prev;
+  if (payeeAccountNo && hasColumn(db, 'customer_refunds', 'payee_account_no')) {
+    db.prepare(
+      `UPDATE customer_refunds
+       SET payee_name = ?, payee_bank_name = ?, payee_account_no = ?, payment_note = ?
+       WHERE refund_id = ?`
+    ).run(payeeName, payeeBankName || null, payeeAccountNo, paymentNote || null, id);
+  } else {
+    db.prepare(
+      `UPDATE customer_refunds SET payee_name = ?, payee_bank_name = ?, payment_note = ? WHERE refund_id = ?`
+    ).run(payeeName, payeeBankName || null, paymentNote || null, id);
+  }
+  appendAuditLog(db, {
+    actor,
+    action: 'refund.bank_payee.record',
+    entityKind: 'refund',
+    entityId: id,
+    note: extra || 'Recorded the bank payee on the refund.',
+    details: {
+      refundId: id,
+      previousPayeeName: trim(row.payee_name),
+      payeeName,
+      payeeBankName,
+    },
+  });
+  return { ok: true, refundId: id, payeeName, payeeBankName };
+}

@@ -12104,11 +12104,7 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
   if (t === 'REFUND_PAYOUT' && sk === 'REFUND' && oldAmt !== nextAmt) {
     const rid = String(row.source_id || '').trim();
     if (rid) {
-      const refundRow = db
-        .prepare(
-          `SELECT paid_amount_ngn, approved_amount_ngn, amount_ngn FROM customer_refunds WHERE refund_id = ?`
-        )
-        .get(rid);
+      const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(rid);
       if (refundRow) {
         const prevPaid = roundMoney(refundRow.paid_amount_ngn);
         const approvedAmt = roundMoney(
@@ -12116,11 +12112,18 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
         );
         let nextPaid = roundMoney(prevPaid + (oldAmt - nextAmt));
         if (nextPaid < 0) nextPaid = 0;
-        const nextStatus =
+        const resolved =
           nextPaid <= 0
             ? 'Approved'
             : nextPaid >= approvedAmt && approvedAmt > 0
               ? resolveRefundStatus(db, { ...refundRow, paid_amount_ngn: nextPaid, approved_amount_ngn: approvedAmt })
+              : 'Partially paid';
+        const nextStatus = ['Approved', 'Partially paid', 'Paid'].includes(resolved)
+          ? resolved
+          : nextPaid <= 0
+            ? 'Approved'
+            : nextPaid >= approvedAmt
+              ? 'Paid'
               : 'Partially paid';
         db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = ?, status = ? WHERE refund_id = ?`).run(
           nextPaid,

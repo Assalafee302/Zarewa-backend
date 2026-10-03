@@ -7,6 +7,7 @@
  */
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
+import { appendAuditLog } from '../controlOps.js';
 import { payeeAccountMatchesHrStaffBank } from './refundPayoutStaffBankMatch.js';
 
 function trim(v) {
@@ -127,4 +128,54 @@ export function saveRefundPayoutBank(db, payload = {}) {
   }
 
   return { ok: false, error: 'kind must be customer or associated_staff.' };
+}
+
+function digitsOnly(value) {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+/**
+ * Remove one account number from customer profiles where it is the saved payout default.
+ * Refund rows, payment requests, and staff payroll banks are left as history.
+ * Bank name and account name stay; only bank_account_no is cleared, and only when it
+ * matches this number exactly.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} accountNo
+ * @param {object | null} actor
+ * @param {string} [note]
+ */
+export function clearSavedCustomerPayoutAccountNoTx(db, accountNo, actor = null, note = '') {
+  const target = digitsOnly(accountNo);
+  if (target.length < 6) return { ok: false, error: 'Account number is required.' };
+  const rows = db
+    .prepare(
+      `SELECT customer_id, name, branch_id, bank_account_name, bank_name, bank_account_no
+       FROM customers
+       WHERE bank_account_no IS NOT NULL AND TRIM(bank_account_no) <> ''`
+    )
+    .all();
+  const matches = rows.filter((row) => digitsOnly(row.bank_account_no) === target);
+  const changed = [];
+  for (const row of matches) {
+    db.prepare(`UPDATE customers SET bank_account_no = NULL WHERE customer_id = ?`).run(row.customer_id);
+    changed.push({
+      customerId: String(row.customer_id),
+      name: String(row.name || '').trim(),
+      branchId: String(row.branch_id || '').trim(),
+      bankName: String(row.bank_name || '').trim(),
+      bankAccountName: String(row.bank_account_name || '').trim(),
+    });
+    appendAuditLog(db, {
+      actor,
+      action: 'customer.payout_account.clear',
+      entityKind: 'customer',
+      entityId: String(row.customer_id),
+      note: String(note || '').trim() || 'Cleared saved payout account from the customer profile.',
+      details: {
+        customerId: String(row.customer_id),
+        bankName: String(row.bank_name || '').trim(),
+      },
+    });
+  }
+  return { ok: true, changed };
 }

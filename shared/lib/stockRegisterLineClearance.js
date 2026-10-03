@@ -129,21 +129,45 @@ export function computeClearanceProgress(register, clearanceRaw) {
   let adjusted = 0;
   let query = 0;
   let finishedPending = 0;
+  const byKind = {
+    coil: { total: 0, pending: 0, cleared: 0, adjusted: 0, query: 0 },
+    finished: { total: 0, pending: 0, cleared: 0, adjusted: 0, query: 0 },
+    stone: { total: 0, pending: 0, cleared: 0, adjusted: 0, query: 0 },
+    accessory: { total: 0, pending: 0, cleared: 0, adjusted: 0, query: 0 },
+    intransit: { total: 0, pending: 0, cleared: 0, adjusted: 0, query: 0 },
+  };
+
   for (const item of items) {
+    const k = item.kind && byKind[item.kind] ? item.kind : 'coil';
+    byKind[k].total += 1;
     const entry = getLineEntry(clearance, item.key);
     if (item.kind === 'finished') {
-      if (entry.finishedConfirm === FINISHED_CONFIRM.PENDING) finishedPending += 1;
-      else if (entry.status === LINE_STATUS.PENDING && entry.finishedConfirm === FINISHED_CONFIRM.CONFIRMED) {
+      if (entry.finishedConfirm === FINISHED_CONFIRM.PENDING) {
+        finishedPending += 1;
+        byKind.finished.pending += 1;
+      } else if (entry.finishedConfirm === FINISHED_CONFIRM.CONFIRMED) {
         cleared += 1;
-      } else if (entry.finishedConfirm === FINISHED_CONFIRM.CONFIRMED) cleared += 1;
-      else if (entry.finishedConfirm === FINISHED_CONFIRM.DISPUTED) query += 1;
+        byKind.finished.cleared += 1;
+      } else if (entry.finishedConfirm === FINISHED_CONFIRM.DISPUTED) {
+        query += 1;
+        byKind.finished.query += 1;
+      }
       continue;
     }
     const st = entry.status || LINE_STATUS.PENDING;
-    if (st === LINE_STATUS.PENDING) pending += 1;
-    else if (st === LINE_STATUS.CLEARED) cleared += 1;
-    else if (st === LINE_STATUS.ADJUSTED) adjusted += 1;
-    else if (st === LINE_STATUS.QUERY) query += 1;
+    if (st === LINE_STATUS.PENDING) {
+      pending += 1;
+      byKind[k].pending += 1;
+    } else if (st === LINE_STATUS.CLEARED) {
+      cleared += 1;
+      byKind[k].cleared += 1;
+    } else if (st === LINE_STATUS.ADJUSTED) {
+      adjusted += 1;
+      byKind[k].adjusted += 1;
+    } else if (st === LINE_STATUS.QUERY) {
+      query += 1;
+      byKind[k].query += 1;
+    }
   }
   return {
     total: items.length,
@@ -152,6 +176,7 @@ export function computeClearanceProgress(register, clearanceRaw) {
     adjusted,
     query,
     finishedPending,
+    byKind,
     complete: pending === 0 && finishedPending === 0 && query === 0,
   };
 }
@@ -297,4 +322,56 @@ export function buildAdjustmentsFromClearance(register, clearanceRaw) {
     }
   }
   return { coilLines, stoneLines, accessoryLines };
+}
+
+/**
+ * Return clearance updated so all unreviewed lines matching system records are set to CLEARED.
+ * Lines already having custom adjustments, queries, notes, or MEX IDs are preserved untouched.
+ */
+export function bulkClearUnchangedLines(register, clearanceRaw) {
+  const clearance = parseLineClearance(clearanceRaw);
+  const items = enumerateRegisterLineKeys(register);
+  let updatedCount = 0;
+  let skippedCount = 0;
+
+  for (const item of items) {
+    const entry = getLineEntry(clearance, item.key);
+    if (item.kind === 'finished') {
+      if (entry.finishedConfirm === FINISHED_CONFIRM.PENDING && !entry.note && !entry.materialExceptionId) {
+        clearance.lines[item.key] = {
+          ...entry,
+          finishedConfirm: FINISHED_CONFIRM.CONFIRMED,
+          status: LINE_STATUS.CLEARED,
+          updatedAtISO: new Date().toISOString(),
+        };
+        updatedCount += 1;
+      } else {
+        skippedCount += 1;
+      }
+      continue;
+    }
+
+    const currentStatus = entry.status || LINE_STATUS.PENDING;
+    if (
+      currentStatus === LINE_STATUS.PENDING &&
+      !entry.note &&
+      !entry.queryReason &&
+      !entry.materialExceptionId
+    ) {
+      const sys = systemClosingForItem(item);
+      clearance.lines[item.key] = {
+        ...entry,
+        status: LINE_STATUS.CLEARED,
+        ...(item.kind === 'coil' && sys != null ? { countedClosingKg: sys } : {}),
+        ...(item.kind === 'stone' && sys != null ? { countedRemainingM: sys } : {}),
+        ...(item.kind === 'accessory' && sys != null ? { countedBalance: sys } : {}),
+        updatedAtISO: new Date().toISOString(),
+      };
+      updatedCount += 1;
+    } else {
+      skippedCount += 1;
+    }
+  }
+
+  return { clearance, updatedCount, skippedCount };
 }

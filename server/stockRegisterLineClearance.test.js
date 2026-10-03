@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAdjustmentsFromClearance,
+  bulkClearUnchangedLines,
   computeClearanceProgress,
   LINE_STATUS,
   FINISHED_CONFIRM,
@@ -88,9 +89,29 @@ describe('stockRegisterLineClearance', () => {
     expect(adj.coilLines[0].closingKg).toBe(480);
   });
 
-  it('computeClearanceProgress counts pending', () => {
+  it('computeClearanceProgress counts pending and breaks down by kind', () => {
     const p = computeClearanceProgress(register, { lines: {} });
     expect(p.total).toBe(2);
     expect(p.pending).toBeGreaterThan(0);
+    expect(p.byKind.coil.total).toBe(1);
+    expect(p.byKind.finished.total).toBe(1);
+  });
+
+  it('bulkClearUnchangedLines marks pending lines as cleared and preserves customized lines', () => {
+    let c = { lines: {} };
+    // Custom adjustment with MEX on C-1001
+    c = setLineEntry(c, lineKeyCoil('C-1001'), {
+      status: LINE_STATUS.ADJUSTED,
+      countedClosingKg: 480,
+      materialExceptionId: 'MEX-1',
+      note: 'physical count differs',
+    });
+    // Finished coil C-1002 is still pending
+    const { clearance, updatedCount, skippedCount } = bulkClearUnchangedLines(register, c);
+    expect(updatedCount).toBe(1); // C-1002 updated
+    expect(skippedCount).toBe(1); // C-1001 preserved
+    const p = computeClearanceProgress(register, clearance);
+    expect(p.byKind.finished.cleared).toBe(1);
+    expect(p.byKind.coil.adjusted).toBe(1);
   });
 });

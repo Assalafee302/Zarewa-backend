@@ -357,6 +357,12 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
     const approveCheck = validateBmApprove(reg, clearanceRaw, row.bm_adjustments_json);
     if (!approveCheck.ok) return approveCheck;
     const adjFromClearance = buildAdjustmentsFromClearance(reg, clearanceRaw);
+    const notesToSave =
+      body?.countNotes != null
+        ? String(body.countNotes)
+        : body?.managerNotes != null
+          ? String(body.managerNotes)
+          : null;
     upsertPeriodRow(db, bid, pk, row.period_end_iso, {
       status: 'bm_approved',
       bm_approved_at_iso: now,
@@ -364,6 +370,7 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
       bm_approved_by_name: actorName(actor),
       bm_adjustments_json: JSON.stringify(adjFromClearance),
       line_clearance_json: typeof clearanceRaw === 'string' ? clearanceRaw : JSON.stringify(clearanceRaw || parseLineClearance(row.line_clearance_json)),
+      ...(notesToSave != null ? { count_notes: notesToSave } : {}),
     });
     syncCoilProductionBlocks(db, reg, clearanceRaw, actor);
   } else if (action === 'procurement_lock' || action === 'procurement_cost') {

@@ -189,6 +189,44 @@ export function creditCompanyRetentionFromRefundTx(db, {
   };
 }
 
+/**
+ * Raise an untouched company-cut credit to a higher open balance.
+ * Refuses if any of that credit was already withdrawn (open is below the original amount).
+ * Does not insert a second credit for the same refund.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ refundId: string, nextAmountNgn: number, note?: string }} payload
+ */
+export function raiseOpenCompanyRetentionCreditTx(db, { refundId, nextAmountNgn, note } = {}) {
+  if (!refundCompanyRetentionTablesReady(db)) {
+    return { ok: false, error: 'Company retention ledger is not ready.' };
+  }
+  const rid = trim(refundId);
+  const next = roundMoney(nextAmountNgn);
+  if (!rid || next <= 0) return { ok: false, error: 'Refund and a positive retention amount are required.' };
+  const row = db
+    .prepare(
+      `SELECT id, amount_ngn, open_ngn, note FROM refund_company_retention_entries
+       WHERE entry_type = 'credit' AND source_kind = 'REFUND_COMPANY_CUT' AND source_id = ?`
+    )
+    .get(rid);
+  if (!row?.id) return { ok: false, error: 'No company-cut credit on this refund.' };
+  const current = roundMoney(row.amount_ngn);
+  const open = roundMoney(row.open_ngn);
+  if (open !== current) {
+    return { ok: false, error: 'Company cut on this refund was already withdrawn, so it cannot be raised.' };
+  }
+  if (next < current) {
+    return { ok: false, error: 'This path only raises an open company cut. It does not reduce one.' };
+  }
+  if (next === current) return { ok: true, noOp: true, id: row.id, amountNgn: current, previousAmountNgn: current };
+  const extra = String(note || '').trim();
+  const merged = extra ? `${String(row.note || '').trim()} — ${extra}`.trim() : String(row.note || '');
+  db.prepare(
+    `UPDATE refund_company_retention_entries SET amount_ngn = ?, open_ngn = ?, note = ? WHERE id = ?`
+  ).run(next, next, merged || null, row.id);
+  return { ok: true, id: row.id, previousAmountNgn: current, amountNgn: next };
+}
+
 export function voidCompanyRetentionForRefundTx(db, refundId) {
   if (!refundCompanyRetentionTablesReady(db)) return { ok: true, skipped: true };
   const rid = trim(refundId);

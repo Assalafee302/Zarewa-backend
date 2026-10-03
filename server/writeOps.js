@@ -21,6 +21,8 @@ import {
   tryPostBankDepositAllocationUnwindGl,
   tryPostCustomerRefundPayoutGlTx,
   tryPostCustomerRefundPayoutReversalGlTx,
+  amendBalancedJournalAmountTx,
+  postBalancedJournalTx,
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
   tryPostCoilScrapJournal,
@@ -33,6 +35,7 @@ import {
   tryPostSupplierPaymentGlTx,
 } from './accountingPostingOps.js';
 import { syncFixedAssetFromCapexExpense } from './fixedAssetAutomationOps.js';
+import { isGlPostingEnabled } from './finance/glPostingGate.js';
 import {
   ensureStoneFlatsheetProduct,
   ensureStoneProduct,
@@ -11955,11 +11958,13 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
         'Only expense, purchase (supplier/AP/transport), payment-request, or customer-refund payout lines can be corrected here.',
     };
   }
+  const investigationCaseId = String(payload?.investigationCaseId || '').trim();
+  const investigationBypass = Boolean(investigationCaseId && userMayManageInvestigations(actor));
   const outflowLock = assertInvestigationAllowsMutation(db, 'treasury_movement', row.id);
-  if (!outflowLock.ok) return outflowLock;
+  if (!outflowLock.ok && !investigationBypass) return outflowLock;
   if (String(row.source_kind) === 'REFUND' && row.source_id) {
     const refundOutLock = assertInvestigationAllowsMutation(db, 'refund', row.source_id);
-    if (!refundOutLock.ok) return refundOutLock;
+    if (!refundOutLock.ok && !investigationBypass) return refundOutLock;
   }
 
   const gate = assertExpenseOutflowBranchGate(
@@ -12014,9 +12019,16 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
   }
 
   const noteExtra = payload?.note != null ? String(payload.note).trim() : '';
+  const replaceNote = payload?.replaceNote === true;
   const baseNote = row.note != null ? String(row.note) : '';
+  const nextParty =
+    payload?.counterpartyName != null && String(payload.counterpartyName).trim() !== ''
+      ? String(payload.counterpartyName).trim()
+      : String(row.counterparty_name || '');
+  const partyChanged = nextParty !== String(row.counterparty_name || '');
   const mergedNote = (() => {
     if (noteExtra) {
+      if (replaceNote) return noteExtra;
       if (baseNote && baseNote.includes(noteExtra)) return baseNote;
       if (baseNote) return `${baseNote} — Finance correction: ${noteExtra}`;
       return `Finance correction: ${noteExtra}`;
@@ -12025,11 +12037,15 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
   })();
 
   const sameNumbers = nextAcc === oldAcc && nextAmt === oldAmt && nextPosted === String(row.posted_at_iso || '');
-  if (sameNumbers && !noteExtra) {
+  if (sameNumbers && !noteExtra && !partyChanged) {
     return { ok: true, noOp: true };
   }
-  if (sameNumbers && noteExtra) {
-    db.prepare(`UPDATE treasury_movements SET note = ? WHERE id = ?`).run(mergedNote, mid);
+  if (sameNumbers) {
+    db.prepare(`UPDATE treasury_movements SET note = ?, counterparty_name = ? WHERE id = ?`).run(
+      mergedNote || null,
+      nextParty || null,
+      mid
+    );
     appendAuditLog(db, {
       actor,
       action: 'treasury.expense_out_correct',
@@ -12060,9 +12076,10 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
       treasury_account_id = ?,
       amount_ngn = ?,
       posted_at_iso = ?,
-      note = ?
+      note = ?,
+      counterparty_name = ?
      WHERE id = ?`
-  ).run(nextAcc, nextAmt, nextPosted, mergedNote || null, mid);
+  ).run(nextAcc, nextAmt, nextPosted, mergedNote || null, nextParty || null, mid);
 
   // A date-only correction must move the payment's paid day and its journal with the till line.
   // Amount and account are unchanged here, so the stored till balance is not adjusted.
@@ -12100,15 +12117,40 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
         let nextPaid = roundMoney(prevPaid + (oldAmt - nextAmt));
         if (nextPaid < 0) nextPaid = 0;
         const nextStatus =
-          approvedAmt > 0 && nextPaid >= approvedAmt
-            ? resolveRefundStatus(db, { ...refundRow, paid_amount_ngn: nextPaid, approved_amount_ngn: approvedAmt })
-            : 'Approved';
+          nextPaid <= 0
+            ? 'Approved'
+            : nextPaid >= approvedAmt && approvedAmt > 0
+              ? resolveRefundStatus(db, { ...refundRow, paid_amount_ngn: nextPaid, approved_amount_ngn: approvedAmt })
+              : 'Partially paid';
         db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = ?, status = ? WHERE refund_id = ?`).run(
           nextPaid,
           nextStatus,
           rid
         );
       }
+    }
+  }
+
+  let refundJournal = null;
+  if (
+    t === 'REFUND_PAYOUT' &&
+    sk === 'REFUND' &&
+    row.source_id &&
+    (oldAmt !== nextAmt || nextPosted !== String(row.posted_at_iso || '')) &&
+    tableExists(db, 'gl_journal_entries')
+  ) {
+    const je = db
+      .prepare(
+        `SELECT id FROM gl_journal_entries
+         WHERE source_kind = 'CUSTOMER_REFUND_PAYOUT_GL' AND source_id = ?`
+      )
+      .get(`${String(row.source_id)}:paid:${mid}`);
+    if (je?.id) {
+      refundJournal = amendBalancedJournalAmountTx(db, je.id, {
+        nextAmountNgn: Math.abs(nextAmt),
+        entryDateISO: String(nextPosted).slice(0, 10),
+      });
+      if (!refundJournal.ok) return refundJournal;
     }
   }
 
@@ -12131,7 +12173,7 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
     },
   });
 
-  return { ok: true };
+  return { ok: true, refundJournal };
 }
 
 /**
@@ -12154,6 +12196,135 @@ export function patchExpenseOutflowTreasuryMovement(db, movementId, payload, act
     return { ok: false, error: String(e.message || e) };
   }
   return result;
+}
+
+/**
+ * Split one outflow into two lines that sum to the same amount.
+ * The original line keeps its id and is reduced; the remainder is a new line
+ * on the same account, source, and batch. The original journal follows the
+ * reduced line and a second journal is posted for the new line on the same
+ * GL accounts, so the cash total does not change.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {{
+ *   firstAmountNgn: number,
+ *   secondAmountNgn: number,
+ *   firstCounterpartyName?: string,
+ *   secondCounterpartyName?: string,
+ *   firstNote?: string,
+ *   secondNote?: string,
+ *   firstPostedAtISO?: string,
+ *   secondPostedAtISO: string,
+ *   paymentNote?: string,
+ *   workspaceBranchId?: string,
+ *   workspaceViewAll?: boolean,
+ * }} payload
+ * @param {object | null} actor
+ */
+export function splitExpenseOutflowTreasuryMovementTx(db, movementId, payload, actor = null) {
+  const mid = String(movementId || '').trim();
+  const row = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(mid);
+  if (!row) return { ok: false, error: 'Treasury movement not found.' };
+  const oldAmt = roundMoney(row.amount_ngn);
+  const firstRaw = roundMoney(payload?.firstAmountNgn);
+  const secondRaw = roundMoney(payload?.secondAmountNgn);
+  const first = firstRaw > 0 ? -Math.abs(firstRaw) : firstRaw;
+  const second = secondRaw > 0 ? -Math.abs(secondRaw) : secondRaw;
+  if (first >= 0 || second >= 0) return { ok: false, error: 'Both split lines must stay outflows.' };
+  if (roundMoney(first + second) !== oldAmt) {
+    return { ok: false, error: 'The two lines must add up to the original outflow.' };
+  }
+  const corrected = expenseOutflowTreasuryMovementCorrectTx(
+    db,
+    mid,
+    {
+      amountNgn: first,
+      postedAtISO: payload?.firstPostedAtISO || row.posted_at_iso,
+      note: payload?.firstNote,
+      replaceNote: true,
+      counterpartyName: payload?.firstCounterpartyName,
+      workspaceBranchId: payload?.workspaceBranchId,
+      workspaceViewAll: payload?.workspaceViewAll,
+      investigationCaseId: payload?.investigationCaseId,
+    },
+    actor
+  );
+  if (!corrected.ok) return corrected;
+  const inserted = insertTreasuryMovementTx(db, {
+    type: row.type,
+    treasuryAccountId: Number(row.treasury_account_id),
+    amountNgn: second,
+    postedAtISO: payload.secondPostedAtISO,
+    reference: row.reference ?? null,
+    counterpartyKind: row.counterparty_kind,
+    counterpartyId: row.counterparty_id,
+    counterpartyName: payload?.secondCounterpartyName || row.counterparty_name,
+    sourceKind: row.source_kind,
+    sourceId: row.source_id,
+    note: payload?.secondNote || null,
+    createdBy: actorName(actor),
+    batchId: row.batch_id,
+    workspaceBranchId: payload?.workspaceBranchId,
+    actor,
+  });
+  let gl = { skipped: true };
+  if (tableExists(db, 'gl_journal_entries') && isGlPostingEnabled()) {
+    const je = db
+      .prepare(`SELECT id, source_kind, memo, branch_id FROM gl_journal_entries WHERE source_id = ?`)
+      .get(mid);
+    if (je?.id) {
+      const amended = amendBalancedJournalAmountTx(db, je.id, {
+        nextAmountNgn: Math.abs(first),
+        entryDateISO: String(payload?.firstPostedAtISO || row.posted_at_iso).slice(0, 10),
+      });
+      if (!amended.ok) return amended;
+      const lines = db
+        .prepare(
+          `SELECT ga.code AS code, jl.debit_ngn, jl.credit_ngn
+           FROM gl_journal_lines jl
+           JOIN gl_accounts ga ON ga.id = jl.account_id
+           WHERE jl.journal_id = ?`
+        )
+        .all(je.id);
+      const debit = lines.find((line) => Number(line.debit_ngn) > 0);
+      const credit = lines.find((line) => Number(line.credit_ngn) > 0);
+      if (!debit || !credit) return { ok: false, error: 'Original journal is not a two-sided entry.' };
+      const posted = postBalancedJournalTx(db, {
+        entryDateISO: String(payload.secondPostedAtISO || '').slice(0, 10),
+        memo: payload?.secondNote || je.memo,
+        sourceKind: je.source_kind,
+        sourceId: inserted.id,
+        branchId: je.branch_id,
+        createdByUserId: actor?.id || null,
+        lines: [
+          { accountCode: debit.code, debitNgn: Math.abs(second), memo: String(row.source_id || '') },
+          { accountCode: credit.code, creditNgn: Math.abs(second), memo: inserted.id },
+        ],
+      });
+      if (!posted.ok || posted.skipped) {
+        return { ok: false, error: posted.error || 'The second line could not be posted to the ledger.' };
+      }
+      gl = {
+        originalJournalId: je.id,
+        originalNowNgn: Math.abs(first),
+        newJournalId: posted.journalId || null,
+        secondAmountNgn: Math.abs(second),
+        skipped: Boolean(posted.skipped),
+      };
+    }
+  }
+  const paymentNote = String(payload?.paymentNote || '').trim();
+  if (paymentNote && String(row.source_kind) === 'PAYMENT_REQUEST' && row.source_id) {
+    const pr = db.prepare(`SELECT payment_note FROM payment_requests WHERE request_id = ?`).get(row.source_id);
+    const prev = String(pr?.payment_note || '').trim();
+    if (!prev.includes(paymentNote)) {
+      db.prepare(`UPDATE payment_requests SET payment_note = ? WHERE request_id = ?`).run(
+        prev ? `${prev} — ${paymentNote}` : paymentNote,
+        row.source_id
+      );
+    }
+  }
+  return { ok: true, firstMovementId: mid, secondMovementId: inserted.id, gl };
 }
 
 function receiptLedgerEntryIdFromRow(rec) {

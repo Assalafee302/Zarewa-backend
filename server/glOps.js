@@ -847,6 +847,67 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
 }
 
 /**
+ * Change the amount and date of an existing two-line balanced journal.
+ * Both sides must currently equal the same total. Used when a posted cash line
+ * is corrected and its journal has to follow, without posting a second entry.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} journalId
+ * @param {{ nextAmountNgn: number, entryDateISO?: string }} payload
+ */
+export function amendBalancedJournalAmountTx(db, journalId, payload = {}) {
+  const id = String(journalId || '').trim();
+  const amt = Math.round(Number(payload.nextAmountNgn) || 0);
+  if (!id) return { ok: false, error: 'Journal id is required.' };
+  if (amt <= 0) return { ok: false, error: 'Journal amount must stay positive.' };
+  const je = db
+    .prepare(`SELECT id, entry_date_iso FROM gl_journal_entries WHERE id = ?`)
+    .get(id);
+  if (!je) return { ok: false, error: 'Journal not found.' };
+  const date = String(payload.entryDateISO || je.entry_date_iso || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid journal date.' };
+  try {
+    assertPeriodOpen(db, date, 'GL journal date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  const lines = db
+    .prepare(`SELECT id, debit_ngn, credit_ngn FROM gl_journal_lines WHERE journal_id = ? ORDER BY id`)
+    .all(id);
+  if (lines.length !== 2) return { ok: false, error: 'Journal must stay a two-line entry.' };
+  const deb = lines.reduce((sum, line) => sum + Math.round(Number(line.debit_ngn) || 0), 0);
+  const cred = lines.reduce((sum, line) => sum + Math.round(Number(line.credit_ngn) || 0), 0);
+  if (deb !== cred || deb <= 0) return { ok: false, error: 'Journal is not a single balanced amount.' };
+  for (const line of lines) {
+    const debit = Math.round(Number(line.debit_ngn) || 0);
+    const credit = Math.round(Number(line.credit_ngn) || 0);
+    if ((debit > 0 && credit > 0) || (debit === 0 && credit === 0)) {
+      return { ok: false, error: 'Each journal line must be debit or credit only.' };
+    }
+    if ((debit || credit) !== deb) {
+      return { ok: false, error: 'Journal line does not match the entry total.' };
+    }
+    if (debit > 0) {
+      db.prepare(`UPDATE gl_journal_lines SET debit_ngn = ?, credit_ngn = 0 WHERE id = ?`).run(amt, line.id);
+    } else {
+      db.prepare(`UPDATE gl_journal_lines SET credit_ngn = ?, debit_ngn = 0 WHERE id = ?`).run(amt, line.id);
+    }
+  }
+  db.prepare(`UPDATE gl_journal_entries SET entry_date_iso = ?, period_key = ? WHERE id = ?`).run(
+    date,
+    date.slice(0, 7),
+    id
+  );
+  return {
+    ok: true,
+    journalId: id,
+    previousAmountNgn: deb,
+    nextAmountNgn: amt,
+    previousDate: je.entry_date_iso,
+    entryDateISO: date,
+  };
+}
+
+/**
  * Full reversal of recorded customer-refund treasury payouts: undo GL accrual (2500/1000) for the net paid amount.
  * Idempotent per reversal event via source_id = refundId:full:<reversal movement id(s)>, so a
  * second pay -> reverse cycle on the same refund posts its own reversal instead of colliding

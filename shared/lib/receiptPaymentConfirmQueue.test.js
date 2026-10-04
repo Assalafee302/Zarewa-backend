@@ -40,6 +40,25 @@ describe('receiptPaymentConfirmQueue', () => {
     expect(paymentConfirmQueueRowAmountNgn(rows[1])).toBe(34_000);
   });
 
+  it('drops a split that already has a reversal', () => {
+    const withReversal = [
+      ...movements,
+      {
+        id: 'TM-REV',
+        type: 'RECEIPT_REVERSAL_OUT',
+        sourceKind: 'LEDGER_RECEIPT',
+        sourceId: 'LE-1',
+        amountNgn: -34_000,
+        reversesMovementId: 'TM-B',
+      },
+    ];
+    const pending = unconfirmedTreasurySplitsForReceipt(receipt, withReversal);
+    expect(pending.map((s) => s.movementId)).toEqual(['TM-A']);
+    const rows = expandReceiptsToPaymentConfirmQueue([receipt], withReversal);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]._splitAmountNgn).toBe(61_200);
+  });
+
   it('skips confirmed splits', () => {
     const withOneDone = movements.map((m) =>
       m.id === 'TM-A' ? { ...m, financeConfirmedAtISO: '2026-08-28T12:00:00.000Z' } : m

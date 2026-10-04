@@ -8,6 +8,7 @@ import { assertInvestigationAllowsMutation } from './office/investigationLock.js
 import { heldReceiptClearanceBlock } from './sales/receiptClearanceHold.js';
 import { receiptInvestigationClearanceBlock } from './sales/receiptInvestigationClearance.js';
 import { poTransportPayoutHoldBlock } from './procurement/poTransportPayoutHold.js';
+import { poTransportDuplicatePaymentBlock } from './procurement/poTransportDuplicateGuard.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import {
   validateSpecialLaneTreasuryPayout,
@@ -1969,6 +1970,12 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
 
       if (wantsTreasury) {
         assertPeriodOpen(db, dateISO, 'Transport payment date');
+        const duplicateHaulage = poTransportDuplicatePaymentBlock(db, poID, {
+          payeeName: normalizedTransportAgentName,
+          amountNgn,
+          postedDay: dateISO,
+        });
+        if (duplicateHaulage) throw new Error(duplicateHaulage.error);
         const reference = String(opts.reference ?? transportReference ?? poID).trim() || poID;
         const noteBase = String(opts.note ?? '').trim() || 'PO transport / haulage';
         const noteMerged = [noteBase, transportFinanceAdvice].filter(Boolean).join(' · ') || noteBase;
@@ -2092,6 +2099,16 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
  */
 function postPurchaseOrderTransportTx(db, poID, row, opts, treasuryAccountId, amountNgn, dateISO, reference, note) {
   assertPeriodOpen(db, dateISO, 'Transport payment date');
+  const duplicateHaulage = poTransportDuplicatePaymentBlock(db, poID, {
+    payeeName: String(row.transport_agent_name || '').trim(),
+    amountNgn,
+    postedDay: dateISO,
+  });
+  if (duplicateHaulage) {
+    const err = new Error(duplicateHaulage.error);
+    err.code = duplicateHaulage.code;
+    throw err;
+  }
   const m = insertTreasuryMovementTx(db, {
     type: 'TRANSPORT_PAYMENT',
     treasuryAccountId,
@@ -8581,6 +8598,101 @@ function removeTreasuryLineTx(db, line) {
   db.prepare(`DELETE FROM treasury_movements WHERE id = ?`).run(line.id);
 }
 
+/**
+ * Remove one haulage treasury line that has no bank debit.
+ * Stored balance moves by the opposite of the line. Any journal posted for that
+ * line is reversed on the journal's own date; the cash line itself is deleted.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {{ poId: string, expectedAmountNgn: number, treasuryAccountId: number, postedDay: string }} payload
+ * @param {object | null} [actor]
+ */
+export function deleteUnbackedPoHaulagePaymentTx(db, movementId, payload, actor = null) {
+  const mid = String(movementId || '').trim();
+  const poId = String(payload?.poId || '').trim();
+  const expected = roundMoney(payload?.expectedAmountNgn);
+  const accountId = Number(payload?.treasuryAccountId);
+  const postedDay = String(payload?.postedDay || '').trim().slice(0, 10);
+  if (!mid || !poId || expected <= 0 || !accountId || !/^\d{4}-\d{2}-\d{2}$/.test(postedDay)) {
+    return { ok: false, error: 'Movement, PO, amount, account, and day are required.' };
+  }
+  const row = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(mid);
+  if (!row) return { ok: false, error: 'Treasury movement not found.' };
+  if (String(row.type) !== 'TRANSPORT_PAYMENT' || String(row.source_kind) !== 'PURCHASE_ORDER') {
+    return { ok: false, error: 'Only a PO haulage payment can be removed here.' };
+  }
+  if (String(row.source_id) !== poId) return { ok: false, error: 'This line is not on that PO.' };
+  if (roundMoney(row.amount_ngn) !== -expected) {
+    return { ok: false, error: `Line is ₦${roundMoney(row.amount_ngn).toLocaleString('en-NG')}, not −₦${expected.toLocaleString('en-NG')}.` };
+  }
+  if (Number(row.treasury_account_id) !== accountId) return { ok: false, error: 'Treasury account does not match.' };
+  if (String(row.posted_at_iso || '').slice(0, 10) !== postedDay) return { ok: false, error: 'Posting day does not match.' };
+  const lock = assertInvestigationAllowsMutation(db, 'treasury_movement', mid);
+  if (!lock.ok) return lock;
+
+  const journals = db
+    .prepare(
+      `SELECT j.id, j.entry_date_iso, j.branch_id, a.code, l.debit_ngn, l.credit_ngn
+       FROM gl_journal_entries j
+       JOIN gl_journal_lines l ON l.journal_id = j.id
+       JOIN gl_accounts a ON a.id = l.account_id
+       WHERE j.source_id = ?
+       ORDER BY j.id, l.id`
+    )
+    .all(mid);
+
+  try {
+    db.transaction(() => {
+      /** @type {string[]} */
+      const reversalIds = [];
+      const byJournal = new Map();
+      for (const line of journals) {
+        if (!byJournal.has(line.id)) byJournal.set(line.id, []);
+        byJournal.get(line.id).push(line);
+      }
+      for (const [journalId, lines] of byJournal) {
+        const entryDate = String(lines[0].entry_date_iso || postedDay).slice(0, 10);
+        const posted = postBalancedJournalTx(db, {
+          entryDateISO: entryDate,
+          memo: `Reverse haulage ${mid} — no bank debit. Sept 2026 bank reconciliation – investigation`,
+          sourceKind: 'HAULAGE_PAYMENT_REVERSAL_GL',
+          sourceId: mid,
+          branchId: lines[0].branch_id || null,
+          createdByUserId: actor?.id ?? null,
+          lines: lines.map((line) => ({
+            accountCode: line.code,
+            debitNgn: Math.round(Number(line.credit_ngn) || 0),
+            creditNgn: Math.round(Number(line.debit_ngn) || 0),
+            memo: mid,
+          })),
+        });
+        if (!posted.ok) throw new Error(posted.error || `Could not reverse journal ${journalId}.`);
+        reversalIds.push(String(posted.journalId || ''));
+      }
+      adjustTreasuryBalanceTx(db, accountId, -roundMoney(row.amount_ngn));
+      db.prepare(`DELETE FROM treasury_movements WHERE id = ?`).run(mid);
+      appendAuditLog(db, {
+        actor,
+        action: 'treasury.haulage_duplicate_deleted',
+        entityKind: 'treasury_movement',
+        entityId: mid,
+        note: 'Sept 2026 bank reconciliation – investigation',
+        details: {
+          movementId: mid,
+          poId,
+          amountNgn: roundMoney(row.amount_ngn),
+          postedAtISO: row.posted_at_iso,
+          treasuryAccountId: accountId,
+          journalsReversed: reversalIds.filter(Boolean),
+        },
+      });
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  return { ok: true, movementId: mid, journalsReversed: journals.length > 0 };
+}
+
 function payoutRecordMustStay(db, requestId) {
   if (findApprovedHrLoanForPaymentRequest(db, requestId)) return true;
   if (tableExists(db, 'chairman_office_loans')) {
@@ -11852,6 +11964,85 @@ export function ledgerReceiptTreasuryMovementCorrectTx(
 }
 
 /**
+ * Take one receipt inflow that has no bank money down to ₦0.
+ * The row, account, and posting day stay. Stored balance moves by minus the old amount.
+ * A line that already has a reversal is left alone — that pair is already net zero,
+ * and zeroing it again would take the money off a second time.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {{ receiptId: string, expectedAmountNgn: number, note: string }} payload
+ * @param {object | null} [actor]
+ */
+export function zeroUnbackedReceiptInflowTx(db, movementId, payload, actor = null) {
+  const mid = String(movementId || '').trim();
+  const receiptId = String(payload?.receiptId || '').trim();
+  const expected = roundMoney(payload?.expectedAmountNgn);
+  const noteExtra = String(payload?.note || '').trim();
+  if (!mid || !receiptId) return { ok: false, error: 'Movement and receipt are required.' };
+  if (expected <= 0) return { ok: false, error: 'Expected amount must be the positive line being removed.' };
+  if (!noteExtra) return { ok: false, error: 'A note is required when a receipt line is zeroed.' };
+
+  const row = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(mid);
+  if (!row) return { ok: false, error: 'Treasury movement not found.' };
+  if (row.reverses_movement_id) return { ok: false, error: 'Cannot zero a reversal line.' };
+  if (String(row.type) !== 'RECEIPT_IN' || String(row.source_kind) !== 'LEDGER_RECEIPT') {
+    return { ok: false, error: 'Only a customer receipt inflow can be zeroed here.' };
+  }
+  const belongs = assertLedgerReceiptMovementBelongsToReceipt(db, row, receiptId);
+  if (!belongs.ok) return belongs;
+  const lineLock = assertInvestigationAllowsMutation(db, 'treasury_movement', row.id);
+  if (!lineLock.ok) return lineLock;
+  const receiptLock = assertInvestigationAllowsMutation(db, 'receipt', receiptId);
+  if (!receiptLock.ok) return receiptLock;
+
+  const reversed = db.prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = ?`).get(mid);
+  if (reversed) {
+    return {
+      ok: false,
+      error: `This line is already reversed by ${reversed.id}. Zeroing it would remove the money twice.`,
+    };
+  }
+
+  const oldAmt = roundMoney(row.amount_ngn);
+  if (oldAmt !== expected) {
+    return { ok: false, error: `Line is ₦${oldAmt.toLocaleString('en-NG')}, not the expected amount.` };
+  }
+  const day = String(row.posted_at_iso || '').slice(0, 10);
+  try {
+    assertPeriodOpen(db, day, 'Receipt line date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  const baseNote = row.note != null ? String(row.note).trim() : '';
+  const mergedNote = baseNote && !baseNote.includes(noteExtra) ? `${baseNote} — ${noteExtra}` : noteExtra || baseNote;
+
+  try {
+    db.transaction(() => {
+      adjustTreasuryBalanceTx(db, Number(row.treasury_account_id), -oldAmt);
+      db.prepare(`UPDATE treasury_movements SET amount_ngn = 0, note = ? WHERE id = ?`).run(mergedNote, mid);
+      appendAuditLog(db, {
+        actor,
+        action: 'treasury.receipt_inflow_zero',
+        entityKind: 'treasury_movement',
+        entityId: mid,
+        note: `Unbacked receipt inflow zeroed · ${receiptId} · ₦${oldAmt.toLocaleString('en-NG')}`,
+        details: {
+          movementId: mid,
+          receiptId,
+          oldAmountNgn: oldAmt,
+          treasuryAccountId: Number(row.treasury_account_id),
+          postedAtISO: row.posted_at_iso,
+        },
+      });
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  return { ok: true, movementId: mid, previousAmountNgn: oldAmt, amountNgn: 0 };
+}
+
+/**
  * Finance: correct a single LEDGER_RECEIPT treasury split (per payment line; updates cash/bank books).
  * @param {import('better-sqlite3').Database} db
  * @param {string} movementId
@@ -12358,10 +12549,14 @@ function syncTreasuryMovementsToConfirmedReceiptAmountTx(
   const ph = uniq.map(() => '?').join(',');
   const movements = db
     .prepare(
-      `SELECT id, amount_ngn, treasury_account_id, posted_at_iso, note FROM treasury_movements
-       WHERE type = 'RECEIPT_IN' AND source_kind = 'LEDGER_RECEIPT' AND source_id IN (${ph})
-         AND (reverses_movement_id IS NULL OR TRIM(reverses_movement_id) = '')
-       ORDER BY ABS(amount_ngn) DESC`
+      `SELECT tm.id, tm.amount_ngn, tm.treasury_account_id, tm.posted_at_iso, tm.note
+       FROM treasury_movements tm
+       WHERE tm.type = 'RECEIPT_IN' AND tm.source_kind = 'LEDGER_RECEIPT' AND tm.source_id IN (${ph})
+         AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+         AND NOT EXISTS (
+           SELECT 1 FROM treasury_movements rev WHERE rev.reverses_movement_id = tm.id
+         )
+       ORDER BY ABS(tm.amount_ngn) DESC`
     )
     .all(...uniq);
   if (!movements.length) return;
@@ -12918,12 +13113,16 @@ function listReceiptTreasurySplitMovementsDb(db, receiptId) {
   const placeholders = ids.map(() => '?').join(', ');
   return db
     .prepare(
-      `SELECT * FROM treasury_movements
-       WHERE source_kind = 'LEDGER_RECEIPT'
-         AND source_id IN (${placeholders})
-         AND type = 'RECEIPT_IN'
-         AND amount_ngn > 0
-       ORDER BY id ASC`
+      `SELECT * FROM treasury_movements tm
+       WHERE tm.source_kind = 'LEDGER_RECEIPT'
+         AND tm.source_id IN (${placeholders})
+         AND tm.type = 'RECEIPT_IN'
+         AND tm.amount_ngn > 0
+         AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+         AND NOT EXISTS (
+           SELECT 1 FROM treasury_movements rev WHERE rev.reverses_movement_id = tm.id
+         )
+       ORDER BY tm.id ASC`
     )
     .all(...ids);
 }

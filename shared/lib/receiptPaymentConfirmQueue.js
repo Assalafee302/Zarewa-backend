@@ -10,8 +10,19 @@ export function isTreasurySplitFinanceConfirmed(movement) {
   return at != null && String(at).trim() !== '';
 }
 
+/** Ids of inflows that already have a reversing movement. Those lines are not still to confirm. */
+function reversedInflowIds(treasuryMovements) {
+  const ids = new Set();
+  for (const m of treasuryMovements || []) {
+    const rev = String(m?.reversesMovementId || m?.reverses_movement_id || '').trim();
+    if (rev) ids.add(rev);
+  }
+  return ids;
+}
+
 /**
  * LEDGER_RECEIPT inflows for a sales receipt mirror row.
+ * A line that has already been reversed stays on the books but is not a split to confirm.
  * @param {{ id?: string, ledgerEntryId?: string | null }} receiptRow
  * @param {object[]} treasuryMovements
  */
@@ -23,13 +34,16 @@ export function receiptTreasurySplitsForConfirm(receiptRow, treasuryMovements) {
       .filter(Boolean)
   );
   const mv = Array.isArray(treasuryMovements) ? treasuryMovements : [];
+  const reversed = reversedInflowIds(mv);
   return mv
     .filter(
       (m) =>
         String(m?.sourceKind || m?.source_kind || '').trim() === 'LEDGER_RECEIPT' &&
         ids.has(String(m?.sourceId || m?.source_id || '').trim()) &&
         Number(m?.amountNgn ?? m?.amount_ngn) > 0 &&
-        String(m?.type || '').trim() === 'RECEIPT_IN'
+        String(m?.type || '').trim() === 'RECEIPT_IN' &&
+        !String(m?.reversesMovementId || m?.reverses_movement_id || '').trim() &&
+        !reversed.has(String(m?.id || '').trim())
     )
     .slice()
     .sort((a, b) => String(a?.id || '').localeCompare(String(b?.id || '')))

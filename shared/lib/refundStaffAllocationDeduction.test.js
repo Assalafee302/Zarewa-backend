@@ -45,6 +45,22 @@ describe('refundStaffAllocationDeduction', () => {
     expect(row.netPayoutNgn).toBe(10_000);
   });
 
+  it('cancels a staff split payout without dropping the company cut', () => {
+    const row = applyRefundStaffAllocationDeduction(
+      {
+        recipientKind: 'associated_staff',
+        recipientAssociatedStaffID: 'AS-001',
+        amountNgn: 256_820,
+        payoutCancelled: true,
+      },
+      'CUS-QUOTE',
+      { deductionRate: 0.03 }
+    );
+    expect(row.companyDeductionNgn).toBe(7_705);
+    expect(row.netPayoutNgn).toBe(0);
+    expect(row.payoutCancelled).toBe(true);
+  });
+
   it('holds quote-customer payout when they have uncleared receipts', () => {
     const row = applyRefundStaffAllocationDeduction(
       { recipientKind: 'customer', recipientCustomerID: 'CUS-1', amountNgn: 10_000 },

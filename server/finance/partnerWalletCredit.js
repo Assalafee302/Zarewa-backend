@@ -120,6 +120,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
         companyCutWaiverNote: String(
           s?.companyCutWaiverNote ?? s?.company_cut_waiver_note ?? ''
         ).trim(),
+        payoutCancelled: s?.payoutCancelled === true || s?.payout_cancelled === true,
       };
     })
     .filter(
@@ -240,6 +241,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
             unclearedReceiptIds,
             unclearedReceipts,
             payoutHeldForUnclearedReceipts: Boolean(withDeduction.payoutHeldForUnclearedReceipts),
+            payoutCancelled: withDeduction.payoutCancelled === true,
             payeeName,
             payeeBankName,
             payeeAccountNo,
@@ -267,6 +269,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
           unclearedReceiptIds,
           unclearedReceipts,
           payoutHeldForUnclearedReceipts: Boolean(withDeduction.payoutHeldForUnclearedReceipts),
+          payoutCancelled: withDeduction.payoutCancelled === true,
           payeeName,
           payeeBankName,
           payeeAccountNo,

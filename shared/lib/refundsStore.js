@@ -124,6 +124,7 @@ export function buildRefundCashierPayoutLines(splits, opts = {}) {
   const quotationRef = String(opts.quotationRef || '').trim();
   const draft = [];
   list.forEach((split, index) => {
+    if (split?.payoutCancelled === true) return;
     const netNgn = refundSplitOwnNetNgn(split);
     const grossNgn = roundRefundPayeeNgn(split?.grossNgn ?? split?.amountNgn) || netNgn;
     if (netNgn <= 0 && grossNgn <= 0) return;

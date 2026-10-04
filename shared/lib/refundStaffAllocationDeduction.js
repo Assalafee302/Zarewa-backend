@@ -179,6 +179,7 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
   const unclearedHoldNgn = Math.max(0, roundRefundStaffMoney(opts.unclearedReceiptHoldNgn));
   const overpaymentOnly = opts.overpaymentOnly === true;
   const staffBankAccountMatch = Boolean(split?.staffBankAccountMatch);
+  const payoutCancelled = split?.payoutCancelled === true || split?.payout_cancelled === true;
   const base = {
     ...split,
     amountNgn,
@@ -186,12 +187,17 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
     companyCutWaiverNote: companyCutWaived ? waiverNote : '',
     forceClaimingStaffCut,
     staffBankAccountMatch,
+    payoutCancelled,
   };
+  const notPayable = (result) =>
+    payoutCancelled
+      ? { ...result, netPayoutNgn: 0, payoutCancelled: true, payoutHeldForUnclearedReceipts: false }
+      : result;
   if (!forceClaimingStaffCut && !refundSplitTakesStaffDeduction(base, quoteCustomerId)) {
     // Quote customer overpayment: customer's own money — no uncleared-receipt hold (RefundModal).
     const skipUnclearedHold = overpaymentOnly || opts.priceConcession === true;
     const holdForGate = skipUnclearedHold ? 0 : unclearedHoldNgn;
-    return {
+    return notPayable({
       ...base,
       grossNgn: amountNgn,
       companyDeductionNgn: 0,
@@ -204,11 +210,11 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
       unclearedReceiptHoldNgn: holdForGate,
       unclearedReceiptOffsetNgn: 0,
       payoutHeldForUnclearedReceipts: holdForGate > 0 && amountNgn > 0,
-    };
+    });
   }
   const calc = refundStaffAllocationDeductionAmounts(amountNgn, deductionRate);
   const netPayoutNgn = calc.netPayoutNgn;
-  return {
+  return notPayable({
     ...base,
     grossNgn: calc.grossNgn,
     companyDeductionNgn: calc.companyDeductionNgn,
@@ -219,7 +225,7 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
     payoutHeldForUnclearedReceipts: unclearedHoldNgn > 0 && netPayoutNgn > 0,
     overpaymentCashierReferralAvailable:
       overpaymentOnly && unclearedHoldNgn > 0 && netPayoutNgn > 0,
-  };
+  });
 }
 
 /**

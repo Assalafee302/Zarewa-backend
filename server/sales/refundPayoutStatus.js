@@ -724,6 +724,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       grossNgn: t.grossNgn,
       amountNgn: t.grossNgn ?? t.amountNgn,
       netPayoutNgn: t.amountNgn,
+      payoutCancelled: t.payoutCancelled === true,
     })),
     {
       quotationCustomer: String(row.customer_name || row.customer || '').trim(),

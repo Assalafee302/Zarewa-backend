@@ -3,6 +3,13 @@
  * the bank account, or the calendar day. The stored till balance is not adjusted.
  */
 import { appendAuditLog } from '../controlOps.js';
+import { userMayManageInvestigations } from '../../shared/lib/investigationRegister.js';
+import { assertInvestigationAllowsMutation } from '../office/investigationLock.js';
+import {
+  correctRefundPaidAmountNgn,
+  resolveRefundStatus,
+  buildRefundSettlementSummary,
+} from './refundPayoutStatus.js';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -112,4 +119,115 @@ export function movePaymentRequestOutflowOntoRefundTx(db, movementId, payload = 
     requestId,
     requestCancelled,
   };
+}
+
+/**
+ * Point an existing outflow at another source without changing its amount, bank
+ * account, or calendar day. The stored till balance is not adjusted.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {{
+ *   type: string,
+ *   sourceKind: string,
+ *   sourceId: string,
+ *   counterpartyKind?: string,
+ *   counterpartyId?: string,
+ *   counterpartyName: string,
+ *   note?: string,
+ *   investigationCaseId?: string,
+ * }} payload
+ * @param {object | null} actor
+ */
+export function reclassifyTreasuryOutflowSourceTx(db, movementId, payload = {}, actor = null) {
+  const mid = String(movementId || '').trim();
+  const nextType = String(payload.type || '').trim();
+  const sourceKind = String(payload.sourceKind || '').trim();
+  const sourceId = String(payload.sourceId || '').trim();
+  const counterpartyName = String(payload.counterpartyName || '').trim();
+  if (!mid || !nextType || !sourceKind || !sourceId || !counterpartyName) {
+    return { ok: false, error: 'Movement, type, source, and payee name are required.' };
+  }
+  const row = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(mid);
+  if (!row) return { ok: false, error: 'Treasury movement not found.' };
+  const amount = roundMoney(row.amount_ngn);
+  if (amount >= 0) return { ok: false, error: 'Expected an outflow.' };
+  const caseId = String(payload.investigationCaseId || '').trim();
+  const bypass = Boolean(caseId && userMayManageInvestigations(actor));
+  const lock = assertInvestigationAllowsMutation(db, 'treasury_movement', mid);
+  if (!lock.ok && !bypass) return lock;
+  if (String(row.source_kind) === 'REFUND' && row.source_id) {
+    const refundLock = assertInvestigationAllowsMutation(db, 'refund', row.source_id);
+    if (!refundLock.ok && !bypass) return refundLock;
+  }
+  const note = String(payload.note || '').trim();
+  db.prepare(
+    `UPDATE treasury_movements
+     SET type = ?,
+         source_kind = ?,
+         source_id = ?,
+         counterparty_kind = ?,
+         counterparty_id = ?,
+         counterparty_name = ?,
+         note = ?
+     WHERE id = ?`
+  ).run(
+    nextType,
+    sourceKind,
+    sourceId,
+    String(payload.counterpartyKind || row.counterparty_kind || '').trim() || null,
+    payload.counterpartyId != null ? String(payload.counterpartyId).trim() || null : row.counterparty_id,
+    counterpartyName,
+    note || row.note || null,
+    mid
+  );
+  appendAuditLog(db, {
+    actor,
+    action: 'treasury.outflow_resourced',
+    entityKind: 'treasury_movement',
+    entityId: mid,
+    note: note || `Re-sourced ${mid}`,
+    details: {
+      movementId: mid,
+      previousType: row.type,
+      previousSourceKind: row.source_kind,
+      previousSourceId: row.source_id,
+      type: nextType,
+      sourceKind,
+      sourceId,
+      amountNgn: amount,
+      treasuryAccountId: Number(row.treasury_account_id),
+      postedAtIso: row.posted_at_iso,
+      balanceUnchanged: true,
+    },
+  });
+  return { ok: true, movementId: mid, amountNgn: amount, treasuryAccountId: Number(row.treasury_account_id) };
+}
+
+/**
+ * Set paid amount from the refund's treasury lines and resolve status.
+ * Does not change the approved amount or move cash.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} refundId
+ * @param {string} [note]
+ */
+export function syncRefundPaidFromTreasuryTx(db, refundId, note = '') {
+  const id = String(refundId || '').trim();
+  const before = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  if (!before) return { ok: false, error: 'Refund not found.' };
+  const paid = correctRefundPaidAmountNgn(db, before);
+  const extra = String(note || '').trim();
+  const prev = String(before.payment_note || '').trim();
+  const paymentNote = extra && !prev.includes(extra) ? (prev ? `${prev} ${extra}` : extra) : prev;
+  db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = ?, payment_note = ? WHERE refund_id = ?`).run(
+    paid,
+    paymentNote || null,
+    id
+  );
+  const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  const status = resolveRefundStatus(db, row);
+  if (status && status !== String(row.status || '').trim()) {
+    db.prepare(`UPDATE customer_refunds SET status = ? WHERE refund_id = ?`).run(status, id);
+  }
+  const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  return { ok: true, refundId: id, paidAmountNgn: paid, status: fresh.status, summary: buildRefundSettlementSummary(db, fresh) };
 }

@@ -608,6 +608,12 @@ import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterQuotationL
 import * as write from './writeOps.js';
 import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWalletOps.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
+import { holdReceiptAwaitingCreditCheck } from './sales/receiptBankCheckHold.js';
+import { setPoTransportPayoutHold } from './procurement/poTransportPayoutHold.js';
+import {
+  attachPaidRequestAsPoHaulageTx,
+  settlePoHaulageAtAmountAlreadyPaidTx,
+} from './procurement/poHaulageLinkOps.js';
 import {
   closePaymentRequestRemainderAsRounding,
   closeRefundUnpaidRemainder,
@@ -6261,6 +6267,57 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  /** Status only. The treasury line stays until someone checks customer credit. */
+  app.post(
+    '/api/sales-receipts/:receiptId/bank-check-hold',
+    requirePermission(['finance.pay', 'finance.post']),
+    (req, res) => {
+      try {
+        const rid = String(req.params.receiptId || '');
+        const rg = assertSalesReceiptIdInWorkspace(db, req, rid);
+        if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
+        const r = holdReceiptAwaitingCreditCheck(db, rid, req.user);
+        if (!r.ok) return res.status(400).json(r);
+        const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
+        return res.status(200).json(withWriteDelta({ ...r }, { receipts: receipt ? [receipt] : [] }));
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  /**
+   * Zero a receipt inflow that has no matching bank money.
+   * Same account and day. The stored balance moves by the removed amount only.
+   */
+  app.post(
+    '/api/sales-receipts/:receiptId/treasury-lines/:movementId/zero-unbacked',
+    requirePermission(['finance.pay', 'finance.post']),
+    (req, res) => {
+      try {
+        const rid = String(req.params.receiptId || '');
+        const movementId = String(req.params.movementId || '');
+        const rg = assertSalesReceiptIdInWorkspace(db, req, rid);
+        if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
+        const expected = Math.round(Number(req.body?.expectedAmountNgn) || 0);
+        const note = String(req.body?.note || '').trim() || 'No bank money on this receipt line.';
+        const r = write.zeroUnbackedReceiptInflowTx(
+          db,
+          movementId,
+          { receiptId: rid, expectedAmountNgn: expected, note },
+          req.user
+        );
+        if (!r.ok) return res.status(400).json(r);
+        const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
+        return res.status(200).json(withWriteDelta({ ...r }, { receipts: receipt ? [receipt] : [] }));
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   /** Undo mistaken finance confirmation — back to Pending clearance (receipt stays posted). */
   app.post(
     '/api/sales-receipts/:receiptId/unconfirm',
@@ -7104,6 +7161,36 @@ export function registerHttpApi(app, db) {
         return res.status(200).json(withPurchaseOrderWriteDelta(db, poId, r));
       }
       return res.status(400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/purchase-orders/:poId/haulage-hold', requirePermission('finance.pay'), (req, res) => {
+    try {
+      const poId = req.params.poId;
+      const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+      if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
+      const r = setPoTransportPayoutHold(db, poId, req.body || {}, req.user);
+      if (!r.ok && r.code === 'FORBIDDEN') return res.status(403).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(200).json(withPurchaseOrderWriteDelta(db, poId, r));
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/purchase-orders/:poId/settle-haulage-at-paid', requirePermission('finance.pay'), (req, res) => {
+    try {
+      const poId = req.params.poId;
+      const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+      if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
+      const r = settlePoHaulageAtAmountAlreadyPaidTx(db, poId, req.user);
+      if (!r.ok && r.code === 'FORBIDDEN') return res.status(403).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(200).json(withPurchaseOrderWriteDelta(db, poId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -11294,6 +11381,22 @@ export function registerHttpApi(app, db) {
         }
       }
       res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/payment-requests/:requestId/link-po-haulage', requirePermission('finance.pay'), (req, res) => {
+    try {
+      const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+      if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
+      const poId = String(req.body?.poId || '').trim();
+      const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+      if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
+      const r = attachPaidRequestAsPoHaulageTx(db, req.params.requestId, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(200).json(withPurchaseOrderWriteDelta(db, poId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

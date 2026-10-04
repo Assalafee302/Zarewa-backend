@@ -227,6 +227,45 @@ export function raiseOpenCompanyRetentionCreditTx(db, { refundId, nextAmountNgn,
   return { ok: true, id: row.id, previousAmountNgn: current, amountNgn: next };
 }
 
+/**
+ * Give an untouched company cut back to the customer. The credit row stays.
+ * Open balance becomes zero, so the amount can no longer be withdrawn.
+ * Refuses if any of that cut was already withdrawn.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} refundId
+ * @param {string} [note]
+ */
+export function releaseOpenCompanyRetentionToCustomerTx(db, refundId, note = '') {
+  if (!refundCompanyRetentionTablesReady(db)) {
+    return { ok: false, error: 'Company retention ledger is not ready.' };
+  }
+  const rid = trim(refundId);
+  if (!rid) return { ok: false, error: 'Refund id is required.' };
+  const rows = db
+    .prepare(
+      `SELECT id, amount_ngn, open_ngn, note FROM refund_company_retention_entries
+       WHERE entry_type = 'credit' AND refund_id = ?`
+    )
+    .all(rid);
+  if (!rows.length) return { ok: false, error: 'No company-cut credit on this refund.' };
+  let released = 0;
+  for (const row of rows) {
+    const amount = roundMoney(row.amount_ngn);
+    const open = roundMoney(row.open_ngn);
+    if (open < amount) {
+      return { ok: false, error: 'Company cut on this refund was already withdrawn, so it cannot be released.' };
+    }
+    released += open;
+    const extra = String(note || '').trim();
+    const prev = String(row.note || '').trim();
+    const merged = extra && !prev.includes(extra) ? (prev ? `${prev} — ${extra}` : extra) : prev;
+    db.prepare(
+      `UPDATE refund_company_retention_entries SET amount_ngn = 0, open_ngn = 0, note = ? WHERE id = ?`
+    ).run(merged || null, row.id);
+  }
+  return { ok: true, refundId: rid, releasedNgn: released };
+}
+
 export function voidCompanyRetentionForRefundTx(db, refundId) {
   if (!refundCompanyRetentionTablesReady(db)) return { ok: true, skipped: true };
   const rid = trim(refundId);

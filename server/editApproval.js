@@ -277,20 +277,24 @@ export function createEditApprovalRequest(
     )
     .get(ek, eid, bid, uid);
   if (existing?.id) {
+    const existingId = String(existing.id);
     if (summary || detailsJson) {
+      const now = new Date().toISOString();
       db.prepare(
         `UPDATE edit_approval_tokens
-         SET change_summary = COALESCE(NULLIF(?, ''), change_summary),
-             change_details_json = COALESCE(NULLIF(?, ''), change_details_json)
+         SET change_summary = CASE WHEN ? <> '' THEN ? ELSE change_summary END,
+             change_details_json = CASE WHEN ? <> '' THEN ? ELSE change_details_json END,
+             requested_at_iso = ?
          WHERE id = ? AND status = 'pending'`
-      ).run(summary, detailsJson, String(existing.id));
+      ).run(summary, summary, detailsJson, detailsJson, now, existingId);
     }
     return {
       ok: false,
       code: 'EDIT_APPROVAL_ALREADY_PENDING',
       error:
-        'You already have a pending approval request for this record. Wait for your approver (or enter the code when they approve it). A second request was not created.',
-      existingApprovalId: String(existing.id),
+        `Code ${existingId} is already waiting for this record. The requested change was updated. Ask your approver to grant that same code, then save.`,
+      existingApprovalId: existingId,
+      approvalId: existingId,
     };
   }
   const id = newApprovalId(db);

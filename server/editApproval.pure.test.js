@@ -374,6 +374,45 @@ describe('editApproval (no MySQL)', () => {
     expect(r.ok).toBe(false);
     expect(r.code).toBe('EDIT_APPROVAL_ALREADY_PENDING');
     expect(r.existingApprovalId).toBe(pendingId);
+    expect(r.approvalId).toBe(pendingId);
+  });
+
+  it('refreshes the pending quotation change on the same code', () => {
+    const pendingId = '654321';
+    const runs = [];
+    const db = {
+      exec: vi.fn(),
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('SELECT id FROM edit_approval_tokens') && s.includes('pending')) {
+          return { get: vi.fn(() => ({ id: pendingId })) };
+        }
+        if (s.includes('UPDATE edit_approval_tokens') && s.includes('change_summary')) {
+          return {
+            run: (...args) => {
+              runs.push(args);
+              return { changes: 1 };
+            },
+          };
+        }
+        return { get: vi.fn(), run: vi.fn(() => { throw new Error(`unexpected SQL: ${s}`); }) };
+      },
+    };
+    const r = createEditApprovalRequest(db, {
+      entityKind: 'quotation',
+      entityId: 'QT-YL-1',
+      branchId: 'BR-YL',
+      actor: { id: 'u1', displayName: 'Yola sales' },
+      changeSummary: 'Edit quotation — see the fields below',
+      changeDetails: [{ label: 'Quotation total', from: '₦100,000', to: '₦80,000' }],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('EDIT_APPROVAL_ALREADY_PENDING');
+    expect(r.approvalId).toBe(pendingId);
+    expect(runs).toHaveLength(1);
+    expect(runs[0][0]).toBe('Edit quotation — see the fields below');
+    expect(runs[0][2]).toContain('Quotation total');
+    expect(runs[0][5]).toBe(pendingId);
   });
 
   it('buildEditApprovalRecordContext returns quotation snapshot fields', () => {

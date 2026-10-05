@@ -589,37 +589,13 @@ export function planCashierRefundOffset({ receiptCashNgn, availableNgn }) {
 export const REFUND_FUND_SKIP_REASON_MIN_LENGTH = 6;
 
 /**
- * Money guard for Confirm payment: booking new bank cash while this customer still has an open
- * refund waiting on the payout queue leaves that refund fully payable AND overstates treasury by
- * the same ₦ — the same money goes out twice (RF-KD-26-9693: ₦627,300 booked as bank cash while
- * ₦861,575 stayed payable). The cashier must either apply the fund or put in writing why cash
- * was genuinely received.
+ * Confirm payment no longer demands a written reason when the cashier leaves refund fund unticked.
+ * The checkbox is the choice: tick it to cover the receipt, or confirm the cash that was received.
  *
- * `availableNgn` counts only refund-backed fund. Plain overpay leftover is nobody's queued
- * payout, so leaving it unused is a choice, not a double pay, and must not block finance.
- *
- * Skipped when the target quotation blocks external credit — there the product already tells the
- * cashier to confirm the real cash and settle that job's own refund from the till.
- *
- * @param {{
- *   availableNgn?: number,
- *   creditApplyNgn?: number,
- *   bankReceivedNgn?: number,
- *   targetBlocksExternalCredit?: boolean,
- *   alreadyFinalized?: boolean,
- *   skipReason?: unknown,
- * }} p
+ * @param {object} [_p]
  */
-export function refundFundDecisionRequiredOnConfirm(p = {}) {
-  if (p.alreadyFinalized === true) return false;
-  if (p.targetBlocksExternalCredit === true) return false;
-  const available = Math.max(0, Math.round(Number(p.availableNgn) || 0));
-  if (available <= 0) return false;
-  const bank = Math.max(0, Math.round(Number(p.bankReceivedNgn) || 0));
-  if (bank <= 0) return false;
-  // Any deliberate apply (even partial) is already an answer.
-  if (Math.max(0, Math.round(Number(p.creditApplyNgn) || 0)) > 0) return false;
-  return !refundFundSkipReasonIsValid(p.skipReason);
+export function refundFundDecisionRequiredOnConfirm(_p = {}) {
+  return false;
 }
 
 /** @param {unknown} reason */

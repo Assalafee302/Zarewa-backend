@@ -133,29 +133,12 @@ describe.skipIf(!mysqlOk)('confirm payment refuses cash while a refund is still 
     expect(listed.sources.some((s) => s.kind === 'refund' && s.refundId === refundId)).toBe(true);
   });
 
-  it('refuses a full-cash confirm and names the refund money at risk', () => {
-    const { receiptId, refundId } = seedCustomerWithOpenRefund('RFGB');
+  it('lets the cashier confirm the cash received without a written reason', () => {
+    const { receiptId } = seedCustomerWithOpenRefund('RFGB');
     const settle = patchSalesReceiptFinanceSettlement(db, receiptId, { bankReceivedAmountNgn: 60_000 }, ACTOR);
-    expect(settle.ok).toBe(false);
-    expect(settle.code).toBe('REFUND_FUND_DECISION_REQUIRED');
-    expect(settle.refundFundAvailableNgn).toBe(200_000);
-    expect(settle.refundFundSources.map((s) => s.refundId)).toContain(refundId);
-    expect(settle.error).toMatch(/still waiting to be paid out/i);
-
+    expect(settle.ok).toBe(true);
     const rec = db.prepare(`SELECT status FROM sales_receipts WHERE id = ?`).get(receiptId);
-    expect(String(rec.status)).toBe('Pending clearance');
-  });
-
-  it('rejects a throwaway reason', () => {
-    const { receiptId } = seedCustomerWithOpenRefund('RFGC');
-    const settle = patchSalesReceiptFinanceSettlement(
-      db,
-      receiptId,
-      { bankReceivedAmountNgn: 60_000, refundFundNotUsedReason: 'no' },
-      ACTOR
-    );
-    expect(settle.ok).toBe(false);
-    expect(settle.code).toBe('REFUND_FUND_DECISION_REQUIRED');
+    expect(String(rec.status)).toBe('Cleared');
   });
 
   it('lets cash through on a written reason and records who overrode it', () => {

@@ -3,6 +3,7 @@ import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
   allocateRefundCreditAcrossSources,
   planCashierRefundOffset,
+  refundFundDecisionRequiredOnConfirm,
   planRefundCreditApplyAmount,
   isQuotationActiveRefundLockError,
   refundBlocksExternalCreditOnQuotation,
@@ -381,6 +382,16 @@ describe('refundCreditApply pure helpers', () => {
       leftoverRefundNgn: 0,
     });
     expect(planCashierRefundOffset({ receiptCashNgn: 20_000, availableNgn: 50_000 }).cashToConfirmNgn).toBe(0);
+  });
+
+  it('does not demand a written reason when cash is confirmed without using refund fund', () => {
+    expect(
+      refundFundDecisionRequiredOnConfirm({
+        availableNgn: 200_000,
+        bankReceivedNgn: 60_000,
+        creditApplyNgn: 0,
+      })
+    ).toBe(false);
   });
 
   it('does not let staff-payee overpay refunds reserve confirm leftover (stamp path)', () => {

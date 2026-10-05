@@ -375,6 +375,8 @@ describe('editApproval (no MySQL)', () => {
     expect(r.code).toBe('EDIT_APPROVAL_ALREADY_PENDING');
     expect(r.existingApprovalId).toBe(pendingId);
     expect(r.approvalId).toBe(pendingId);
+    expect(r.error).not.toMatch(/was updated/i);
+    expect(r.error).toContain(pendingId);
   });
 
   it('refreshes the pending quotation change on the same code', () => {
@@ -409,6 +411,7 @@ describe('editApproval (no MySQL)', () => {
     expect(r.ok).toBe(false);
     expect(r.code).toBe('EDIT_APPROVAL_ALREADY_PENDING');
     expect(r.approvalId).toBe(pendingId);
+    expect(r.error).toMatch(/was updated/i);
     expect(runs).toHaveLength(1);
     expect(runs[0][0]).toBe('Edit quotation — see the fields below');
     expect(runs[0][2]).toContain('Quotation total');

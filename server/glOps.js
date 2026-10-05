@@ -113,6 +113,7 @@ export function ensureSupplementalGlAccounts(db) {
   ins.run('acc-ar', '1200', 'Accounts receivable', 'asset', 20);
   ins.run('acc-adv', '2500', 'Customer advances / deposits', 'liability', 75);
   ins.run('acc-revenue', '4000', 'Sales revenue (management)', 'revenue', 35);
+  ins.run('acc-other-income-refund', '4050', 'Other income — refund handling charge', 'revenue', 36);
   ins.run('acc-supplier-adv', '1400', 'Supplier advances / prepayments', 'asset', 28);
   ins.run('acc-accum-dep', '1398', 'Accumulated depreciation', 'asset', 31);
   ins.run('acc-dep-exp', '6100', 'Depreciation expense', 'expense', 92);
@@ -1024,8 +1025,12 @@ export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
 }
 
 /**
- * Company-cut retention payout: cash leaves the till to the company payee.
- * Dr drawings (3200), Cr cash (1000). Idempotent per withdrawal id.
+ * Recognize withheld refund retention as income. The cash already stayed in the
+ * company bank when the customer was paid net, so this does not touch cash (1000)
+ * and does not post a treasury payout.
+ * Dr customer advances (2500) — the cut was never paid out, so it is still in that liability.
+ * Cr other income (4050) — refund handling charge.
+ * Idempotent per withdrawal id.
  */
 export function tryPostCompanyCutWithdrawalGlTx(db, payload) {
   if (!isGlPostingEnabled()) return skippedGlPostingResult();
@@ -1038,14 +1043,14 @@ export function tryPostCompanyCutWithdrawalGlTx(db, payload) {
   try {
     return postBalancedJournalTx(db, {
       entryDateISO: date,
-      memo: `Company cut retention withdrawal ${withdrawalId}`,
+      memo: `Refund handling charge ${withdrawalId} — retention recognized as income, no cash out`,
       sourceKind: 'COMPANY_CUT_WITHDRAWAL_GL',
       sourceId: withdrawalId,
       branchId: payload.branchId ?? null,
       createdByUserId: payload.createdByUserId ?? null,
       lines: [
-        { accountCode: '3200', debitNgn: amt, memo: withdrawalId },
-        { accountCode: '1000', creditNgn: amt, memo: withdrawalId },
+        { accountCode: '2500', debitNgn: amt, memo: withdrawalId },
+        { accountCode: '4050', creditNgn: amt, memo: withdrawalId },
       ],
     });
   } catch (e) {

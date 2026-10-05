@@ -2,13 +2,19 @@
  * Move an expense payout onto a customer refund without changing the cash amount,
  * the bank account, or the calendar day. The stored till balance is not adjusted.
  */
+import { hasColumn } from '../ap2ReceivedBasisOps.js';
 import { appendAuditLog } from '../controlOps.js';
 import { userMayManageInvestigations } from '../../shared/lib/investigationRegister.js';
 import { assertInvestigationAllowsMutation } from '../office/investigationLock.js';
+import { refundCreditSettledNgn } from './refundCreditLedger.js';
+import { refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
+import { refundSettledAtApprovalNgn } from '../finance/partnerWalletCredit.js';
 import {
   correctRefundPaidAmountNgn,
   resolveRefundStatus,
   buildRefundSettlementSummary,
+  refundMoneyOutWithinApproved,
+  refundWalletWithdrawnNgn,
 } from './refundPayoutStatus.js';
 
 function roundMoney(value) {
@@ -230,4 +236,109 @@ export function syncRefundPaidFromTreasuryTx(db, refundId, note = '') {
   }
   const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
   return { ok: true, refundId: id, paidAmountNgn: paid, status: fresh.status, summary: buildRefundSettlementSummary(db, fresh) };
+}
+
+/**
+ * Re-base one refund onto a customer share. Sets the approved amount and the
+ * split lines. Does not move cash, change paid amount, or touch credit already applied.
+ * Refuses if treasury, credit, and any remaining company cut would exceed the new approved amount.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} refundId
+ * @param {{
+ *   approvedNgn: number,
+ *   payeeName: string,
+ *   payeeBankName?: string,
+ *   payeeAccountNo?: string,
+ *   splits: object[],
+ *   note?: string,
+ * }} payload
+ * @param {object | null} actor
+ */
+export function rebaseRefundCustomerShareTx(db, refundId, payload = {}, actor = null) {
+  const id = String(refundId || '').trim();
+  const approved = roundMoney(payload.approvedNgn);
+  const payeeName = String(payload.payeeName || '').trim();
+  const splits = Array.isArray(payload.splits) ? payload.splits : [];
+  if (!id || approved <= 0) return { ok: false, error: 'Refund and approved amount are required.' };
+  if (!payeeName) return { ok: false, error: 'Payee name is required.' };
+  if (!splits.length) return { ok: false, error: 'A customer split is required.' };
+  const before = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  if (!before) return { ok: false, error: 'Refund not found.' };
+  const status = String(before.status || '').trim();
+  if (status === 'Cancelled' || status === 'Rejected') {
+    return { ok: false, error: `Refund is ${status}.` };
+  }
+  const preview = {
+    ...before,
+    approved_amount_ngn: approved,
+    amount_ngn: approved,
+    split_distributions_json: JSON.stringify(splits),
+  };
+  const within = refundMoneyOutWithinApproved({
+    approvedNgn: approved,
+    treasuryPaidNgn: refundTreasuryPaidNgn(db, id),
+    walletWithdrawnNgn: refundWalletWithdrawnNgn(db, id),
+    companyCutSettledNgn: refundSettledAtApprovalNgn(db, preview, approved),
+    creditAppliedNgn: refundCreditSettledNgn(db, before),
+  });
+  if (!within) {
+    return { ok: false, error: 'The new approved amount is below money already out on this refund.' };
+  }
+  const payeeBankName = String(payload.payeeBankName || '').trim();
+  const payeeAccountNo = String(payload.payeeAccountNo || '').trim();
+  const extra = String(payload.note || '').trim();
+  const prev = String(before.payment_note || '').trim();
+  const paymentNote = extra && !prev.includes(extra) ? (prev ? `${prev} ${extra}` : extra) : prev;
+  if (hasColumn(db, 'customer_refunds', 'payee_account_no')) {
+    db.prepare(
+      `UPDATE customer_refunds
+       SET amount_ngn = ?, approved_amount_ngn = ?,
+           payee_name = ?, payee_bank_name = ?, payee_account_no = ?,
+           split_distributions_json = ?, payment_note = ?
+       WHERE refund_id = ?`
+    ).run(
+      approved,
+      approved,
+      payeeName,
+      payeeBankName || null,
+      payeeAccountNo || null,
+      JSON.stringify(splits),
+      paymentNote || null,
+      id
+    );
+  } else {
+    db.prepare(
+      `UPDATE customer_refunds
+       SET amount_ngn = ?, approved_amount_ngn = ?,
+           payee_name = ?, payee_bank_name = ?,
+           split_distributions_json = ?, payment_note = ?
+       WHERE refund_id = ?`
+    ).run(approved, approved, payeeName, payeeBankName || null, JSON.stringify(splits), paymentNote || null, id);
+  }
+  const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  const nextStatus = resolveRefundStatus(db, row);
+  if (nextStatus && nextStatus !== String(row.status || '').trim()) {
+    db.prepare(`UPDATE customer_refunds SET status = ? WHERE refund_id = ?`).run(nextStatus, id);
+  }
+  appendAuditLog(db, {
+    actor,
+    action: 'refund.customer_share_rebase',
+    entityKind: 'refund',
+    entityId: id,
+    note: extra || 'Re-based the customer share.',
+    details: {
+      previousApprovedNgn: roundMoney(before.approved_amount_ngn),
+      approvedNgn: approved,
+      previousPaidNgn: roundMoney(before.paid_amount_ngn),
+      paidAmountUnchanged: true,
+    },
+  });
+  const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  return {
+    ok: true,
+    refundId: id,
+    status: fresh.status,
+    approvedNgn: approved,
+    summary: buildRefundSettlementSummary(db, fresh),
+  };
 }

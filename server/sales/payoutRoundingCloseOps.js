@@ -173,6 +173,64 @@ export function closeNamedRefundRemainderAsRounding(db, refundId, expectedOutsta
   return { ok: true, refundId: id, remainderClosedNgn: outstanding, status: nextStatus };
 }
 
+/**
+ * Cancel one named unpaid remainder. No cash moves. Approved amount, paid amount,
+ * and company retention stay as they are. Status becomes Paid when nothing is left to pay.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} refundId
+ * @param {number} expectedOutstandingNgn
+ * @param {object | null} actor
+ * @param {string} [note]
+ */
+export function closeNamedRefundRemainderAsCancelled(db, refundId, expectedOutstandingNgn, actor, note = '') {
+  const id = String(refundId || '').trim();
+  const expected = roundMoney(expectedOutstandingNgn);
+  if (!id || expected <= 1) return { ok: false, error: 'Refund and the remainder to cancel are required.' };
+  ensureRefundRemainderClosedColumns(db);
+  const before = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  if (!before) return { ok: false, error: 'Refund not found.' };
+  const status = String(before.status || '').trim();
+  if (status === 'Cancelled' || status === 'Rejected') {
+    return { ok: false, error: `Refund is ${status}.` };
+  }
+  const summary = buildRefundSettlementSummary(db, before);
+  const outstanding = roundMoney(summary.cashOutstandingNgn);
+  if (outstanding !== expected) {
+    return {
+      ok: false,
+      error: `Remainder is ₦${outstanding.toLocaleString('en-NG')}, not ₦${expected.toLocaleString('en-NG')}.`,
+    };
+  }
+  const sentence = `Cancelled unpaid remainder ₦${outstanding.toLocaleString('en-NG')}. No money out. ${String(note || '').trim() || NOTE}`;
+  const nextClosed = roundMoney(before.remainder_closed_ngn) + outstanding;
+  db.prepare(
+    `UPDATE customer_refunds
+     SET remainder_closed_ngn = ?, remainder_closed_reason = ?, payment_note = ?
+     WHERE refund_id = ?`
+  ).run(nextClosed, 'cancelled', appendNote(before.payment_note, sentence), id);
+  const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id);
+  const nextStatus = resolveRefundStatus(db, row);
+  if (nextStatus && nextStatus !== String(row.status || '').trim()) {
+    db.prepare(`UPDATE customer_refunds SET status = ? WHERE refund_id = ?`).run(nextStatus, id);
+  }
+  appendAuditLog(db, {
+    actor,
+    action: 'refund.remainder_cancelled',
+    entityKind: 'refund',
+    entityId: id,
+    note: sentence,
+    details: {
+      previousStatus: status,
+      previousPaidNgn: roundMoney(before.paid_amount_ngn),
+      previousApprovedNgn: roundMoney(before.approved_amount_ngn),
+      remainderClosedNgn: outstanding,
+      paidAmountUnchanged: true,
+      approvedAmountUnchanged: true,
+    },
+  });
+  return { ok: true, refundId: id, remainderClosedNgn: outstanding, status: nextStatus };
+}
+
 export function closePaymentRequestRemainderAsRounding(db, requestId, actor) {
   const id = String(requestId || '').trim();
   if (!id) return { ok: false, error: 'Payment request id is required.' };

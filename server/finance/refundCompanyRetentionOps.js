@@ -1,5 +1,6 @@
 /**
- * Company retention withdrawals — request, cancel, BM cash-approve, cashier pay.
+ * Company retention withdrawals — request, cancel, BM cash-approve, then recognize as income.
+ * Recognition posts a journal only. It never creates a treasury payout.
  * @module server/finance/refundCompanyRetentionOps
  */
 import { actorId, actorName, userHasPermission } from '../auth.js';
@@ -11,7 +12,6 @@ import { isBranchManagerApprovalAuthority } from '../../shared/workspaceGovernan
 import { tableExists } from '../ap2ReceivedBasisOps.js';
 import { ensureSupplementalGlAccounts, tryPostCompanyCutWithdrawalGlTx } from '../glOps.js';
 import { isGlPostingEnabled } from './glPostingGate.js';
-import { insertTreasuryMovementTx } from '../writeOps.js';
 import {
   getCompanyRetentionSummary,
   mapWithdrawalRow,
@@ -76,7 +76,7 @@ export function requestCompanyRetentionWithdrawal(db, payload = {}) {
     return {
       ok: false,
       error:
-        'A company-cut withdrawal is already pending Branch Manager cash approval or cashier payout. Cancel, finish, or reject it before requesting another.',
+        'A company-cut withdrawal is already pending. Cancel, finish, or reject it before requesting another.',
       code: 'WITHDRAWAL_PENDING',
     };
   }
@@ -432,7 +432,7 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
     return {
       ok: false,
       error:
-        'You cannot pay a company-cut withdrawal you cash-approved. Another finance/cashier user must execute the payout.',
+        'You cannot recognize a company-cut withdrawal you cash-approved. Another finance user must post the journal.',
       code: 'DUAL_CONTROL_PAY',
     };
   }
@@ -446,8 +446,6 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
   if (!branchGate.ok) return { ok: false, error: branchGate.error };
 
   const amountNgn = roundMoney(row.amount_ngn);
-  const treasuryAccountId = Number(payload.treasuryAccountId);
-  if (!treasuryAccountId) return { ok: false, error: 'treasuryAccountId is required.' };
   const paymentDateISO =
     trim(payload.paymentDateISO || payload.paidAtISO || '').slice(0, 10) ||
     new Date().toISOString().slice(0, 10);
@@ -468,7 +466,7 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
   ) {
     return {
       ok: false,
-      error: `Another company-cut withdrawal was paid less than ${summary.cooldownDays} days ago. Next payout allowed after ${summary.nextWithdrawalAllowedAtIso}.`,
+      error: `Another company-cut withdrawal was recognized less than ${summary.cooldownDays} days ago. Next recognition allowed after ${summary.nextWithdrawalAllowedAtIso}.`,
       code: 'WITHDRAWAL_COOLDOWN',
       nextWithdrawalAllowedAtIso: summary.nextWithdrawalAllowedAtIso,
     };
@@ -500,24 +498,7 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
 
   try {
     return db.transaction(() => {
-      const movement = insertTreasuryMovementTx(db, {
-        type: 'REFUND_COMPANY_CUT_PAYOUT',
-        treasuryAccountId,
-        amountNgn: -amountNgn,
-        postedAtISO: `${paymentDateISO}T12:00:00.000Z`,
-        reference: trim(payload.reference) || id,
-        counterpartyKind: 'COMPANY',
-        counterpartyName: trim(row.payee_name),
-        sourceKind: 'REFUND_COMPANY_RETENTION',
-        sourceId: id,
-        note: trim(payload.note) || `Company cut retention ${id}`,
-        createdBy: actorName(payload.actor),
-        workspaceBranchId: payload.workspaceBranchId || branchId,
-        workspaceViewAll: Boolean(payload.workspaceViewAll),
-        actor: payload.actor,
-        batchId: id,
-      });
-
+      // Retention cash already stayed in the company bank. Do not pay a person or another account.
       for (const a of allocations) {
         const upd = db
           .prepare(
@@ -566,7 +547,7 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
         null,
         null,
         id,
-        `Paid company cut withdrawal ${id}`,
+        `Recognized as other income. No treasury payout. ${id}`,
         now,
         actorId(payload.actor),
         actorName(payload.actor)
@@ -586,11 +567,9 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
         .run(
           actorId(payload.actor),
           actorName(payload.actor),
-          // Payment date, same instant as the treasury movement. `now` would put the
-          // withdrawal in the month it was clicked, not the month the bank was charged.
           `${paymentDateISO}T12:00:00.000Z`,
-          movement.id || null,
-          String(treasuryAccountId),
+          null,
+          null,
           id
         );
       if (!paidUpd.changes) throw new Error('Could not mark withdrawal paid — status changed concurrently.');
@@ -609,7 +588,7 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
         withdrawal: mapWithdrawalRow(
           db.prepare(`SELECT * FROM refund_company_retention_withdrawals WHERE id = ?`).get(id)
         ),
-        treasuryMovementId: movement.id,
+        treasuryMovementId: null,
         allocations,
       };
     })();

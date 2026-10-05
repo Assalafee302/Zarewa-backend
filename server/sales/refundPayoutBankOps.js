@@ -198,10 +198,11 @@ export function recordRefundBankPayeeTx(db, refundId, payload = {}, actor = null
   if (!row) return { ok: false, error: 'Refund not found.' };
   const payeeBankName = trim(payload.payeeBankName);
   const payeeAccountNo = trim(payload.payeeAccountNo).replace(/\s+/g, '');
+  const clearAccount = payload.clearAccount === true;
   const extra = trim(payload.note);
   const prev = trim(row.payment_note);
   const paymentNote = extra && !prev.includes(extra) ? (prev ? `${prev} ${extra}` : extra) : prev;
-  if (payeeAccountNo && hasColumn(db, 'customer_refunds', 'payee_account_no')) {
+  if ((payeeAccountNo || clearAccount) && hasColumn(db, 'customer_refunds', 'payee_account_no')) {
     db.prepare(
       `UPDATE customer_refunds
        SET payee_name = ?, payee_bank_name = ?, payee_account_no = ?, payment_note = ?

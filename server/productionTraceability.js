@@ -1037,7 +1037,9 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
           },
         });
       })();
-      const allocations = listProductionJobCoilsForJob(db, jobID);
+      // Do not name this `allocations`: that binding would shadow the function
+      // parameter for the whole try block and throw before the insert runs.
+      const savedAllocations = listProductionJobCoilsForJob(db, jobID);
       const recalcOpts = {
         extraCoilNos: normalized.map((line) => line.coilNo),
         workspaceBranchId: opts.workspaceBranchId,
@@ -1050,7 +1052,7 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
           console.error('production stock recalc after coil append', error);
         }
       });
-      return { ok: true, allocations };
+      return { ok: true, allocations: savedAllocations };
     } catch (error) {
       return { ok: false, error: String(error.message || error) };
     }

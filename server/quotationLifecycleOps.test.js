@@ -4,8 +4,11 @@ import {
   expireQuotationsPastValidity,
   voidRecentQuotationsAfterMasterPriceChange,
   quotationHasCommitment,
+  quotationOperationsBlockedReason,
   QUOTATION_VALIDITY_DAYS,
+  PRICE_CHANGE_REVIEW_NOTE,
 } from './quotationLifecycleOps.js';
+import { validateQuotationProductionPaymentGate } from './writeOps.js';
 import { createDatabase } from './db.js';
 
 function memDb() {
@@ -48,7 +51,7 @@ describe('quotationLifecycleOps', () => {
     db.close();
   });
 
-  it('voids recent quotes on master price change rule', () => {
+  it('flags recent quotes for review on master price change and does not void them', () => {
     const db = memDb();
     const cid =
       db.prepare(`SELECT customer_id FROM customers ORDER BY customer_id LIMIT 1`).get()?.customer_id || 'C1';
@@ -57,9 +60,12 @@ describe('quotationLifecycleOps', () => {
        VALUES ('Q-LCYCLE-VOID',?,?, '2026-04-03','Unpaid',0,'Pending',0)`
     ).run(cid, 'Test');
     const r = voidRecentQuotationsAfterMasterPriceChange(db, 'ALL', '2026-04-04');
-    expect(r.voided).toBe(1);
-    const row = db.prepare(`SELECT status FROM quotations WHERE id='Q-LCYCLE-VOID'`).get();
-    expect(row.status).toBe('Void');
+    expect(r.voided).toBe(0);
+    expect(r.flagged).toBe(1);
+    const row = db.prepare(`SELECT status, archived, quotation_lifecycle_note FROM quotations WHERE id='Q-LCYCLE-VOID'`).get();
+    expect(row.status).toBe('Pending');
+    expect(row.archived).toBe(0);
+    expect(row.quotation_lifecycle_note).toBe(PRICE_CHANGE_REVIEW_NOTE);
     db.close();
   });
 
@@ -73,6 +79,22 @@ describe('quotationLifecycleOps', () => {
     ).run(cid, 'Test');
     const r = voidRecentQuotationsAfterMasterPriceChange(db, 'ALL', '2026-04-04');
     expect(r.voided).toBe(0);
+    expect(r.flagged).toBe(0);
+    db.close();
+  });
+
+  it('refuses cutting lists and production on a void quotation', () => {
+    const db = memDb();
+    const cid =
+      db.prepare(`SELECT customer_id FROM customers ORDER BY customer_id LIMIT 1`).get()?.customer_id || 'C1';
+    db.prepare(
+      `INSERT INTO quotations (id, customer_id, customer_name, date_iso, payment_status, paid_ngn, total_ngn, status, archived)
+       VALUES ('Q-LCYCLE-VOIDGATE',?,?, '2026-08-22','Paid',100,100,'Void',1)`
+    ).run(cid, 'Test');
+    expect(quotationOperationsBlockedReason('Void')).toMatch(/Void/);
+    const gate = validateQuotationProductionPaymentGate(db, 'Q-LCYCLE-VOIDGATE');
+    expect(gate.ok).toBe(false);
+    expect(gate.code).toBe('QUOTATION_VOID');
     db.close();
   });
 

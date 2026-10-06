@@ -1,19 +1,20 @@
 /**
  * Quotation validity: 10 calendar days from quote date, then auto-archive as Expired (no commitment).
  * Follow-up alert (UI): days 5–9 — see client helpers.
- * Master price change: void quotes under 2 days old with no commitment.
+ * Master price change: flag quotes under 2 days old with no commitment for review. Never void them.
  */
 import { branchPredicate } from './branchSql.js';
 
 export const QUOTATION_VALIDITY_DAYS = 10;
 export const QUOTATION_FOLLOWUP_START_DAY = 5;
-/** Void quotes with age (0 or 1 full days since quote date) when list/default prices change. */
+/** Flag quotes with age (0 or 1 full days since quote date) when list/default prices change. */
 export const PRICE_CHANGE_VOID_MAX_AGE_DAYS = 2;
+/** Shown on the quote. Status stays as it was — a price change must not void. */
+export const PRICE_CHANGE_REVIEW_NOTE = 'Price changed — review';
 
 const TERMINAL_STATUSES = new Set(['Expired', 'Void']);
 
 const EXPIRE_NOTE = `Auto-expired: ${QUOTATION_VALIDITY_DAYS}-day quotation validity ended (no payment, cutting list, ledger receipt, or production approval).`;
-const VOID_PRICE_NOTE = `Auto-void: master price changed while quote was under ${PRICE_CHANGE_VOID_MAX_AGE_DAYS} days old with no commitment.`;
 
 function parseIsoDate(s) {
   const t = String(s || '').slice(0, 10);
@@ -90,11 +91,21 @@ export function expireQuotationsPastValidity(db, branchScope, todayISO = new Dat
   return { expired };
 }
 
+/** Receipts, cutting lists, and production are refused while a quote is Void. */
+export function quotationOperationsBlockedReason(status) {
+  if (String(status || '').trim() === 'Void') {
+    return 'This quotation is Void. Receipts, cutting lists, and production are refused.';
+  }
+  return '';
+}
+
 /**
+ * Price-list edits used to void recent uncommitted quotes. They now only flag
+ * "Price changed — review". Status and archived stay as they were.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} branchScope
  * @param {string} [todayISO]
- * @returns {{ voided: number }}
+ * @returns {{ voided: number, flagged: number }}
  */
 export function voidRecentQuotationsAfterMasterPriceChange(
   db,
@@ -110,18 +121,17 @@ export function voidRecentQuotationsAfterMasterPriceChange(
     )
     .all(...bp.args);
 
-  const upd = db.prepare(
-    `UPDATE quotations SET status = 'Void', archived = 1, quotation_lifecycle_note = ? WHERE id = ?`
-  );
-  let voided = 0;
+  const upd = db.prepare(`UPDATE quotations SET quotation_lifecycle_note = ? WHERE id = ?`);
+  let flagged = 0;
   for (const row of rows) {
     const age = quotationAgeCalendarDays(row.date_iso, todayISO);
     if (age == null || age >= PRICE_CHANGE_VOID_MAX_AGE_DAYS) continue;
     if (quotationHasCommitment(db, row)) continue;
-    upd.run(VOID_PRICE_NOTE, row.id);
-    voided += 1;
+    if (String(row.quotation_lifecycle_note || '').trim() === PRICE_CHANGE_REVIEW_NOTE) continue;
+    upd.run(PRICE_CHANGE_REVIEW_NOTE, row.id);
+    flagged += 1;
   }
-  return { voided };
+  return { voided: 0, flagged };
 }
 
 export function isTerminalQuotationStatus(status) {

@@ -232,7 +232,11 @@ export function coilProductionUsedMByCoil(productionJobs, productionJobCoils, st
       (x) => String(x.jobID || x.job_id) === jid && String(x.coilNo || x.coil_no || '').trim()
     ).length;
     const share = coilCount > 0 ? roundM(jobM / coilCount) : 0;
-    const coilM = roundM(c.metresUsed ?? c.metres_used ?? c.metres ?? share);
+    // metres_produced is the coil's own output. Sharing job actual_meters equally
+    // counted the other coil and any offcut metres on this coil (133.4 m vs 196.60 m).
+    const produced = c.metersProduced ?? c.meters_produced;
+    const hasProduced = produced != null && produced !== '';
+    const coilM = hasProduced ? roundM(produced) : roundM(c.metresUsed ?? c.metres_used ?? c.metres ?? share);
     if (coilM > 0) byCoil.set(cn, roundM((byCoil.get(cn) || 0) + coilM));
   }
   return byCoil;

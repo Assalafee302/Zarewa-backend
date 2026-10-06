@@ -28,6 +28,7 @@ import {
 } from './refundPaidProductionEditGate.js';
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { validateQuotationProductionPaymentGate, recalculateCoilLotBook } from './writeOps.js';
+import { quotationOperationsBlockedReason } from './quotationLifecycleOps.js';
 import { getQuotation } from './readModel.js';
 import {
   isStainMeterQuotationLinesJson,
@@ -101,6 +102,11 @@ import { insertStockMovementTx } from './stockMovementOps.js';
 import { validateConversionVarianceReason } from '../shared/productionConversionReasons.js';
 import { persistProductionConversionVarianceReason } from './operations/productionConversionVariancePersist.js';
 import { coilForAllocationGauge } from './operations/coilGaugeRevisionOps.js';
+import { drawStainedLotTx } from './operations/coilStainedLotOps.js';
+import {
+  correctionReasonBlock,
+  userIsBranchManagerOrOm,
+} from './operations/coilCorrectionControl.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 
 function nextId(prefix) {
@@ -459,7 +465,9 @@ function completionModeFromPayload(payload) {
   const mode = String(payload?.startMode ?? payload?.completeMode ?? payload?.completionMode ?? '')
     .trim()
     .toLowerCase();
-  return mode === 'offcut' || mode === 'accessories_only' || mode === 'accessory_only' ? 'offcut' : 'coil';
+  if (mode === 'offcut' || mode === 'accessories_only' || mode === 'accessory_only') return 'offcut';
+  if (mode === 'stained' || mode === 'stained_lot' || mode === 'damaged') return 'stained';
+  return 'coil';
 }
 
 function offcutMetersFromPayload(payload) {
@@ -1247,8 +1255,14 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   }
   const allocations = listJobCoilsForJob(db, jobID);
   const startMode = completionModeFromPayload(payload);
-  /* Pure alu needs coils (unless offcut start). Stain and stone may start without coils (pool / metre stock). */
-  if (!allocations.length && !jobIsStoneMeter(db, job) && startMode !== 'offcut' && !jobIsStainMeter(db, job)) {
+  /* Prime coil jobs need an allocation. Offcut and stained mode start without one. */
+  if (
+    !allocations.length &&
+    !jobIsStoneMeter(db, job) &&
+    startMode !== 'offcut' &&
+    startMode !== 'stained' &&
+    !jobIsStainMeter(db, job)
+  ) {
     return { ok: false, error: 'Allocate at least one coil before starting production.' };
   }
   const startedAtISO = normalizeIso(payload.startedAtISO || job.start_date_iso || nowIso());
@@ -2112,6 +2126,19 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
       error: STAIN_COMPLETE_NEEDS_YARD_STOCK,
     };
   }
+  // Offcut mode may finish only metres that were actually issued from the offcut pool.
+  // A typed metre figure with supply count 0 used to copy itself into offcut stock and
+  // complete the job with no COIL_CONSUMPTION. Those metres must allocate a coil instead.
+  const offcutDrawnM = offcutSupplyList.reduce((sum, row) => sum + (Number(row.meters) || 0), 0);
+  if (metres > 0.02 && offcutDrawnM + 0.02 < metres) {
+    const supplyNote =
+      offcutSupplyList.length === 0 ? 'Offcut supply count is 0. ' : `Offcut pool drawn is ${offcutDrawnM.toFixed(2)} m. `;
+    return {
+      ok: false,
+      code: 'OFFCUT_POOL_DRAW_REQUIRED',
+      error: `${supplyNote}Offcut completion needs at least ${metres.toFixed(2)} m drawn from the offcut pool. Prime metres allocate a coil. Stained or damaged metres use stained mode.`,
+    };
+  }
   // Offcut/accessories completion previously skipped every guard the coil completion path
   // enforces: a job could jump straight from Planned to Completed (never started, so the
   // payment re-gate in startProductionJob never ran), and a
@@ -2292,11 +2319,127 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
   }
 }
 
+function completeProductionJobStained(db, job, jobID, payload = {}, opts = {}) {
+  const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());
+  const coilNo = String(payload.stainedCoilNo ?? payload.stainedLotCoilNo ?? payload.coilNo ?? '').trim();
+  const metres = safeNumber(payload.metersProduced ?? payload.metres ?? payload.actualMeters ?? payload.totalMeters);
+  const kg = safeNumber(payload.kg ?? payload.consumedKg ?? payload.consumedWeightKg ?? payload.stainedKg);
+  if (!coilNo) return { ok: false, error: 'Stained mode needs the stained lot coil number.' };
+  if (!Number.isFinite(metres) || metres <= 0) return { ok: false, error: 'Stained mode needs metres produced.' };
+  if (!Number.isFinite(kg) || kg <= 0) return { ok: false, error: 'Stained mode needs the kg drawn from the stained lot.' };
+  if (String(job.status ?? 'Planned') !== 'Running') {
+    return { ok: false, error: 'Start the production job before completing it.' };
+  }
+  if (listJobCoilsForJob(db, jobID).length > 0) {
+    return {
+      ok: false,
+      error: 'This job already has a coil allocation. Stained mode is only for metres drawn from a stained lot.',
+    };
+  }
+  const paidRefundGatePre = validateProductionEditAgainstPaidRefunds(db, job, {
+    proposedJobOutputMetres: metres,
+  });
+  if (!paidRefundGatePre.ok) return paidRefundGatePre;
+  const overrun = meterOverrunRemarkGate(job, payload, {
+    stoneHybrid: jobIsStoneCoilHybrid(db, job),
+    stoneMetersConsumed: jobIsStoneCoilHybrid(db, job) ? stoneMetersConsumedFromPayload(payload) : 0,
+    flatsheetMeters: metres,
+  });
+  if (overrun) return overrun;
+
+  let accessoryStockWarnings = [];
+  try {
+    assertPeriodOpen(db, completedAtISO, 'Production completion date');
+    const stockBranch = jobBranchId(job);
+    const adjustStock = (db, pid, delta) => adjustProductStockTx(db, pid, delta, stockBranch);
+    db.transaction(() => {
+      const accPlan = planAccessoryCompletion(db, job, payload);
+      if (!accPlan.ok) throw new Error(accPlan.error);
+      accessoryStockWarnings = accPlan.accessoryStockWarnings ?? [];
+      const drawn = drawStainedLotTx(db, {
+        coilNo,
+        jobId: jobID,
+        kg,
+        meters: metres,
+        atISO: completedAtISO,
+        dateISO: completedAtISO.slice(0, 10),
+        branchId: stockBranch,
+      });
+      adjustProductStockTx(db, drawn.productId, -drawn.kg, stockBranch);
+      db.prepare(
+        `UPDATE production_jobs
+         SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
+             conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
+         WHERE job_id = ?`
+      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, drawn.kg, 'OK', 0, 0, jobID);
+      if (job.cutting_list_id) {
+        db.prepare(`UPDATE cutting_lists SET status = 'Finished' WHERE id = ?`).run(job.cutting_list_id);
+      }
+      applyAccessoryCompletionTx(
+        db,
+        jobID,
+        String(job.quotation_ref ?? '').trim(),
+        completedAtISO,
+        accPlan.plannedLines,
+        adjustStock,
+        appendStockMovementTx
+      );
+      const hybrid = applyHybridStoneMetreAndSfTx(db, job, jobID, payload, completedAtISO, stockBranch, adjustStock);
+      if ((hybrid.stoneMetres || 0) > 0) {
+        db.prepare(`UPDATE production_jobs SET actual_roof_m = ?, actual_flatsheet_m = ? WHERE job_id = ?`).run(
+          hybrid.stoneMetres || 0,
+          metres,
+          jobID
+        );
+      }
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'production.complete_stained',
+        entityKind: 'production_job',
+        entityId: jobID,
+        note: `Production completed on ${jobID} from stained lot ${coilNo}`,
+        details: {
+          coilNo,
+          meters: metres,
+          kg: drawn.kg,
+          cogsNgn: drawn.cogsNgn,
+          movementId: drawn.movementId,
+        },
+      });
+      const glRec = tryPostProductionRecognitionGlTx(db, {
+        jobID,
+        quotationRef: String(job.quotation_ref ?? '').trim(),
+        actualMeters: metres,
+        totalCogsNgn: drawn.cogsNgn,
+        completedAtISO,
+        branchId: job.branch_id ?? null,
+        createdByUserId: opts.actor?.id != null ? String(opts.actor.id) : null,
+      });
+      if (!glRec.ok) throw new Error(glRec.error || 'Production recognition GL failed.');
+    })();
+    notifyRefundIntegrityDriftIfNeeded(db, job.quotation_ref, opts.actor, 'production.complete.stained', jobID);
+    return {
+      ok: true,
+      actualMeters: metres,
+      actualWeightKg: kg,
+      stainedCoilNo: coilNo,
+      alertState: 'OK',
+      managerReviewRequired: false,
+      accessoryStockWarnings,
+    };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
+}
+
 export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
   const qrefComplete = String(job.quotation_ref || '').trim();
   if (qrefComplete) {
+    const quoteStatus = db.prepare(`SELECT status FROM quotations WHERE id = ?`).get(qrefComplete)?.status;
+    const voidBlock = quotationOperationsBlockedReason(quoteStatus);
+    if (voidBlock) return { ok: false, error: voidBlock, code: 'QUOTATION_VOID' };
     const refundProdBlock = assertQuotationProductionNotBlockedByRefund(db, qrefComplete);
     if (!refundProdBlock.ok) return refundProdBlock;
   }
@@ -2305,6 +2448,9 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   }
   if (isReturnedToWaitingStatus(job.status)) {
     return { ok: false, error: 'This job was returned to waiting so Sales can edit the quotation.' };
+  }
+  if (completionModeFromPayload(payload) === 'stained') {
+    return completeProductionJobStained(db, job, jobID, payload, opts);
   }
   if (jobIsStoneMeter(db, job) && quotationIsAccessoriesOnlyForJob(db, job)) {
     return completeProductionJobOffcut(db, job, jobID, payload, opts);
@@ -3683,8 +3829,14 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     };
   }
   const note = String(payload.reason ?? payload.note ?? '').trim();
-  if (note.length < 12) {
-    return { ok: false, error: 'Enter a detailed reason (at least 12 characters) for this correction.' };
+  const reasonBlock = correctionReasonBlock(note);
+  if (reasonBlock) return { ok: false, error: reasonBlock, code: 'CORRECTION_REASON_REJECTED' };
+  if (!userIsBranchManagerOrOm(opts.actor) && opts.correctionApproved !== true) {
+    return {
+      ok: false,
+      code: 'CORRECTION_APPROVAL_REQUIRED',
+      error: 'A Branch Manager or Operations Manager must approve this correction before it posts.',
+    };
   }
   const lines = Array.isArray(payload.readings) ? payload.readings : [];
   if (!lines.length) return { ok: false, error: 'Send corrected readings for each coil line.' };
@@ -4664,6 +4816,9 @@ function listCoilProductionConsumptionMovementRows(db, coilNo) {
 }
 
 function movementBelongsToCoil(row, coilNo) {
+  // Stained-lot consumption names the source coil but the kg already left the prime coil
+  // when it was marked stained. Counting it here would take the kg off the coil twice.
+  if (/^Stained lot\b/i.test(String(row?.detail || '').trim())) return false;
   const cn = String(coilNo ?? '').trim();
   if (String(row?.coil_no ?? '').trim() === cn) return true;
   return stockMovementDetailRefersToCoilNo(row?.detail, cn);
@@ -4812,7 +4967,8 @@ function coilSplitOutKgFromChildren(db, coilNo) {
 }
 
 /**
- * Net kg change on this coil from scrap, returns, finish-roll tail, and master-data adjust
+ * Net kg change on this coil from scrap, returns, physical-count variance, stained transfer
+ * (negative COIL_TO_STAINED only), finish-roll tail, and master-data adjust
  * (not counted in production_job_coils consumed sum).
  */
 function coilAncillaryKgNetDelta(db, coilNo) {
@@ -4821,11 +4977,12 @@ function coilAncillaryKgNetDelta(db, coilNo) {
   let net = 0;
   const scrapReturn = db
     .prepare(
-      `SELECT qty, detail FROM stock_movements WHERE ref = ? AND type IN ('COIL_SCRAP', 'COIL_RETURN')`
+      `SELECT qty, detail, type FROM stock_movements WHERE ref = ? AND type IN ('COIL_SCRAP', 'COIL_RETURN', 'COIL_COUNT_VARIANCE', 'COIL_TO_STAINED')`
     )
     .all(cn);
   for (const m of scrapReturn) {
     if (String(m.detail || '').includes('Production book reconcile')) continue;
+    if (m.type === 'COIL_TO_STAINED' && safeNumber(m.qty) >= 0) continue;
     net += safeNumber(m.qty);
   }
   // Net kg still cleared by finish-roll (tail cleared minus any undo), keyed by coil_control_events

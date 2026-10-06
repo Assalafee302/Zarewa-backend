@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildStockRegisterPack,
   coilMaterialFamily,
+  coilProductionUsedMByCoil,
   colourFullNameForRegister,
   enrichStockRegisterValuation,
   netKgFromGrossClosing,
@@ -373,5 +374,23 @@ describe('stockRegisterCore', () => {
       ],
     });
     expect(pack.accessories.rows.find((r) => r.productID === 'ACC-RIVET-PACK')).toBeUndefined();
+  });
+
+  it('uses each coil metersProduced instead of an equal share of the job metres', () => {
+    const used = coilProductionUsedMByCoil(
+      [
+        { jobID: 'PRO-KD-26-1081', status: 'Completed', completedAtISO: '2026-08-24', actualMeters: 255.8 },
+        { jobID: 'PRO-KD-26-1099', status: 'Completed', completedAtISO: '2026-08-26', actualMeters: 5.5 },
+      ],
+      [
+        { jobID: 'PRO-KD-26-1081', coilNo: 'CL-26-2025', metersProduced: 192.1, consumedWeightKg: 532 },
+        { jobID: 'PRO-KD-26-1081', coilNo: 'CL-26-2054', metersProduced: 63.7, consumedWeightKg: 195 },
+        { jobID: 'PRO-KD-26-1099', coilNo: 'CL-26-2025', metersProduced: 4.5, consumedWeightKg: 15 },
+      ],
+      '2026-08-01',
+      '2026-08-31'
+    );
+    expect(used.get('CL-26-2025')).toBeCloseTo(196.6, 2);
+    expect(used.get('CL-26-2054')).toBeCloseTo(63.7, 2);
   });
 });

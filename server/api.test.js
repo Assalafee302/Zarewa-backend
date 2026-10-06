@@ -30,6 +30,12 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     return res;
   }
 
+  async function asBranchManager() {
+    const mgr = request.agent(app);
+    await loginAs(mgr, 'sales.manager', 'Sales@123');
+    return mgr;
+  }
+
 
   beforeEach(async () => {
     savedEnv.ZAREWA_AI_API_KEY = process.env.ZAREWA_AI_API_KEY;
@@ -2958,7 +2964,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(String(bad.body.error || '')).toMatch(/positive number of metres|offcut|coil/i);
   });
 
-  it('offcut-only completion posts actual_meters from offcutInventoryMeters when output field is omitted', async () => {
+  it('offcut-only completion is refused until metres are drawn from the offcut pool', async () => {
     const cutting = await agent.post('/api/cutting-lists').send({
       quotationRef: 'QT-2026-005',
       customerID: 'CUS-001',
@@ -2995,13 +3001,8 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       completeMode: 'offcut',
       offcutInventoryMeters: 18,
     });
-    expect(complete.status).toBe(200);
-    expect(complete.body.actualMeters).toBeCloseTo(18, 3);
-
-    const boot = await agent.get('/api/bootstrap');
-    const pj = boot.body.productionJobs.find((j) => j.jobID === jobId);
-    expect(pj?.actualMeters).toBeCloseTo(18, 3);
-    expect(pj?.offcutInventoryMeters).toBeCloseTo(18, 3);
+    expect(complete.status).toBe(400);
+    expect(String(complete.body.error || '')).toMatch(/offcut pool/i);
   });
 
   it('requires meterOverrunRemark when coil plus offcutInventoryMeters exceeds planned metres', async () => {
@@ -3133,7 +3134,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const list = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
     expect(list.status).toBe(200);
     const line = list.body.allocations[0];
-    const corr = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+    const corr = await (await asBranchManager()).post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
       reason: 'Operator mistyped metre reading on completion form — corrected after yard recount.',
       readings: [
         {
@@ -3156,7 +3157,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const listAfter = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
     expect(listAfter.status).toBe(200);
     const line2 = listAfter.body.allocations[0];
-    const corrOff = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+    const corrOff = await (await asBranchManager()).post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
       reason: 'Additional offcut stock metres were issued from yard after completion audit.',
       readings: [
         {
@@ -3232,7 +3233,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const list = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
     expect(list.status).toBe(200);
     const line = list.body.allocations[0];
-    const corr = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+    const corr = await (await asBranchManager()).post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
       reason: 'Roll finished was ticked by mistake — steel remains on the roll after yard check.',
       confirmUndoFinishRoll: true,
       readings: [
@@ -3311,7 +3312,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const list = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
     expect(list.status).toBe(200);
     const line = list.body.allocations[0];
-    const corr = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+    const corr = await (await asBranchManager()).post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
       reason: 'Closing kg was typed too high — yard recount shows 100 kg left on the roll not 400.',
       readings: [
         {
@@ -3334,7 +3335,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
 
     const list2 = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
     const line2 = list2.body.allocations[0];
-    const addCoil = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+    const addCoil = await (await asBranchManager()).post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
       reason: 'Second roll was used on the same job but omitted from the original completion entry.',
       readings: [
         {

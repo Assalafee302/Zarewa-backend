@@ -260,6 +260,23 @@ CREATE TABLE IF NOT EXISTS coil_lots (
   gauge_revised_at_iso TEXT
 );
 
+-- Damaged metal still in inventory. Same coil number, colour, gauge, and unit cost as the prime coil.
+-- Catalogue stock_level includes qty_kg (see stainedOnHandKg). Not scrap.
+CREATE TABLE IF NOT EXISTS stained_lots (
+  coil_no TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  colour TEXT,
+  gauge_label TEXT,
+  unit_cost_ngn_per_kg INTEGER NOT NULL DEFAULT 0,
+  qty_kg REAL NOT NULL DEFAULT 0,
+  cost_ngn INTEGER NOT NULL DEFAULT 0,
+  created_at_iso TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_stained_lots_product ON stained_lots(product_id, branch_id);
+
 -- Physical gauge history. Refunds and production registered before a change keep the prior label.
 CREATE TABLE IF NOT EXISTS coil_gauge_revisions (
   id TEXT PRIMARY KEY,

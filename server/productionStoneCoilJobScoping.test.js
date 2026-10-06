@@ -50,6 +50,12 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
     db.prepare(
       `INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-HY-1', 'Hybrid Test Customer', ?)`
     ).run(DEFAULT_BRANCH_ID);
+    db.prepare(
+      `INSERT INTO material_incidents (
+        id, branch_id, incident_type, material_family, gauge_label, colour,
+        total_meters, meters_available, status, posted_at_iso, date_iso, created_at_iso, updated_at_iso
+      ) VALUES ('INC-HY-POOL', ?, 'yard_offcut', 'aluzinc', '0.50mm', 'Red', 500, 500, 'posted', '2026-05-01T00:00:00', '2026-05-01', '2026-05-01T00:00:00', '2026-05-01T00:00:00')`
+    ).run(DEFAULT_BRANCH_ID);
   });
 
   afterEach(() => {
@@ -178,6 +184,7 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
       offcutMetersProduced: 25,
       offcutInventoryMeters: 25,
       stoneMetersConsumed: 60,
+      offcutSupply: [{ materialIncidentId: 'INC-HY-POOL', meters: 25 }],
     });
     expect(done.ok).toBe(true);
 
@@ -229,6 +236,7 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
       offcutMetersProduced: 22,
       offcutInventoryMeters: 22,
       stoneMetersConsumed: 100,
+      offcutSupply: [{ materialIncidentId: 'INC-HY-POOL', meters: 22 }],
     });
     expect(noRemark.ok).toBe(false);
     expect(noRemark.error).toMatch(/flatsheet\/offcut/i);
@@ -240,6 +248,7 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
       offcutInventoryMeters: 22,
       stoneMetersConsumed: 100,
       meterOverrunRemark: '15 m offcut flatsheet plus coil remainder',
+      offcutSupply: [{ materialIncidentId: 'INC-HY-POOL', meters: 22 }],
     });
     expect(withRemark.ok).toBe(true);
     const finalRow = db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(job.jobID);
@@ -275,6 +284,7 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
       offcutMetersProduced: 25,
       offcutInventoryMeters: 25,
       stoneMetersConsumed: 100,
+      offcutSupply: [{ materialIncidentId: 'INC-HY-POOL', meters: 25 }],
     });
     expect(done.ok).toBe(true);
     expect(done.error).toBeFalsy();
@@ -366,6 +376,7 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
       offcutInventoryMeters: 15,
       stoneMetersConsumed: 100,
       meterOverrunRemark: 'Yard offcut covers the extra flatsheet metres.',
+      offcutSupply: [{ materialIncidentId: 'INC-HY-POOL', meters: 15 }],
     });
     expect(done.ok, done.error).toBe(true);
 
@@ -382,7 +393,7 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
         },
       ],
       offcutInventoryMeters: 16,
-    });
+    }, { actor: { roleKey: 'sales_manager', displayName: 'Branch Manager' } });
     expect(corr.ok).toBe(true);
 
     const row = db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(job.jobID);
@@ -392,5 +403,36 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
     const coil = db.prepare(`SELECT * FROM production_job_coils WHERE job_id = ?`).get(job.jobID);
     expect(Number(coil.closing_weight_kg)).toBe(2616);
     expect(Number(coil.consumed_weight_kg)).toBe(14);
+  });
+
+  it('refuses offcut completion when no metres were drawn from the pool', () => {
+    insertStoneQuotation(
+      'QT-STONE-HYBRID-NOPOOL',
+      [
+        { name: 'Roofing Sheet', qty: '20', unitPrice: '5000' },
+        { name: 'Flat sheet', qty: '10', unitPrice: '4000' },
+      ],
+      140000
+    );
+    const cl = insertCuttingList(db, {
+      quotationRef: 'QT-STONE-HYBRID-NOPOOL',
+      lines: [
+        { sheets: 4, lengthM: 5, lineType: 'Roof' },
+        { sheets: 2, lengthM: 5, lineType: 'Flatsheet' },
+      ],
+    });
+    expect(cl.ok).toBe(true);
+    const job = insertProductionJob(db, { cuttingListId: cl.id });
+    expect(job.ok).toBe(true);
+    expect(startProductionJob(db, job.jobID).ok).toBe(true);
+    const done = completeProductionJob(db, job.jobID, {
+      completeMode: 'offcut',
+      offcutMetersProduced: 10,
+      offcutInventoryMeters: 10,
+      stoneMetersConsumed: 20,
+    });
+    expect(done.ok).toBe(false);
+    expect(done.code).toBe('OFFCUT_POOL_DRAW_REQUIRED');
+    expect(done.error).toMatch(/supply count is 0/i);
   });
 });

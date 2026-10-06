@@ -784,35 +784,54 @@ function runMigrationsUnlocked(db) {
   if (!coilLots.has('supplier_conversion_kg_per_m')) {
     db.exec(`ALTER TABLE coil_lots ADD COLUMN supplier_conversion_kg_per_m REAL`);
   }
-  if (!coilLots.has('qty_remaining')) {
+  const qtyRemainingAdded = !coilLots.has('qty_remaining');
+  const currentWeightAdded = !coilLots.has('current_weight_kg');
+  if (qtyRemainingAdded) {
     db.exec(`ALTER TABLE coil_lots ADD COLUMN qty_remaining REAL NOT NULL DEFAULT 0`);
   }
   if (!coilLots.has('qty_reserved')) {
     db.exec(`ALTER TABLE coil_lots ADD COLUMN qty_reserved REAL NOT NULL DEFAULT 0`);
   }
-  if (!coilLots.has('current_weight_kg')) {
+  if (currentWeightAdded) {
     db.exec(`ALTER TABLE coil_lots ADD COLUMN current_weight_kg REAL NOT NULL DEFAULT 0`);
   }
   if (!coilLots.has('current_status')) {
     db.exec(`ALTER TABLE coil_lots ADD COLUMN current_status TEXT NOT NULL DEFAULT 'Available'`);
   }
+  // One-time backfill when the on-hand columns are first added. A consumed coil at 0 kg
+  // must stay 0 — copying weight_kg/qty_received back into qty_remaining on every startup
+  // revived finished coils (status stayed Consumed because MySQL applied the status CASE
+  // to the revived quantity via ELSE).
+  if (qtyRemainingAdded || currentWeightAdded) {
+    db.exec(`
+      UPDATE coil_lots
+      SET qty_remaining = CASE
+            WHEN qty_remaining IS NULL OR qty_remaining = 0 THEN COALESCE(weight_kg, qty_received, 0)
+            ELSE qty_remaining
+          END,
+          current_weight_kg = CASE
+            WHEN current_weight_kg IS NULL OR current_weight_kg = 0 THEN COALESCE(weight_kg, qty_received, 0)
+            ELSE current_weight_kg
+          END
+      WHERE COALESCE(current_status, 'Available') != 'Consumed'
+    `);
+  }
+
   db.exec(`
-    UPDATE coil_lots
-    SET qty_remaining = CASE
-      WHEN qty_remaining IS NULL OR qty_remaining = 0 THEN COALESCE(weight_kg, qty_received, 0)
-      ELSE qty_remaining
-    END,
-        current_weight_kg = CASE
-          WHEN current_weight_kg IS NULL OR current_weight_kg = 0 THEN COALESCE(weight_kg, qty_received, 0)
-          ELSE current_weight_kg
-        END,
-        qty_reserved = COALESCE(qty_reserved, 0),
-        current_status = CASE
-          WHEN COALESCE(qty_remaining, COALESCE(weight_kg, qty_received, 0)) <= 0 THEN 'Consumed'
-          WHEN COALESCE(qty_reserved, 0) >= COALESCE(qty_remaining, COALESCE(weight_kg, qty_received, 0)) AND COALESCE(qty_reserved, 0) > 0 THEN 'Reserved'
-          ELSE COALESCE(current_status, 'Available')
-        END
+    CREATE TABLE IF NOT EXISTS stained_lots (
+      coil_no TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      colour TEXT,
+      gauge_label TEXT,
+      unit_cost_ngn_per_kg INTEGER NOT NULL DEFAULT 0,
+      qty_kg REAL NOT NULL DEFAULT 0,
+      cost_ngn INTEGER NOT NULL DEFAULT 0,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    )
   `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_stained_lots_product ON stained_lots(product_id, branch_id)`);
 
   const productionJobs = tableCols('production_jobs');
   if (!productionJobs.has('actual_meters')) {

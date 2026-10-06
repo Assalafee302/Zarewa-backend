@@ -6,6 +6,7 @@ import { withWriteDelta } from '../workspaceWriteDelta.js';
 import {
   acknowledgePurchasePaymentCashierAck,
   getPurchasePaymentCashierAck,
+  listPurchasePaymentCashierAcks,
   listPurchasePaymentCashierAcksPending,
 } from '../finance/purchasePaymentCashierAckOps.js';
 import { resolveBootstrapBranchScope } from '../branchScope.js';
@@ -26,8 +27,43 @@ export function registerPurchasePaymentCashierAckRoutes(app, db) {
           rows: listPurchasePaymentCashierAcksPending(db, branchScope),
         });
       } catch (e) {
-        console.error('[purchase-payment-cashier-acks]', e);
+        console.error('[purchase-payment-cashier-acks-pending]', e);
         res.status(500).json({ ok: false, error: 'Failed to load purchase payment acknowledgments.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/purchase-payment-cashier-acks',
+    requirePermission(['cashier.receipts.confirm', 'finance.pay', 'cashier.desk.view', 'finance.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        res.json({
+          ok: true,
+          rows: listPurchasePaymentCashierAcks(db, branchScope, req.query),
+        });
+      } catch (e) {
+        console.error('[purchase-payment-cashier-acks-list]', e);
+        res.status(500).json({ ok: false, error: 'Failed to list purchase payment acknowledgments.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/purchase-payment-cashier-acks/:ackId',
+    requirePermission(['cashier.receipts.confirm', 'finance.pay', 'cashier.desk.view', 'finance.view']),
+    (req, res) => {
+      try {
+        const ackId = String(req.params.ackId || '').trim();
+        const ack = getPurchasePaymentCashierAck(db, ackId);
+        if (!ack) {
+          return res.status(404).json({ ok: false, error: 'Purchase payment acknowledgment not found.' });
+        }
+        res.json({ ok: true, ack });
+      } catch (e) {
+        console.error('[purchase-payment-cashier-ack-get]', e);
+        res.status(500).json({ ok: false, error: 'Failed to load purchase payment acknowledgment.' });
       }
     }
   );

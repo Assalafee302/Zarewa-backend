@@ -606,6 +606,15 @@ import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import * as write from './writeOps.js';
+import { quotationOperationsBlockedReason } from './quotationLifecycleOps.js';
+import { postCoilPhysicalCount } from './operations/coilPhysicalCountOps.js';
+import { markCoilStainedDamaged } from './operations/coilStainedLotOps.js';
+import {
+  assertCorrectionApproval,
+  consumeCorrectionApprovalTx,
+  correctionReasonBlock,
+  userIsBranchManagerOrOm,
+} from './operations/coilCorrectionControl.js';
 import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWalletOps.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
 import { holdReceiptAwaitingCreditCheck } from './sales/receiptBankCheckHold.js';
@@ -7978,9 +7987,28 @@ export function registerHttpApi(app, db) {
         const jid = req.params.jobId;
         const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
-          applyCompletedProductionCoilCorrections(db, jid, stripped || {}, { actor: req.user })
-        );
+        const body = req.body || {};
+        const reasonBlock = correctionReasonBlock(body.reason ?? body.note);
+        if (reasonBlock) {
+          return res.status(400).json({ ok: false, error: reasonBlock, code: 'CORRECTION_REASON_REJECTED' });
+        }
+        const approval = assertCorrectionApproval(db, {
+          actor: req.user,
+          editApprovalId: body.editApprovalId,
+          entityKind: 'production_job',
+          entityId: jid,
+        });
+        if (!approval.ok) return res.status(403).json(approval);
+        const r = db.transaction(() => {
+          if (approval.consumeId) consumeCorrectionApprovalTx(db, approval.consumeId, 'production_job', jid);
+          const out = applyCompletedProductionCoilCorrections(db, jid, body, {
+            actor: req.user,
+            correctionApproved: true,
+          });
+          if (!out?.ok) throw new Error(out?.error || 'Correction rejected.');
+          return out;
+        })();
+        return res.status(200).json(r);
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -8625,15 +8653,43 @@ export function registerHttpApi(app, db) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
+  app.post('/api/coil-lots/:coilNo/mark-stained', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      const r = markCoilStainedDamaged(
+        db,
+        { ...req.body, coilNo },
+        { workspaceBranchId: req.workspaceBranchId, actor: req.user }
+      );
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+  app.post('/api/coil-lots/:coilNo/physical-count', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      const r = postCoilPhysicalCount(
+        db,
+        { ...req.body, coilNo },
+        { workspaceBranchId: req.workspaceBranchId, actor: req.user }
+      );
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
   app.post('/api/coil-lots/:coilNo/undo-finish-roll', (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
     }
-    if (!userMayEditCoilLotMasterData(req.user)) {
+    if (!userMayEditCoilLotMasterData(req.user) && !userIsBranchManagerOrOm(req.user) && !String(req.body?.editApprovalId || '').trim()) {
       return res.status(403).json({
         ok: false,
-        error: 'Only a branch manager (or above) can undo finish roll and restore the coil.',
-        code: 'FORBIDDEN',
+        error: 'A Branch Manager or Operations Manager must approve this correction before it posts.',
+        code: 'CORRECTION_APPROVAL_REQUIRED',
       });
     }
     return next();
@@ -13458,6 +13514,8 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const qt = getQuotation(db, quotationId);
       if (!qt) return res.status(404).json({ ok: false, error: 'Quotation not found' });
+      const voidBlock = quotationOperationsBlockedReason(qt.status);
+      if (voidBlock) return res.status(400).json({ ok: false, error: voidBlock, code: 'QUOTATION_VOID' });
       const qGate = assertQuotationIdInWorkspace(db, req, quotationId);
       if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
       const resolvedCust = resolveReceiptPostingCustomer(qt, requestedCustomerID);

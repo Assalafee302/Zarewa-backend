@@ -76,6 +76,13 @@ import {
   paymentGateBasisAfterQuotationTotalIncrease,
 } from '../shared/lib/cuttingListPaymentGate.js';
 import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
+import { quotationOperationsBlockedReason } from './quotationLifecycleOps.js';
+import { stainedOnHandKg } from './operations/stainedLotBalance.js';
+import {
+  assertCorrectionApproval,
+  consumeCorrectionApprovalTx,
+  correctionReasonBlock,
+} from './operations/coilCorrectionControl.js';
 import { createCustomerComplaint } from './customerComplaintsOps.js';
 import {
   cuttingListTotalMetresFromLines,
@@ -3336,6 +3343,15 @@ function bumpCoilLinkedProductStock(db, productId, branchId, delta) {
   }
 }
 
+/** Prime coil on-hand plus stained lots of the same SKU. Stained kg is still inventory. */
+function roundedCoilCatalogKg(db, productId, branchFilter) {
+  const sql = branchFilter
+    ? `SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ? AND branch_id = ?`
+    : `SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ?`;
+  const coil = Number(db.prepare(sql).get(...(branchFilter ? [productId, branchFilter] : [productId]))?.s) || 0;
+  return Math.round(coil + stainedOnHandKg(db, productId, branchFilter || null));
+}
+
 function reconcileCoilProductStockFromLots(db, productID, branchId) {
   const pid = String(productID || '').trim();
   if (!pid) return;
@@ -3347,27 +3363,11 @@ function reconcileCoilProductStockFromLots(db, productID, branchId) {
 
   let total;
   if (isGlobalCoilCatalogProductId(pid)) {
-    total = Math.round(
-      Number(
-        db.prepare(`SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ?`).get(pid)?.s
-      ) || 0
-    );
+    total = roundedCoilCatalogKg(db, pid, null);
   } else if (hasB && bid) {
-    total = Math.round(
-      Number(
-        db
-          .prepare(
-            `SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ? AND branch_id = ?`
-          )
-          .get(pid, bid)?.s
-      ) || 0
-    );
+    total = roundedCoilCatalogKg(db, pid, bid);
   } else {
-    total = Math.round(
-      Number(
-        db.prepare(`SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ?`).get(pid)?.s
-      ) || 0
-    );
+    total = roundedCoilCatalogKg(db, pid, null);
   }
   db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(total, pid, pb);
 }
@@ -4478,6 +4478,14 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
 
   if (!coilNo) return { ok: false, error: 'Coil number is required.' };
   if (!Number.isFinite(kg) || kg <= 0) return { ok: false, error: 'Scrap weight must be a positive number.' };
+  if (/\b(stain(?:ed|s)?|damage[ds]?)\b/i.test(`${reason} ${note}`)) {
+    return {
+      ok: false,
+      code: 'STAINED_LOT_REQUIRED',
+      error:
+        'Stained or damaged metal stays in stock. Mark the coil stained/damaged so that kg moves into a stained lot. Scrap is only for metal that is thrown away or sold as scrap.',
+    };
+  }
 
   try {
     assertPeriodOpen(db, dateISO, 'Scrap posting date');
@@ -4813,9 +4821,15 @@ export function postCoilUndoFinishRoll(db, payload = {}, opts = {}) {
       code: 'UNDO_FINISH_ROLL_CONFIRM_REQUIRED',
     };
   }
-  if (note.length < 8) {
-    return { ok: false, error: 'Enter a note (at least 8 characters) for the audit trail.' };
-  }
+  const reasonBlock = correctionReasonBlock(note);
+  if (reasonBlock) return { ok: false, error: reasonBlock, code: 'CORRECTION_REASON_REJECTED' };
+  const approval = assertCorrectionApproval(db, {
+    actor,
+    editApprovalId: payload.editApprovalId,
+    entityKind: 'coil_lot',
+    entityId: coilNo,
+  });
+  if (!approval.ok) return approval;
 
   try {
     assertPeriodOpen(db, dateISO, 'Undo finish roll date');
@@ -4856,6 +4870,7 @@ export function postCoilUndoFinishRoll(db, payload = {}, opts = {}) {
 
   try {
     db.transaction(() => {
+      if (approval.consumeId) consumeCorrectionApprovalTx(db, approval.consumeId, 'coil_lot', coilNo);
       db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
         newRem,
         newRem,
@@ -7475,7 +7490,7 @@ function validateQuotationForCuttingList(
   if (!qref) return { ok: false, error: 'Link a quotation.' };
   const qrow = db
     .prepare(
-      `SELECT total_ngn, paid_ngn, manager_production_approved_at_iso, manager_production_approval_level,
+      `SELECT total_ngn, paid_ngn, status, manager_production_approved_at_iso, manager_production_approval_level,
               branch_id, lines_json, date_iso, payment_gate_basis_total_ngn,
               md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso,
               bm_price_exception_approved_at_iso, price_exception_md_review_required
@@ -7483,6 +7498,8 @@ function validateQuotationForCuttingList(
     )
     .get(qref);
   if (!qrow) return { ok: false, error: 'Quotation not found.' };
+  const voidBlock = quotationOperationsBlockedReason(qrow.status);
+  if (voidBlock) return { ok: false, error: voidBlock, code: 'QUOTATION_VOID' };
   const total = Number(qrow.total_ngn) || 0;
   if (total <= 0) return { ok: false, error: 'Quotation total must be greater than zero.' };
   const priceRow = {

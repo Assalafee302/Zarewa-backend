@@ -1058,7 +1058,7 @@ export function upsertMasterDataRecord(db, kind, payload, actor) {
     try {
       voidRecentQuotationsAfterMasterPriceChange(db, accessoryBranchId || 'ALL');
     } catch (e) {
-      console.error('[zarewa] void quotations after master price change failed', e);
+      console.error('[zarewa] flag quotations after master price change failed', e);
     }
   }
   return { ok: true, id, ...(accessoryBranchId ? { branchId: accessoryBranchId } : {}) };
@@ -1108,7 +1108,7 @@ export function deleteMasterDataRecord(db, kind, recordId, actor, opts = {}) {
     try {
       voidRecentQuotationsAfterMasterPriceChange(db, branchId);
     } catch (e) {
-      console.error('[zarewa] void quotations after master price delete failed', e);
+      console.error('[zarewa] flag quotations after master price delete failed', e);
     }
     return { ok: true, branchId, deactivated: true };
   }
@@ -1131,7 +1131,7 @@ export function deleteMasterDataRecord(db, kind, recordId, actor, opts = {}) {
     try {
       voidRecentQuotationsAfterMasterPriceChange(db, 'ALL');
     } catch (e) {
-      console.error('[zarewa] void quotations after master price delete failed', e);
+      console.error('[zarewa] flag quotations after master price delete failed', e);
     }
   }
   return { ok: true };

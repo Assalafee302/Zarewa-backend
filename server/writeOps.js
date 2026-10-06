@@ -211,6 +211,7 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
+import { assertMatchedRefundStatement } from './sales/refundPayeeControl.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
 import {
@@ -6115,6 +6116,8 @@ export function insertBankReconciliationLine(db, payload, branchId = DEFAULT_BRA
   if (status === 'Matched') {
     const v = validateBankReconMatchedReceipt(db, systemMatch);
     if (!v.ok) return v;
+    const payee = assertMatchedRefundStatement(db, systemMatch, description);
+    if (!payee.ok) return payee;
   }
   const id = nextBankReconLineHumanId(db, bid);
   db.prepare(
@@ -6241,6 +6244,8 @@ export function updateBankReconciliationLine(db, lineId, payload, actor) {
 
   const v = validateBankReconMatchedReceipt(db, systemMatch);
   if (!v.ok) return v;
+  const payee = assertMatchedRefundStatement(db, systemMatch, payload.description ?? row.description);
+  if (!payee.ok) return payee;
 
   const bankAmt = roundMoney(row.amount_ngn);
   const rc = resolveSalesReceiptIdFromSystemMatch(db, systemMatch);

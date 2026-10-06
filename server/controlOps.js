@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { periodKeyFromParsedDate } from '../shared/lib/isoTimestamp.js';
+import { customerOpenCreditNgn, payeeAccountRejection, refundExceedsOpenCredit } from './sales/refundPayeeControl.js';
 import { accessoryFulfillmentSummaryForQuotation, normAccessoryNameKey } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
@@ -3653,6 +3654,24 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       }
     }
 
+    const payeeAccounts = [payeeAccountNo];
+    for (const split of splitsForStore) payeeAccounts.push(split?.payoutAccount?.payeeAccountNo);
+    for (const account of payeeAccounts) {
+      const rejection = payeeAccountRejection(account);
+      if (rejection) return { ok: false, code: 'REFUND_PAYEE_ACCOUNT', error: rejection };
+    }
+    const openCreditNgn = customerOpenCreditNgn(db, customerID, refundBranchId);
+    const openCreditNote = String(payload.openCreditOverrideNote ?? '').trim();
+    const mdApprovedOpenCredit = actorMayBypassIncompleteRefundFloor(actor) && openCreditNote.length >= 10;
+    const openCreditError = refundExceedsOpenCredit({ amountNgn, openCreditNgn, mdApproved: mdApprovedOpenCredit });
+    if (openCreditError) {
+      return { ok: false, code: 'REFUND_EXCEEDS_OPEN_CREDIT', error: openCreditError, openCreditNgn };
+    }
+    const openCreditManagerNote =
+      mdApprovedOpenCredit && amountNgn > openCreditNgn
+        ? `MD approved refund above open credit of ₦${openCreditNgn.toLocaleString('en-NG')}: ${openCreditNote}`
+        : '';
+
     let previewSnapshotJson = null;
     if (payload.previewSnapshot != null && typeof payload.previewSnapshot === 'object') {
       try {
@@ -3729,7 +3748,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         0,                                                                                                         // paid_amount_ngn
         '',                                                                                                        // paid_at_iso
         '',                                                                                                        // paid_by
-        '',                                                                                                        // payment_note
+        openCreditManagerNote,                                                                                     // payment_note
         payeeName,                                                                                                 // payee_name
         payeeAccountNo,                                                                                            // payee_account_no
         payeeBankName,                                                                                             // payee_bank_name

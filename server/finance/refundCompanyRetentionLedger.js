@@ -448,17 +448,18 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL', opts = {}) {
         openNgn,
         refundId,
         investigationCaseIds,
-        excludedFromWithdrawal: investigationCaseIds.length > 0,
+        // An investigation link is informational. It does not hold the company cut out of Available.
+        excludedFromWithdrawal: false,
         // Legacy column kept; credits are no longer aged — always available re: credit age.
         availableAfterIso: trim(r.available_after_iso) || null,
-        available: investigationCaseIds.length === 0 && !freeze.enabled,
+        available: !freeze.enabled,
         note: trim(r.note),
         createdAtIso: trim(r.created_at_iso),
       };
     });
 
   const totalOpenNgn = credits.reduce((s, c) => s + c.openNgn, 0);
-  const excludedNgn = credits.reduce((s, c) => s + (c.excludedFromWithdrawal ? c.openNgn : 0), 0);
+  const excludedNgn = 0;
   const cooldown = companyRetentionWithdrawalCooldown(db, branchScope);
 
   const { sql: wSql, args: wArgs } = branchScopeSql('w', branchScope);

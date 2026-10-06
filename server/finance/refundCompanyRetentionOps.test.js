@@ -27,19 +27,17 @@ describe('actorMayCashApproveCompanyRetentionWithdrawal', () => {
     ).toMatchObject({ availableNgn: 911_510, heldNgn: 0, reservedNgn: 0 });
   });
 
-  it('keeps investigation-linked retention out of available, and freezes the rest', () => {
+  it('keeps the open balance available unless a withdrawal freeze is on', () => {
     expect(
       companyRetentionAvailability({
         totalOpenNgn: 1_000_000,
         reservedNgn: 0,
-        excludedNgn: 40_000,
         withdrawalFrozen: false,
       })
-    ).toMatchObject({ availableNgn: 960_000, excludedNgn: 40_000, heldNgn: 40_000 });
+    ).toMatchObject({ availableNgn: 1_000_000, excludedNgn: 0, heldNgn: 0 });
     expect(
       companyRetentionAvailability({
         totalOpenNgn: 1_000_000,
-        excludedNgn: 40_000,
         withdrawalFrozen: true,
       })
     ).toMatchObject({ availableNgn: 0, withdrawalFrozen: true });

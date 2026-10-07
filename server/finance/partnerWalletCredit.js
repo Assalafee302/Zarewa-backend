@@ -121,6 +121,11 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
           s?.companyCutWaiverNote ?? s?.company_cut_waiver_note ?? ''
         ).trim(),
         payoutCancelled: s?.payoutCancelled === true || s?.payout_cancelled === true,
+        forceClaimingStaffCut:
+          s?.forceClaimingStaffCut === true || s?.force_claiming_staff_cut === true,
+        // OM/manager released this payee's uncleared-receipt till hold (per-split; not a payout).
+        unclearedHoldOmReleased:
+          s?.unclearedHoldOmReleased === true || s?.uncleared_hold_om_released === true,
       };
     })
     .filter(
@@ -179,11 +184,19 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
         allocated += share;
         const liveUncleared = unclearedFloatByCustomerId.get(String(s.recipientCustomerID || '').trim());
         const liveUnclearedHoldNgn = roundMoney(liveUncleared?.totalNgn);
-        const unclearedReceiptIds = Array.isArray(liveUncleared?.receiptIds) ? liveUncleared.receiptIds : [];
-        const unclearedReceipts = Array.isArray(liveUncleared?.receipts) ? liveUncleared.receipts : [];
         // Live float only — never floor on legacy unclearedReceiptOffsetNgn (that sticky floor
-        // kept holds after receipts were confirmed).
-        const unclearedReceiptHoldNgn = liveUnclearedHoldNgn;
+        // kept holds after receipts were confirmed). OM per-split release zeros the hold.
+        const unclearedReceiptHoldNgn = s.unclearedHoldOmReleased ? 0 : liveUnclearedHoldNgn;
+        const unclearedReceiptIds = s.unclearedHoldOmReleased
+          ? []
+          : Array.isArray(liveUncleared?.receiptIds)
+            ? liveUncleared.receiptIds
+            : [];
+        const unclearedReceipts = s.unclearedHoldOmReleased
+          ? []
+          : Array.isArray(liveUncleared?.receipts)
+            ? liveUncleared.receipts
+            : [];
         const withDeduction = applyRefundStaffAllocationDeduction(
           { ...s, amountNgn: share },
           quoteCustomerId,
@@ -194,6 +207,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
             honorCompanyCutWaiver: true,
             overpaymentOnly,
             priceConcession,
+            forceClaimingStaffCut: s.forceClaimingStaffCut === true,
           }
         );
         const companyDeductionNgn = roundMoney(withDeduction.companyDeductionNgn);

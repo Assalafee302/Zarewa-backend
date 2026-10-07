@@ -1,10 +1,22 @@
 /**
  * Forward refund controls: a usable payee account, a bank-line match to that account,
- * and a cap at the customer's open ledger credit unless MD approves.
+ * and a cap at open credit (ledger advances + quotation overpay residual) unless MD approves.
  */
-import { refundExceedsOpenCredit, refundIdFromSystemMatch, payeeAccountDigits, payeeAccountRejection, statementContainsPayeeAccount } from '../../shared/lib/refundPayeeAccount.js';
+import {
+  effectiveRefundOpenCreditNgn,
+  refundExceedsOpenCredit,
+  refundIdFromSystemMatch,
+  payeeAccountDigits,
+  payeeAccountRejection,
+  statementContainsPayeeAccount,
+} from '../../shared/lib/refundPayeeAccount.js';
 
-export { payeeAccountRejection, refundExceedsOpenCredit, statementContainsPayeeAccount };
+export {
+  effectiveRefundOpenCreditNgn,
+  payeeAccountRejection,
+  refundExceedsOpenCredit,
+  statementContainsPayeeAccount,
+};
 
 function roundMoney(n) {
   return Math.round(Number(n) || 0);
@@ -51,7 +63,10 @@ export function assertMatchedRefundStatement(db, systemMatch, description) {
   if (!row) return { ok: false, error: `No refund found for ${refundId}.` };
   const rejection = payeeAccountRejection(row.payee_account_no);
   if (rejection) {
-    return { ok: false, error: `Refund ${refundId} has no usable payee account to match to the bank line.` };
+    return {
+      ok: false,
+      error: `Refund ${refundId} has no usable payee account to match to the bank line. ${rejection}`,
+    };
   }
   const digits = payeeAccountDigits(row.payee_account_no);
   if (!statementContainsPayeeAccount(description, digits)) {

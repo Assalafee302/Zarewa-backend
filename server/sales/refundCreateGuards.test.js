@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../db.js';
 import { insertRefundRequest } from '../controlOps.js';
+import { customerOpenCreditNgn } from './refundPayeeControl.js';
 import { saveRefundPayoutBank } from './refundPayoutBankOps.js';
-import { REFUND_TEST_PAYEE } from '../refundTestPayee.js';
+import { REFUND_TEST_PAYEE, ensureRefundTestCustomerBanks } from '../refundTestPayee.js';
 
 function mysqlAvailable() {
   try {
@@ -96,5 +97,64 @@ describe.skipIf(!mysqlOk)('refund create / payout-bank guards', () => {
     });
     expect(r.ok).toBe(false);
     expect(String(r.error || '')).toMatch(/branch/i);
+  });
+
+  it('allows overpayment refund when cash excess exists but OVERPAY_ADVANCE ledger is missing', () => {
+    // QT-KD-26-1750 shape: full till RECEIPT, cleared, no OVERPAY_ADVANCE sibling → ledger open credit 0.
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 1, unitPrice: 716950 }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO customers (customer_id, name, branch_id, status)
+       VALUES ('CUS-OP-RES', 'Overpay Residual Customer', 'BR-KD', 'Active')`
+    ).run();
+    ensureRefundTestCustomerBanks(db, ['CUS-OP-RES']);
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (
+         id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, branch_id, date_iso
+       ) VALUES (
+         'QT-OP-RES', 'CUS-OP-RES', 'Overpay Residual Customer', 716950, 1200000, 'Paid', 'Finished', ?, 'BR-KD', '2026-10-07'
+       )`
+    ).run(lines);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (
+         id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso,
+         ledger_entry_id, branch_id, bank_received_amount_ngn, finance_reconciliation_saved_at_iso
+       ) VALUES (
+         'LE-OP-RES', 'CUS-OP-RES', 'Overpay Residual Customer', 'QT-OP-RES', 1200000, '₦1,200,000', 'Cleared',
+         '2026-10-07', 'LE-OP-RES', 'BR-KD', 1200000, '2026-10-07T12:00:00.000Z'
+       )`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO ledger_entries (
+         id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, branch_id
+       ) VALUES (
+         'LE-OP-RES', 'RECEIPT', 'CUS-OP-RES', 'Overpay Residual Customer', 'QT-OP-RES', 1200000,
+         '2026-10-07T12:00:00.000Z', 'BR-KD'
+       )`
+    ).run();
+
+    expect(customerOpenCreditNgn(db, 'CUS-OP-RES', 'BR-KD')).toBe(0);
+
+    const r = insertRefundRequest(
+      db,
+      {
+        customerID: 'CUS-OP-RES',
+        quotationRef: 'QT-OP-RES',
+        reasonCategory: 'Overpayment',
+        reason: 'Cash above quote',
+        amountNgn: 483_050,
+        calculationLines: [
+          { label: 'Overpayment', amountNgn: 483_050, category: 'Overpayment', include: true },
+        ],
+        ...REFUND_TEST_PAYEE,
+      },
+      salesActor,
+      'BR-KD'
+    );
+    expect(r.ok).toBe(true);
+    expect(r.code).not.toBe('REFUND_EXCEEDS_OPEN_CREDIT');
   });
 });

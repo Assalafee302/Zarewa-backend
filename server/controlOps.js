@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { periodKeyFromParsedDate } from '../shared/lib/isoTimestamp.js';
-import { customerOpenCreditNgn, payeeAccountRejection, refundExceedsOpenCredit } from './sales/refundPayeeControl.js';
+import {
+  customerOpenCreditNgn,
+  effectiveRefundOpenCreditNgn,
+  payeeAccountRejection,
+  refundExceedsOpenCredit,
+} from './sales/refundPayeeControl.js';
 import { accessoryFulfillmentSummaryForQuotation, normAccessoryNameKey } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
@@ -3472,6 +3477,9 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     );
     if (!lineArithmetic.ok) return lineArithmetic;
 
+    /** Still-refundable cash-above-quote on this quotation (may exist without OVERPAY_ADVANCE). */
+    let quotationOverpayResidualForOpenCredit = 0;
+
     if (quotationRef) {
       const quoteBranchFreeze = assertQuotationBranchRefundsNotFrozen(db, quotationRef, refundBranchId);
       if (!quoteBranchFreeze.ok) return quoteBranchFreeze;
@@ -3657,6 +3665,9 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         quotationRef,
         includeCustomerCommission: requestedCats.includes('Customer commission'),
       });
+      quotationOverpayResidualForOpenCredit = roundMoney(
+        previewForCaps.preview?.overpaymentResidualNgn
+      );
       if (mdDiscountRefundSum > 0 || requestedCats.includes('MD discount')) {
         // Same basis as agent commission: produced metres only (unproduced is a separate line).
         const mdMetres =
@@ -3828,7 +3839,11 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       const rejection = payeeAccountRejection(account);
       if (rejection) return { ok: false, code: 'REFUND_PAYEE_ACCOUNT', error: rejection };
     }
-    const openCreditNgn = customerOpenCreditNgn(db, customerID, refundBranchId);
+    const ledgerOpenCreditNgn = customerOpenCreditNgn(db, customerID, refundBranchId);
+    const openCreditNgn = effectiveRefundOpenCreditNgn({
+      ledgerOpenCreditNgn,
+      quotationOverpayResidualNgn: quotationOverpayResidualForOpenCredit,
+    });
     const openCreditNote = String(payload.openCreditOverrideNote ?? '').trim();
     const mdApprovedOpenCredit = actorMayBypassIncompleteRefundFloor(actor) && openCreditNote.length >= 10;
     const openCreditError = refundExceedsOpenCredit({ amountNgn, openCreditNgn, mdApproved: mdApprovedOpenCredit });

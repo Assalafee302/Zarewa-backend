@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  effectiveRefundOpenCreditNgn,
   payeeAccountRejection,
+  payeeAccountRejectionReason,
   refundExceedsOpenCredit,
   refundIdFromSystemMatch,
   statementContainsPayeeAccount,
@@ -8,8 +10,8 @@ import {
 
 describe('refund payee account', () => {
   it('accepts a 10-digit bank account and an 11-digit OPay number', () => {
-    expect(payeeAccountRejection('0123456789')).toBe('');
-    expect(payeeAccountRejection('08140171674')).toBe('');
+    expect(payeeAccountRejectionReason('0123456789')).toBe('');
+    expect(payeeAccountRejectionReason('08140171674')).toBe('');
   });
 
   it('TEMP: placeholders pass while ENFORCE_REAL_PAYEE_ACCOUNT is false', () => {
@@ -18,6 +20,14 @@ describe('refund payee account', () => {
     expect(payeeAccountRejection('87654')).toBe('');
     expect(payeeAccountRejection('sed')).toBe('');
     expect(payeeAccountRejection('1234')).toBe('');
+  });
+
+  it('names the exact receiver account that failed validation', () => {
+    expect(payeeAccountRejectionReason('')).toMatch(/blank/i);
+    expect(payeeAccountRejectionReason('sed')).toMatch(/"sed"/);
+    expect(payeeAccountRejectionReason('Ahmed Ibrahim')).toMatch(/"Ahmed Ibrahim"/);
+    expect(payeeAccountRejectionReason('1234')).toMatch(/"1234"/);
+    expect(payeeAccountRejectionReason('000')).toMatch(/"000"/);
   });
 
   it('matches the bank line only when the payee account is in the narration', () => {
@@ -34,5 +44,24 @@ describe('refund payee account', () => {
     expect(refundExceedsOpenCredit({ amountNgn: 5000, openCreditNgn: 1000, mdApproved: false })).toMatch(/MD approval/);
     expect(refundExceedsOpenCredit({ amountNgn: 5000, openCreditNgn: 1000, mdApproved: true })).toBe('');
     expect(refundExceedsOpenCredit({ amountNgn: 1000, openCreditNgn: 1000, mdApproved: false })).toBe('');
+  });
+
+  it('counts quotation overpay residual as open credit when ledger OVERPAY_ADVANCE is missing', () => {
+    expect(
+      effectiveRefundOpenCreditNgn({ ledgerOpenCreditNgn: 0, quotationOverpayResidualNgn: 483_050 })
+    ).toBe(483_050);
+    expect(
+      effectiveRefundOpenCreditNgn({ ledgerOpenCreditNgn: 50_000, quotationOverpayResidualNgn: 483_050 })
+    ).toBe(483_050);
+    expect(
+      refundExceedsOpenCredit({
+        amountNgn: 483_050,
+        openCreditNgn: effectiveRefundOpenCreditNgn({
+          ledgerOpenCreditNgn: 0,
+          quotationOverpayResidualNgn: 483_050,
+        }),
+        mdApproved: false,
+      })
+    ).toBe('');
   });
 });

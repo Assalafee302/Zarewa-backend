@@ -448,13 +448,13 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
       const q = db.prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`).get(r.quotationRef);
       if (q) {
         // Outbound refund settlement — not customer payments in. Approval auto-clears the quote.
-        const refundPayoutBookkeeping = /^(REFUND_ADVANCE|REFUND_OVERPAY|REFUND_CONCESSION)$/i.test(
-          String(r.type || '')
-        );
-        if (q.manager_cleared_at_iso) {
-          const allowedCleared =
-            refundPayoutBookkeeping ||
-            (allowManagerClearedQuotes && allowManagerClearedQuotes.has(String(r.quotationRef)));
+          const refundPayoutBookkeeping = /^(REFUND_ADVANCE|REFUND_OVERPAY|REFUND_CONCESSION)$/i.test(
+            String(r.type || '')
+          );
+          if (q.manager_cleared_at_iso) {
+            const allowedCleared =
+              refundPayoutBookkeeping ||
+              (allowManagerClearedQuotes && allowManagerClearedQuotes.has(String(r.quotationRef)));
           if (!allowedCleared) {
             throw new Error(`Quotation ${r.quotationRef} has been cleared by manager and is closed for further payments.`);
           }
@@ -4637,6 +4637,8 @@ const COIL_PROFILE_FINISH_MAX_KG = 85;
 /**
  * Clear unusable spool/core tail from a near-finished coil (missed “Roll finished” at production complete).
  * Mirrors production completion tail clearance — reduces raw SKU stock; no scrap credit; no new FG metres.
+ * `opts.managerStockConfirm` is the stock-register path: any remaining kg, no 85 kg cap.
+ * A coil already at 0 kg is a no-op success so approval can be repeated.
  */
 export function postCoilRollFinished(db, payload = {}, opts = {}) {
   const coilNo = String(payload.coilNo ?? '').trim();
@@ -4645,16 +4647,11 @@ export function postCoilRollFinished(db, payload = {}, opts = {}) {
   const dateISO = String(payload.dateISO ?? new Date().toISOString().slice(0, 10)).trim();
   const workspaceBranchId = opts.workspaceBranchId;
   const actor = opts.actor;
+  const managerStockConfirm = Boolean(opts.managerStockConfirm);
 
   if (!coilNo) return { ok: false, error: 'Coil number is required.' };
   if (note.length < 8) {
     return { ok: false, error: 'Enter a note (at least 8 characters) for the audit trail.' };
-  }
-
-  try {
-    assertPeriodOpen(db, dateISO, 'Finish roll date');
-  } catch (e) {
-    return { ok: false, error: String(e.message || e) };
   }
 
   const row = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(coilNo);
@@ -4664,6 +4661,16 @@ export function postCoilRollFinished(db, payload = {}, opts = {}) {
 
   const qtyRem = Math.max(0, Number(row.qty_remaining) || Number(row.current_weight_kg) || 0);
   const qtyRes = Math.max(0, Number(row.qty_reserved) || 0);
+  if (managerStockConfirm && qtyRem <= 1e-6) {
+    return { ok: true, coilNo, tailKgCleared: 0, alreadyFinished: true, currentStatus: 'Consumed' };
+  }
+
+  try {
+    assertPeriodOpen(db, dateISO, managerStockConfirm ? 'Stock confirmation finish date' : 'Finish roll date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
   if (qtyRes > 1e-6) {
     return {
       ok: false,
@@ -4674,7 +4681,7 @@ export function postCoilRollFinished(db, payload = {}, opts = {}) {
   if (qtyRem <= 1e-6) {
     return { ok: false, error: 'This coil has no remaining kg to clear.' };
   }
-  if (qtyRem >= COIL_PROFILE_FINISH_MAX_KG) {
+  if (!managerStockConfirm && qtyRem >= COIL_PROFILE_FINISH_MAX_KG) {
     return {
       ok: false,
       error: `Only near-finished coils below ${COIL_PROFILE_FINISH_MAX_KG} kg can be closed with Finish roll. Usable steel may still be on the roll — use Scrap or coil adjust instead.`,
@@ -4685,11 +4692,16 @@ export function postCoilRollFinished(db, payload = {}, opts = {}) {
   if (!productID) return { ok: false, error: 'Coil product id missing.' };
   const tailKg = qtyRem;
   const refDetail = cuttingListRef ? ` · CL ${cuttingListRef}` : '';
-  const movementDetail = `${coilNo} roll finished — tail ${tailKg.toFixed(2)} kg removed from yard stock (profile)${refDetail}`;
+  const movementDetail = managerStockConfirm
+    ? `${coilNo} marked finished on stock confirmation — ${tailKg.toFixed(2)} kg removed from yard stock`
+    : `${coilNo} roll finished — tail ${tailKg.toFixed(2)} kg removed from yard stock (profile)${refDetail}`;
   const stockBranch = coilStockBranchId(row, workspaceBranchId);
+  const scrapReason = managerStockConfirm
+    ? 'Stock register — manager marked coil finished'
+    : 'Roll finished — tail cleared';
+  const auditAction = managerStockConfirm ? 'coil.stock_register_finish' : 'coil.finish_roll';
 
-  try {
-    db.transaction(() => {
+  const runCore = () => {
       db.prepare(
         `UPDATE coil_lots SET qty_remaining = 0, qty_reserved = 0, current_weight_kg = 0 WHERE coil_no = ?`
       ).run(coilNo);
@@ -4717,7 +4729,7 @@ export function postCoilRollFinished(db, payload = {}, opts = {}) {
         kgCoilDelta: -tailKg,
         bookRef: cuttingListRef || null,
         cuttingListRef: cuttingListRef || null,
-        scrapReason: 'Roll finished — tail cleared',
+        scrapReason,
         note: note || null,
         dateISO,
         creditScrapInventory: false,
@@ -4727,17 +4739,21 @@ export function postCoilRollFinished(db, payload = {}, opts = {}) {
 
       appendAuditLog(db, {
         actor,
-        action: 'coil.finish_roll',
+        action: auditAction,
         entityKind: 'coil_lot',
         entityId: coilNo,
         status: 'success',
         note: note.length > 200 ? `${note.slice(0, 197)}…` : note,
-        details: { coilNo, tailKg, cuttingListRef: cuttingListRef || null, movementDetail },
+        details: { coilNo, tailKg, cuttingListRef: cuttingListRef || null, movementDetail, managerStockConfirm },
       });
 
       const bid = String(row.branch_id ?? workspaceBranchId ?? DEFAULT_BRANCH_ID).trim();
       reconcileCoilProductStockFromLots(db, productID, bid);
-    })();
+  };
+
+  try {
+    if (opts.skipInnerTransaction) runCore();
+    else db.transaction(runCore)();
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

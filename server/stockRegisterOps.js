@@ -18,10 +18,16 @@ import {
   buildAdjustmentsFromClearance,
   enumerateRegisterLineKeys,
   FINISHED_CONFIRM,
+  getLineEntry,
+  isManagerFinishedCoilEntry,
   lineEligibleForClosing,
+  lineKeyCoil,
+  lineKeyFinished,
   LINE_STATUS,
   parseLineClearance,
   parseStoreChecklist,
+  roundKg,
+  setLineEntry,
   validateBmApprove,
   validateStoreChecklist,
 } from '../shared/lib/stockRegisterLineClearance.js';
@@ -43,6 +49,7 @@ import {
 } from '../shared/workspaceGovernance.js';
 import { purchaseUnitPriceMapByProductPrefix, resolveBranchCoilCostPerKg } from './materialPricingOps.js';
 import { materialIncidentDamageSummaryForPeriod } from './materialIncidentOps.js';
+import { postCoilRollFinished } from './writeOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -311,6 +318,66 @@ function actorName(actor) {
   return String(actor?.displayName || actor?.display_name || actor?.username || '').trim() || 'User';
 }
 
+/**
+ * Coils the manager marked finished lose remaining yard kg on approval.
+ * Same stock effect as finish-roll (no scrap credit), without the 85 kg tail cap.
+ * Refuses when live kg no longer matches this period's closing, so a later month's
+ * use is not wiped by an older confirmation.
+ * Also stamps the finished-line confirmation so closing capture keeps the coil.
+ */
+function applyManagerMarkedFinishedCoils(db, register, clearanceRaw, actor, periodEndIso, workspaceBranchId) {
+  let clearance = parseLineClearance(clearanceRaw);
+  const dateISO = String(periodEndIso || '').slice(0, 10);
+  for (const item of enumerateRegisterLineKeys(register)) {
+    if (item.kind !== 'coil') continue;
+    const entry = getLineEntry(clearance, item.key);
+    if (!isManagerFinishedCoilEntry(entry)) continue;
+    const coilNo = String(item.row?.coilNo || '').trim();
+    const label = item.row?.coilNoDisplay || coilNo;
+    if (!coilNo) return { ok: false, error: 'Coil number missing on a line marked finished.' };
+
+    const lot = db
+      .prepare(`SELECT qty_remaining, current_weight_kg FROM coil_lots WHERE coil_no = ?`)
+      .get(coilNo);
+    if (!lot) return { ok: false, error: `Coil ${label} was not found.` };
+    const liveRaw = Math.max(0, Number(lot.qty_remaining) || Number(lot.current_weight_kg) || 0);
+    const liveKg = roundKg(liveRaw);
+    const closingKg = roundKg(item.row?.closingKg);
+    if (liveRaw > 0.05 && Math.abs(liveKg - closingKg) > 1) {
+      return {
+        ok: false,
+        error: `Coil ${label} yard stock is ${liveKg} kg but this period closes at ${closingKg} kg. Mark it finished only while the yard still matches this month, or adjust the count.`,
+      };
+    }
+
+    if (liveRaw > 0.05) {
+      const finished = postCoilRollFinished(
+        db,
+        { coilNo, note: String(entry.note || '').trim(), dateISO },
+        { actor, workspaceBranchId, managerStockConfirm: true, skipInnerTransaction: true }
+      );
+      if (!finished.ok) return { ok: false, error: `Coil ${label}: ${finished.error}` };
+    }
+
+    clearance = setLineEntry(clearance, lineKeyFinished(coilNo), {
+      status: LINE_STATUS.CLEARED,
+      finishedConfirm: FINISHED_CONFIRM.CONFIRMED,
+      markFinished: true,
+      note: entry.note || '',
+      countedClosingKg: 0,
+    });
+    clearance = setLineEntry(clearance, item.key, {
+      status: LINE_STATUS.FINISHED,
+      markFinished: true,
+      countedClosingKg: 0,
+      finishedConfirm: FINISHED_CONFIRM.CONFIRMED,
+      note: entry.note || '',
+      queryReason: '',
+    });
+  }
+  return { ok: true, clearance };
+}
+
 export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, body = {}, actor = null) {
   const bid = String(branchId || '').trim();
   const pk = String(periodKey || '').trim();
@@ -361,23 +428,32 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
     const clearanceRaw = body?.lineClearance || row.line_clearance_json;
     const approveCheck = validateBmApprove(reg, clearanceRaw, row.bm_adjustments_json);
     if (!approveCheck.ok) return approveCheck;
-    const adjFromClearance = buildAdjustmentsFromClearance(reg, clearanceRaw);
     const notesToSave =
       body?.countNotes != null
         ? String(body.countNotes)
         : body?.managerNotes != null
           ? String(body.managerNotes)
           : null;
-    upsertPeriodRow(db, bid, pk, row.period_end_iso, {
-      status: 'bm_approved',
-      bm_approved_at_iso: now,
-      bm_approved_by_user_id: actor?.id || null,
-      bm_approved_by_name: actorName(actor),
-      bm_adjustments_json: JSON.stringify(adjFromClearance),
-      line_clearance_json: typeof clearanceRaw === 'string' ? clearanceRaw : JSON.stringify(clearanceRaw || parseLineClearance(row.line_clearance_json)),
-      ...(notesToSave != null ? { count_notes: notesToSave } : {}),
-    });
-    syncCoilProductionBlocks(db, reg, clearanceRaw, actor);
+    try {
+      db.transaction(() => {
+        const applied = applyManagerMarkedFinishedCoils(db, reg, clearanceRaw, actor, row.period_end_iso, bid);
+        if (!applied.ok) throw new Error(applied.error || 'Could not mark coil finished.');
+        const clearanceToSave = applied.clearance;
+        const adjFromClearance = buildAdjustmentsFromClearance(reg, clearanceToSave);
+        upsertPeriodRow(db, bid, pk, row.period_end_iso, {
+          status: 'bm_approved',
+          bm_approved_at_iso: now,
+          bm_approved_by_user_id: actor?.id || null,
+          bm_approved_by_name: actorName(actor),
+          bm_adjustments_json: JSON.stringify(adjFromClearance),
+          line_clearance_json: JSON.stringify(clearanceToSave),
+          ...(notesToSave != null ? { count_notes: notesToSave } : {}),
+        });
+        syncCoilProductionBlocks(db, reg, clearanceToSave, actor);
+      })();
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
+    }
   } else if (action === 'procurement_lock' || action === 'procurement_cost') {
     if (!['procurement.manage', 'operations.manage'].some(() => false)) {
       /* permission checked at HTTP layer */
@@ -508,6 +584,7 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
   }
 
   const clearanceRaw = row.line_clearance_json;
+  const managerFinishedCoil = (coilNo) => isManagerFinishedCoilEntry(getLineEntry(clearanceRaw, lineKeyCoil(coilNo)));
   const lineItems = enumerateRegisterLineKeys(reg);
   const eligibleCoils = new Set(
     lineItems.filter((it) => it.kind === 'coil' && lineEligibleForClosing(it, clearanceRaw)).map((it) => it.row.coilNo)
@@ -534,8 +611,12 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     );
     for (const line of allCoilRows) {
-      if (line.finishedInPeriod) {
-        if (!eligibleFinished.has(line.coilNo)) continue;
+      const markedFinished = managerFinishedCoil(line.coilNo);
+      if (line.finishedInPeriod || markedFinished) {
+        const allowed = line.finishedInPeriod
+          ? eligibleFinished.has(line.coilNo) || markedFinished
+          : eligibleCoils.has(line.coilNo);
+        if (!allowed) continue;
         ins.run(
           end,
           bid,

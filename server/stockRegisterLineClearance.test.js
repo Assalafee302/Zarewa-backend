@@ -5,6 +5,7 @@ import {
   computeClearanceProgress,
   LINE_STATUS,
   FINISHED_CONFIRM,
+  lineEligibleForClosing,
   lineKeyCoil,
   lineKeyFinished,
   roundKg,
@@ -87,6 +88,36 @@ describe('stockRegisterLineClearance', () => {
     const adj = buildAdjustmentsFromClearance(register, c);
     expect(adj.coilLines).toHaveLength(1);
     expect(adj.coilLines[0].closingKg).toBe(480);
+  });
+
+  it('treats a manager-finished active coil as cleared and requires a note', () => {
+    let c = { lines: {} };
+    c = setLineEntry(c, lineKeyCoil('C-1001'), {
+      status: LINE_STATUS.FINISHED,
+      markFinished: true,
+      countedClosingKg: 0,
+      note: 'short',
+    });
+    c = setLineEntry(c, lineKeyFinished('C-1002'), { finishedConfirm: FINISHED_CONFIRM.CONFIRMED });
+    const progress = computeClearanceProgress(register, c);
+    expect(progress.pending).toBe(0);
+    expect(progress.byKind.coil.cleared).toBe(1);
+    expect(progress.complete).toBe(true);
+    const blocked = validateBmApprove(register, c, {});
+    expect(blocked.ok).toBe(false);
+    expect(blocked.error).toMatch(/note/i);
+
+    c = setLineEntry(c, lineKeyCoil('C-1001'), {
+      status: LINE_STATUS.FINISHED,
+      markFinished: true,
+      countedClosingKg: 0,
+      note: 'Roll is gone from the yard',
+    });
+    expect(validateBmApprove(register, c, {}).ok).toBe(true);
+    const coilItem = { key: lineKeyCoil('C-1001'), kind: 'coil', row: { coilNo: 'C-1001' } };
+    expect(lineEligibleForClosing(coilItem, c)).toBe(true);
+    const finishedItem = { key: lineKeyFinished('C-1001'), kind: 'finished', row: { coilNo: 'C-1001' } };
+    expect(lineEligibleForClosing(finishedItem, c)).toBe(true);
   });
 
   it('computeClearanceProgress counts pending and breaks down by kind', () => {

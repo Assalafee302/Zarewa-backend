@@ -7,7 +7,12 @@ export const LINE_STATUS = {
   CLEARED: 'cleared',
   ADJUSTED: 'adjusted',
   QUERY: 'query',
+  /** Manager confirmed this active coil is finished. Remaining kg clears on register approval. */
+  FINISHED: 'finished',
 };
+
+/** Audit note required before a manager finish clears yard kg. Matches finish-roll. */
+export const MANAGER_FINISH_NOTE_MIN = 8;
 
 export const FINISHED_CONFIRM = {
   PENDING: 'pending',
@@ -75,7 +80,20 @@ export function parseStoreChecklist(raw) {
 }
 
 function defaultLineEntry() {
-  return { status: LINE_STATUS.PENDING, note: '', queryReason: '', materialExceptionId: '', finishedConfirm: FINISHED_CONFIRM.PENDING };
+  return {
+    status: LINE_STATUS.PENDING,
+    note: '',
+    queryReason: '',
+    materialExceptionId: '',
+    finishedConfirm: FINISHED_CONFIRM.PENDING,
+    markFinished: false,
+  };
+}
+
+/** Active-coil clearance the manager marked finished (remaining kg clears on approval). */
+export function isManagerFinishedCoilEntry(entry) {
+  if (!entry) return false;
+  return entry.status === LINE_STATUS.FINISHED || entry.markFinished === true;
 }
 
 export function getLineEntry(clearance, key) {
@@ -155,6 +173,11 @@ export function computeClearanceProgress(register, clearanceRaw) {
       continue;
     }
     const st = entry.status || LINE_STATUS.PENDING;
+    if (item.kind === 'coil' && isManagerFinishedCoilEntry(entry)) {
+      cleared += 1;
+      byKind.coil.cleared += 1;
+      continue;
+    }
     if (st === LINE_STATUS.PENDING) {
       pending += 1;
       byKind[k].pending += 1;
@@ -222,6 +245,15 @@ export function validateBmApprove(register, clearanceRaw, adjustmentsRaw) {
       continue;
     }
     const st = entry.status || LINE_STATUS.PENDING;
+    if (item.kind === 'coil' && isManagerFinishedCoilEntry(entry)) {
+      const label = item.row.coilNoDisplay || item.row.coilNo;
+      if (String(entry.note || '').trim().length < MANAGER_FINISH_NOTE_MIN) {
+        blockers.push(
+          `Coil ${label}: enter a note (at least ${MANAGER_FINISH_NOTE_MIN} characters) when marking the coil finished.`
+        );
+      }
+      continue;
+    }
     if (st === LINE_STATUS.ADJUSTED) {
       if (!String(entry.materialExceptionId || '').trim()) {
         const label = item.kind === 'coil' ? item.row.coilNo : item.row.productID || item.row.itemName;
@@ -263,6 +295,7 @@ export function applyLineClearanceToRegister(register, clearanceRaw) {
     row.queryReason = e.queryReason || '';
     row.materialExceptionId = e.materialExceptionId || '';
     row.finishedConfirm = e.finishedConfirm || FINISHED_CONFIRM.PENDING;
+    row.markFinished = Boolean(e.markFinished) || e.status === LINE_STATUS.FINISHED;
     row.countedClosingKg = e.countedClosingKg != null ? roundKg(e.countedClosingKg) : null;
     row.countedRemainingM = e.countedRemainingM != null ? roundM(e.countedRemainingM) : null;
     row.countedBalance = e.countedBalance != null ? roundM(e.countedBalance) : null;
@@ -286,7 +319,12 @@ export function applyLineClearanceToRegister(register, clearanceRaw) {
 /** Lines eligible for closing capture (cleared or adjusted, not query). */
 export function lineEligibleForClosing(item, clearanceRaw) {
   const entry = getLineEntry(clearanceRaw, item.key);
-  if (item.kind === 'finished') return entry.finishedConfirm === FINISHED_CONFIRM.CONFIRMED;
+  if (item.kind === 'finished') {
+    if (entry.finishedConfirm === FINISHED_CONFIRM.CONFIRMED) return true;
+    const markedOnActiveLine = getLineEntry(clearanceRaw, lineKeyCoil(item.row?.coilNo));
+    return isManagerFinishedCoilEntry(markedOnActiveLine);
+  }
+  if (item.kind === 'coil' && isManagerFinishedCoilEntry(entry)) return true;
   const st = entry.status || LINE_STATUS.PENDING;
   return st === LINE_STATUS.CLEARED || st === LINE_STATUS.ADJUSTED;
 }

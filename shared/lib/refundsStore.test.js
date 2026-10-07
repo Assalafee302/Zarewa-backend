@@ -3,6 +3,7 @@ import {
   approvedRefundsAwaitingPayment,
   applyRefundSplitRemainingTillPayable,
   buildRefundCashierPayoutLines,
+  capRefundCashierLinesToTillPayable,
   isRefundPayable,
   refundCashierPayeeHeadline,
   refundOutstandingAmount,
@@ -65,6 +66,79 @@ describe('refundsStore payable filters', () => {
       settlementSummary: { tillPayableNgn: 0, cashOutstandingNgn: 0, companyCutNgn: 1500 },
     };
     expect(isRefundPayable(settledOnTill)).toBe(false);
+  });
+
+  it('keeps Pay when customer cash is paid but staff till remains (RF-9737 class)', () => {
+    const staffLeft = {
+      refundID: 'RF-KD-26-9737',
+      status: 'Partially paid',
+      amountNgn: 942_690,
+      approvedAmountNgn: 942_690,
+      paidAmountNgn: 899_000,
+      creditAppliedNgn: 0,
+      companyCutNgn: 8_738,
+      settlementSummary: {
+        tillPayableNgn: 34_952,
+        cashOutstandingNgn: 34_952,
+        companyCutNgn: 8_738,
+        treasuryPaidNgn: 899_000,
+      },
+      cashierPayoutLines: [
+        {
+          payeeName: 'NAZIRU ADAMU',
+          tillDueNgn: 0,
+          staffShare: false,
+          netNgn: 899_000,
+        },
+        {
+          payeeName: 'Muhammad Ibrahim Bakari',
+          payeeBankName: 'First Bank',
+          payeeAccountNo: '3064987728',
+          tillDueNgn: 34_952,
+          staffShare: true,
+          netNgn: 34_952,
+        },
+      ],
+    };
+    expect(isRefundPayable(staffLeft)).toBe(true);
+    // Stale leftover-clear counted as credit must not hide the row when till is still open.
+    expect(
+      isRefundPayable({
+        ...staffLeft,
+        creditAppliedNgn: 939_610,
+      })
+    ).toBe(true);
+  });
+
+  it('attributes customer cash to the large share so staff till stays open', () => {
+    const lines = buildRefundCashierPayoutLines(
+      [
+        {
+          payeeName: 'NAZIRU ADAMU',
+          amountNgn: 899_000,
+          netPayoutNgn: 899_000,
+        },
+        {
+          payeeName: 'Muhammad Ibrahim Bakari',
+          amountNgn: 43_690,
+          companyDeductionNgn: 8_738,
+          netPayoutNgn: 34_952,
+          staffBankAccountMatch: true,
+          payoutAccount: {
+            payeeName: 'Muhammad Ibrahim Bakari',
+            payeeBankName: 'First Bank',
+            payeeAccountNo: '3064987728',
+          },
+        },
+      ],
+      { paidNgn: 899_000, quotationCustomer: 'Aminu Ibrahim', quotationRef: 'QT-KD-26-1751' }
+    );
+    const bakari = lines.find((l) => l.payeeName === 'Muhammad Ibrahim Bakari');
+    expect(bakari?.tillDueNgn).toBe(34_952);
+    expect(bakari?.payeeAccountNo).toBe('3064987728');
+    expect(capRefundCashierLinesToTillPayable(lines, 34_952).find((l) => l.staffShare)?.tillDueNgn).toBe(
+      34_952
+    );
   });
 
   it('drops from Pay even if a stale settlement summary still shows the old till due', () => {

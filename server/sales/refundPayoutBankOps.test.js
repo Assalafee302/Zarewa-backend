@@ -78,4 +78,28 @@ describe.skipIf(!mysqlOk)('saveRefundPayoutBank', () => {
     expect(row.bank_account_no).toBe('0987654321');
     expect(r.staffBankAccountMatch).toBe(false);
   });
+
+  it('rejects letter placeholders and short account numbers', () => {
+    const letter = saveRefundPayoutBank(db, {
+      kind: 'customer',
+      id: 'CUS-BANK-INLINE',
+      bankAccountName: 'Bad',
+      bankName: 'GTB',
+      bankAccountNo: 'Ahmed Ibrahim',
+      branchId: 'BR-KD',
+    });
+    expect(letter.ok).toBe(false);
+    expect(String(letter.error || '')).toMatch(/digits, not a placeholder/i);
+
+    const short = saveRefundPayoutBank(db, {
+      kind: 'customer',
+      id: 'CUS-BANK-INLINE',
+      bankAccountName: 'Bad',
+      bankName: 'GTB',
+      bankAccountNo: '1234',
+      branchId: 'BR-KD',
+    });
+    expect(short.ok).toBe(false);
+    expect(String(short.error || '')).toMatch(/10-digit/i);
+  });
 });

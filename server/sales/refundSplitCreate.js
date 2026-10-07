@@ -5,6 +5,7 @@
  */
 import { claimingStaffPayeeForUserId, savedCustomerPayoutAccount } from './customerPayoutAccount.js';
 import { saveRefundPayoutBank } from './refundPayoutBankOps.js';
+import { payeeAccountRejection } from '../../shared/lib/refundPayeeAccount.js';
 import { REFUND_AMOUNT_LINE_TOLERANCE_NGN } from '../../shared/refundConstants.js';
 
 const CLAIMING_KIND = new Set([
@@ -34,7 +35,7 @@ function inlinePayoutFromRow(r) {
 
 function payoutAccountIfComplete(inline) {
   if (!inline?.payeeName || !inline?.payeeBankName || !inline?.payeeAccountNo) return null;
-  if (inline.payeeAccountNo.length < 6) return null;
+  if (payeeAccountRejection(inline.payeeAccountNo)) return null;
   return inline;
 }
 

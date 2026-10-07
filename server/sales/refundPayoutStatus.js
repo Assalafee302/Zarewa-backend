@@ -28,6 +28,7 @@ import {
 } from '../../shared/lib/refundQuotationMoney.js';
 import {
   buildRefundCashierPayoutLines,
+  capRefundCashierLinesToTillPayable,
   refundCashierPayeeHeadline,
 } from '../../shared/lib/refundsStore.js';
 
@@ -720,14 +721,24 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     });
   }
 
-  const cashierPayoutLines = buildRefundCashierPayoutLines(
+  // Attribute only cash that left (treasury + wallet withdraw). Receipt credit / leftover-fund
+  // clears must not mark a staff or customer line as "already paid" on the cashier desk.
+  const cashPaidToPayeesNgn = Math.max(0, treasuryPaidNgn + walletWithdrawnNgn);
+  let cashierPayoutLines = buildRefundCashierPayoutLines(
     (targets || []).map((t) => ({
       payeeName: t.payeeName || t.partyName,
       partyName: t.partyName,
+      payeeBankName: t.payeeBankName,
+      payeeAccountNo: t.payeeAccountNo,
+      payoutAccount: {
+        payeeName: t.payeeName || t.partyName,
+        payeeBankName: t.payeeBankName,
+        payeeAccountNo: t.payeeAccountNo,
+      },
       recipientKind: t.partyKind,
       recipientAssociatedStaffID: t.partyKind === 'associated_staff' ? t.partyId : '',
       staffBankAccountMatch: t.staffBankAccountMatch,
-      forceClaimingStaffCut: t.staffBankAccountMatch,
+      forceClaimingStaffCut: t.staffBankAccountMatch === true || t.forceClaimingStaffCut === true,
       companyDeductionNgn: t.companyDeductionNgn,
       grossNgn: t.grossNgn,
       amountNgn: t.grossNgn ?? t.amountNgn,
@@ -737,9 +748,10 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     {
       quotationCustomer: String(row.customer_name || row.customer || '').trim(),
       quotationRef: String(row.quotation_ref || row.quotationRef || '').trim(),
-      paidNgn: payeeSettledNgn,
+      paidNgn: cashPaidToPayeesNgn,
     }
   );
+  cashierPayoutLines = capRefundCashierLinesToTillPayable(cashierPayoutLines, tillPayableNgn);
 
   const situationBrief = buildRefundSituationBrief({
     approvedNgn,

@@ -8,6 +8,7 @@
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
 import { appendAuditLog } from '../controlOps.js';
+import { payeeAccountRejection } from '../../shared/lib/refundPayeeAccount.js';
 import { payeeAccountMatchesHrStaffBank } from './refundPayoutStaffBankMatch.js';
 
 function trim(v) {
@@ -34,9 +35,8 @@ export function saveRefundPayoutBank(db, payload = {}) {
 
   if (!id) return { ok: false, error: 'Recipient id is required.' };
   if (!bankName) return { ok: false, error: 'Bank name is required.' };
-  if (!bankAccountNo || bankAccountNo.length < 6) {
-    return { ok: false, error: 'Enter a valid account number (at least 6 digits).' };
-  }
+  const accountRejection = payeeAccountRejection(bankAccountNo);
+  if (accountRejection) return { ok: false, error: accountRejection };
   const payeeName = bankAccountName || '';
   const staffBankAccountMatch = payeeAccountMatchesHrStaffBank(bankAccountNo, null, db);
   const staffBankMatchFields = staffBankAccountMatch
@@ -199,6 +199,10 @@ export function recordRefundBankPayeeTx(db, refundId, payload = {}, actor = null
   const payeeBankName = trim(payload.payeeBankName);
   const payeeAccountNo = trim(payload.payeeAccountNo).replace(/\s+/g, '');
   const clearAccount = payload.clearAccount === true;
+  if (payeeAccountNo && !clearAccount) {
+    const accountRejection = payeeAccountRejection(payeeAccountNo);
+    if (accountRejection) return { ok: false, error: accountRejection };
+  }
   const extra = trim(payload.note);
   const prev = trim(row.payment_note);
   const paymentNote = extra && !prev.includes(extra) ? (prev ? `${prev} ${extra}` : extra) : prev;

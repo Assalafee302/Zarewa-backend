@@ -12973,7 +12973,34 @@ function syncFinanceConfirmedOverpayLedgerRows(db, ledgerRow, overpayId, newOver
     return;
   }
 
-  if (newOver > 0) return;
+  // Sales posts one RECEIPT for the full till amount (no OVERPAY sibling). When finance
+  // confirms bank cash above the quote due, create the missing OVERPAY_ADVANCE so open
+  // credit / refund create see the excess — otherwise refunds keep needing MD override.
+  if (newOver > 0) {
+    const bid = String(ledgerRow.branch_id || '').trim() || null;
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: cid,
+          customerName: ledgerRow.customer_name || null,
+          amountNgn: newOver,
+          quotationRef: qref,
+          paymentMethod: pm || null,
+          bankReference: br || null,
+          note: `Overpayment vs remaining balance on ${qref} → customer credit`,
+          atISO: ledgerRow.at_iso || undefined,
+          createdByUserId: ledgerRow.created_by_user_id || null,
+          createdByName: ledgerRow.created_by_name || null,
+          branchId: bid,
+        },
+      ],
+      bid,
+      { allowPerRowBranchId: true, bypassQuotationPaymentLocks: true }
+    );
+    return;
+  }
 
   const orphans = db
     .prepare(

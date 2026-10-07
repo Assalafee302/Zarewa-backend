@@ -12,6 +12,7 @@ import {
 import { healRefundFundedReceiptEffectsTx } from './sales/receiptRefundFundTreasuryHeal.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import { previewRefundRequest, quotationMeetsRefundEligibility } from './controlOps.js';
+import { customerOpenCreditNgn } from './sales/refundPayeeControl.js';
 
 describe('receipt finance settlement aligns paid amount', () => {
   let db;
@@ -82,6 +83,55 @@ describe('receipt finance settlement aligns paid amount', () => {
     const cash = quotationPaymentCashBreakdown(db, 'QT-146');
     expect(cash.receiptCashNgn).toBe(620_000);
     expect(cash.cashInNgn).toBe(620_000);
+  });
+
+  it('finance confirm creates OVERPAY_ADVANCE when sales posted a single full RECEIPT above quote', () => {
+    // Same shape as QT-KD-26-1750 / LE-KD-26-2021: one RECEIPT, bank confirmed above quote total.
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-OP', 'Overpay Customer', 'BR-001');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-OP', 'CUS-OP', 'Overpay Customer', 716950, 1200000, 'Paid', 'Pending', '{}', '2026-10-07', 'BR-001');
+      INSERT INTO sales_receipts (
+        id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso, ledger_entry_id, branch_id
+      ) VALUES (
+        'LE-OP', 'CUS-OP', 'Overpay Customer', 'QT-OP', 1200000, '₦1,200,000', 'Pending clearance', '2026-10-07', 'LE-OP', 'BR-001'
+      );
+      INSERT INTO ledger_entries (
+        id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, payment_method, bank_reference, note, branch_id
+      ) VALUES (
+        'LE-OP', 'RECEIPT', 'CUS-OP', 'Overpay Customer', 'QT-OP', 1200000,
+        '2026-10-07T12:00:00.000Z', 'Bank — Zarewa', 'ibrahim zaria ₦1,200,000',
+        'Payment on QT-OP (full amount on quotation; may exceed quote total)', 'BR-001'
+      );
+    `);
+
+    expect(customerOpenCreditNgn(db, 'CUS-OP', 'BR-001')).toBe(0);
+
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-OP',
+      { bankReceivedAmountNgn: 1_200_000, treasuryAccountId: 1 },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(true);
+
+    const receiptLedger = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = 'LE-OP'`).get();
+    expect(receiptLedger.amount_ngn).toBe(716_950);
+
+    const over = db
+      .prepare(
+        `SELECT amount_ngn, note FROM ledger_entries
+         WHERE type = 'OVERPAY_ADVANCE' AND quotation_ref = 'QT-OP' AND amount_ngn > 0`
+      )
+      .get();
+    expect(over?.amount_ngn).toBe(483_050);
+    expect(String(over?.note || '')).toMatch(/Overpayment vs remaining balance/);
+
+    expect(customerOpenCreditNgn(db, 'CUS-OP', 'BR-001')).toBe(483_050);
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-OP' });
+    expect(prev.ok).toBe(true);
+    expect(prev.preview.overpaymentExcessNgn).toBe(483_050);
   });
 
   it('posts the chosen bank when the receipt has no treasury payment line', () => {

@@ -135,6 +135,12 @@ export function buildRefundCashierPayoutLines(splits, opts = {}) {
       index,
       key: `${staffShare ? 'staff' : 'customer'}:${index}:${payeeName}`,
       payeeName,
+      payeeBankName: String(
+        split?.payoutAccount?.payeeBankName ?? split?.payeeBankName ?? split?.payee_bank_name ?? ''
+      ).trim(),
+      payeeAccountNo: String(
+        split?.payoutAccount?.payeeAccountNo ?? split?.payeeAccountNo ?? split?.payee_account_no ?? ''
+      ).trim(),
       staffShare,
       roleLabel: staffShare ? 'Staff share' : 'Customer share',
       grossNgn,
@@ -220,6 +226,40 @@ export function refundCashierPayeeHeadline(lines, quotationRef = '') {
   });
   const where = ref ? ` on ${ref}` : '';
   return `Two payees${where}: ${bits.join('; ')}. Same quotation, different people — paying one does not change the other.`;
+}
+
+/**
+ * After cash attribution, cap open tillDue so lines cannot exceed settlement till payable
+ * (receipt credit / holds reduce till without being a payee cash payout).
+ * @param {Array<object>|null|undefined} lines
+ * @param {number} tillPayableNgn
+ */
+export function capRefundCashierLinesToTillPayable(lines, tillPayableNgn) {
+  const list = Array.isArray(lines) ? lines : [];
+  if (!list.length) return list;
+  const cap = Math.max(0, roundRefundPayeeNgn(tillPayableNgn));
+  const open = list
+    .map((l, index) => ({ index, due: Math.max(0, roundRefundPayeeNgn(l?.tillDueNgn)) }))
+    .filter((x) => x.due > 0);
+  const sum = open.reduce((s, x) => s + x.due, 0);
+  if (sum <= 0 || sum <= cap) return list;
+  if (cap <= 0) {
+    return list.map((l) => ({ ...l, tillDueNgn: 0 }));
+  }
+  // Prefer keeping the unpaid staff/customer slice intact when only one line is open.
+  if (open.length === 1) {
+    return list.map((l, i) => (i === open[0].index ? { ...l, tillDueNgn: cap } : { ...l, tillDueNgn: 0 }));
+  }
+  let left = cap;
+  const dueByIndex = new Map();
+  for (const row of open) {
+    const take = Math.min(row.due, left);
+    dueByIndex.set(row.index, take);
+    left -= take;
+  }
+  return list.map((l, i) =>
+    dueByIndex.has(i) ? { ...l, tillDueNgn: dueByIndex.get(i) } : { ...l, tillDueNgn: 0 }
+  );
 }
 
 /**
@@ -363,15 +403,28 @@ export function isRefundPayable(r) {
   if (refundQuotationRefundsBlocked(r)) return false;
   const status = r?.status;
   if (status !== 'Approved' && status !== 'Partially paid') return false;
+  if (refundIsOnPayoutHold(r)) return false;
+
+  // Settlement till payable already excludes leftover-fund clears, open wallet, and uncleared holds.
+  const tillFromSummary = r?.settlementSummary?.tillPayableNgn;
+  if (tillFromSummary != null && Number.isFinite(Number(tillFromSummary))) {
+    const till = Math.round(Number(tillFromSummary) || 0);
+    if (till <= 0) return false;
+    const outstanding = refundCreditAdjustedOutstandingNgn(r);
+    if (outstanding > 0) return true;
+    // Stale credit counter (e.g. leftover-clear counted as apply) can zero outstanding while
+    // till + cashier lines still show an unpaid staff/customer slice — keep it on the desk.
+    const lineDue = (Array.isArray(r?.cashierPayoutLines) ? r.cashierPayoutLines : []).reduce(
+      (sum, line) => sum + Math.max(0, Math.round(Number(line?.tillDueNgn) || 0)),
+      0
+    );
+    return lineDue > 0;
+  }
+
   const approved = refundApprovedAmount(r);
   const paid = Math.round(Number(r?.paidAmountNgn ?? r?.paid_amount_ngn) || 0);
   const creditApplied = Math.round(Number(r?.creditAppliedNgn ?? r?.credit_applied_ngn) || 0);
   if (approved > 0 && Math.max(paid, creditApplied) >= approved) return false;
-  const tillFromSummary = r?.settlementSummary?.tillPayableNgn;
-  if (tillFromSummary != null) {
-    const till = Math.round(Number(tillFromSummary) || 0);
-    return Math.min(till, refundCreditAdjustedOutstandingNgn(r)) > 0;
-  }
   if (Math.round(Number(r?.walletOpenNgn) || 0) > 0) return false;
   return refundOutstandingAmount(r) > 0;
 }

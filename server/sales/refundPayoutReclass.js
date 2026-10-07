@@ -16,6 +16,7 @@ import {
   refundMoneyOutWithinApproved,
   refundWalletWithdrawnNgn,
 } from './refundPayoutStatus.js';
+import { payeeAccountRejection } from '../../shared/lib/refundPayeeAccount.js';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -286,6 +287,10 @@ export function rebaseRefundCustomerShareTx(db, refundId, payload = {}, actor = 
   }
   const payeeBankName = String(payload.payeeBankName || '').trim();
   const payeeAccountNo = String(payload.payeeAccountNo || '').trim();
+  if (payeeAccountNo) {
+    const accountRejection = payeeAccountRejection(payeeAccountNo);
+    if (accountRejection) return { ok: false, error: accountRejection };
+  }
   const extra = String(payload.note || '').trim();
   const prev = String(before.payment_note || '').trim();
   const paymentNote = extra && !prev.includes(extra) ? (prev ? `${prev} ${extra}` : extra) : prev;

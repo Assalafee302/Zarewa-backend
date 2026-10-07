@@ -1226,17 +1226,27 @@ export function openAuditQueue(bankReconciliation = [], paymentRequests = [], re
   approvedRefundsAwaitingPayment(refunds).forEach((x) => {
     const lines = Array.isArray(x.cashierPayoutLines) ? x.cashierPayoutLines : [];
     const openLines = lines.filter((line) => Math.round(Number(line?.tillDueNgn) || 0) > 0);
-    if (openLines.length > 1) {
+    // One unpaid payee (e.g. staff after customer already paid) must still show that payee,
+    // not the quotation customer alone.
+    if (openLines.length >= 1) {
       openLines.forEach((line) => {
         const quoteCustomer = String(x.customer || '').trim();
         const payee = String(line.payeeName || '').trim() || quoteCustomer;
+        const bankBits = [
+          line.payeeBankName || line.bankName,
+          line.payeeAccountNo || line.accountNo,
+        ]
+          .map((v) => String(v || '').trim())
+          .filter(Boolean);
         items.push({
-          id: `${x.refundID}:${line.key || payee}`,
+          id: openLines.length > 1 ? `${x.refundID}:${line.key || payee}` : x.refundID,
           customer: payee,
           amount: Math.round(Number(line.tillDueNgn) || 0),
-          bank: 'Refund queue',
+          bank: bankBits.length ? bankBits.join(' ') : 'Refund queue',
           date: x.approvalDate || x.requestedAtISO?.slice(0, 10) || '',
-          desc: line.cashierLabel || `${line.roleLabel || 'Payee'} · ${x.refundID} · ${x.quotationRef || ''}`,
+          desc:
+            line.cashierLabel ||
+            `${line.roleLabel || 'Payee'} · ${x.refundID} · ${x.quotationRef || ''}`,
         });
       });
       return;

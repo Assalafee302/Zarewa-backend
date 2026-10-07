@@ -134,6 +134,68 @@ describe('receipt finance settlement aligns paid amount', () => {
     expect(prev.preview.overpaymentExcessNgn).toBe(483_050);
   });
 
+  it('finance confirm does not recreate OVERPAY_ADVANCE already paid out as a refund', () => {
+    // Excess was refunded while ledger still had a single RECEIPT (no OVERPAY sibling).
+    // Reapply/confirm must not open ₦483,050 credit again.
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-OP-PAID', 'Paid Overpay Customer', 'BR-001');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-OP-PAID', 'CUS-OP-PAID', 'Paid Overpay Customer', 716950, 1200000, 'Paid', 'Finished', '{}', '2026-10-07', 'BR-001');
+      INSERT INTO sales_receipts (
+        id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso,
+        ledger_entry_id, branch_id, bank_received_amount_ngn, finance_reconciliation_saved_at_iso
+      ) VALUES (
+        'LE-OP-PAID', 'CUS-OP-PAID', 'Paid Overpay Customer', 'QT-OP-PAID', 1200000, '₦1,200,000', 'Cleared',
+        '2026-10-07', 'LE-OP-PAID', 'BR-001', 1200000, '2026-10-07T12:00:00.000Z'
+      );
+      INSERT INTO ledger_entries (
+        id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, payment_method, bank_reference, note, branch_id
+      ) VALUES (
+        'LE-OP-PAID', 'RECEIPT', 'CUS-OP-PAID', 'Paid Overpay Customer', 'QT-OP-PAID', 716950,
+        '2026-10-07T12:00:00.000Z', 'Bank — Zarewa', 'paid overpay receipt',
+        'Payment on QT-OP-PAID (full amount on quotation; may exceed quote total)', 'BR-001'
+      );
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, product, reason_category, reason,
+        amount_ngn, calculation_lines_json, status, requested_by, requested_at_iso,
+        approval_date, approved_by, approved_amount_ngn, paid_amount_ngn, paid_at_iso, paid_by,
+        branch_id, payee_name, payee_account_no, payee_bank_name
+      ) VALUES (
+        'RF-OP-PAID', 'CUS-OP-PAID', 'Paid Overpay Customer', 'QT-OP-PAID', '—', 'Overpayment',
+        'Overpayment already refunded', 483050,
+        '${JSON.stringify([{ category: 'Overpayment', amountNgn: 483050, label: 'Overpayment' }])}',
+        'Paid', 'Sales', '2026-10-07T13:00:00.000Z',
+        '2026-10-07', 'MD', 483050, 483050, '2026-10-07T14:00:00.000Z', 'Cashier',
+        'BR-001', 'Paid Overpay Customer', '0123456789', 'Test Bank'
+      );
+    `);
+
+    expect(customerOpenCreditNgn(db, 'CUS-OP-PAID', 'BR-001')).toBe(0);
+
+    const settle = applyFinanceConfirmedReceiptBookAmountTx(
+      db,
+      'LE-OP-PAID',
+      1_200_000,
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' },
+      { skipTreasurySync: true }
+    );
+    expect(settle.ok).toBe(true);
+
+    const overRows = db
+      .prepare(
+        `SELECT id, amount_ngn FROM ledger_entries
+         WHERE type = 'OVERPAY_ADVANCE' AND quotation_ref = 'QT-OP-PAID' AND amount_ngn > 0`
+      )
+      .all();
+    expect(overRows).toHaveLength(0);
+    expect(customerOpenCreditNgn(db, 'CUS-OP-PAID', 'BR-001')).toBe(0);
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-OP-PAID' });
+    expect(prev.ok).toBe(true);
+    expect(prev.preview.overpaymentResidualNgn).toBe(0);
+    expect(customerOpenCreditNgn(db, 'CUS-OP-PAID', 'BR-001')).toBe(0);
+  });
+
   it('posts the chosen bank when the receipt has no treasury payment line', () => {
     db.prepare(`DELETE FROM treasury_movements WHERE source_id = 'LE-261'`).run();
     const settle = patchSalesReceiptFinanceSettlement(

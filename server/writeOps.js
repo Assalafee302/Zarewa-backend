@@ -251,6 +251,7 @@ import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlig
 import { normalizeRefundReasonCategoriesForApi, refundRequestIsPriceConcession } from '../shared/refundConstants.js';
 import {
   overpayResidualNeededForPayoutNgn,
+  overpaymentAlreadyRefundedNgn,
   sumRefundCalculationLinesByCategoryNgn,
 } from '../shared/lib/refundQuotationMoney.js';
 import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn, tableExists } from './ap2ReceivedBasisOps.js';
@@ -12930,6 +12931,35 @@ function financeConfirmedReceiptAlreadyAligned(db, rec, ledgerRow, overpayId, co
 const FINANCE_SPLIT_OVERPAY_NOTE_SNIP = 'Overpayment vs remaining balance on';
 
 /**
+ * Cap a newly created OVERPAY_ADVANCE so confirm/reapply cannot reopen credit that was
+ * already paid out (or reserved) as an overpayment refund / leftover credit on this quote.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ * @param {number} proposedOverNgn
+ */
+function remainingOverpayAdvanceToCreateNgn(db, quotationRef, proposedOverNgn) {
+  const proposed = roundMoney(proposedOverNgn);
+  if (proposed <= 0) return 0;
+  const qref = String(quotationRef || '').trim();
+  if (!qref) return proposed;
+  let refunds = [];
+  try {
+    refunds = db
+      .prepare(
+        `SELECT refund_id, status, amount_ngn, paid_amount_ngn, credit_applied_ngn,
+                reason_category, calculation_lines_json
+         FROM customer_refunds WHERE quotation_ref = ?`
+      )
+      .all(qref);
+  } catch {
+    refunds = [];
+  }
+  const alreadyRefunded = roundMoney(overpaymentAlreadyRefundedNgn(refunds));
+  const creditOut = roundMoney(quotationUnlinkedOverpayCreditOutNgn(db, qref));
+  return Math.max(0, proposed - alreadyRefunded - creditOut);
+}
+
+/**
  * Align OVERPAY_ADVANCE rows after finance confirms actual bank total (including when sibling id lookup fails).
  * @param {import('better-sqlite3').Database} db
  * @param {object | null | undefined} ledgerRow
@@ -12976,7 +13006,10 @@ function syncFinanceConfirmedOverpayLedgerRows(db, ledgerRow, overpayId, newOver
   // Sales posts one RECEIPT for the full till amount (no OVERPAY sibling). When finance
   // confirms bank cash above the quote due, create the missing OVERPAY_ADVANCE so open
   // credit / refund create see the excess — otherwise refunds keep needing MD override.
+  // Never recreate credit already paid/reserved as an overpayment refund on this quote.
   if (newOver > 0) {
+    const createNgn = remainingOverpayAdvanceToCreateNgn(db, qref, newOver);
+    if (createNgn <= 0) return;
     const bid = String(ledgerRow.branch_id || '').trim() || null;
     insertLedgerRows(
       db,
@@ -12985,7 +13018,7 @@ function syncFinanceConfirmedOverpayLedgerRows(db, ledgerRow, overpayId, newOver
           type: 'OVERPAY_ADVANCE',
           customerID: cid,
           customerName: ledgerRow.customer_name || null,
-          amountNgn: newOver,
+          amountNgn: createNgn,
           quotationRef: qref,
           paymentMethod: pm || null,
           bankReference: br || null,

@@ -30,6 +30,11 @@ scripts/output/
 /test-run-report.txt
 /test-rerun-report.txt
 /refund-overlap-review.json
+tmp-reports/
+
+# Local one-off investigation scripts (customer/bank probes) — never commit
+scripts/_adhoc/
 
 # Real business data exports should never land in git history
 /zarewa-entered-data*.xlsx
+/*.xlsx

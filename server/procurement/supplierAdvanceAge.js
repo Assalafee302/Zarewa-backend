@@ -91,7 +91,7 @@ export function listStaleSupplierAdvances(db, branchScope = 'ALL', asOf = '') {
     const stones = db.prepare(
       `SELECT ref, value_ngn, qty, unit_price_ngn, at_iso, date_iso
        FROM stock_movements
-       WHERE type IN ('STORE_GRN_STONE', 'STORE_GRN_STONE_FLATSHEET')`
+       WHERE type IN ('STORE_GRN_STONE', 'STORE_GRN_STONE_FLATSHEET', 'STORE_GRN_ACCESSORY', 'STORE_ACCESSORY_DIRECT')`
     ).all();
     for (const row of stones) {
       const when = iso(row.at_iso) || iso(row.date_iso);

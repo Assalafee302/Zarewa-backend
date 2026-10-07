@@ -475,7 +475,16 @@ function loadSuppliers(db, branchId, endDate, poPrices, movements) {
     }
   }
   for (const row of movements || []) {
-    if (row.type !== 'STORE_GRN_STONE' && row.type !== 'STORE_GRN_STONE_FLATSHEET') continue;
+    // A posted receipt value (coil lots, stone GRN, or accessory GRN) is goods received.
+    // Leaving accessory GRNs out counted a fully received PO such as PO-KD-26-0066 as an advance.
+    if (
+      row.type !== 'STORE_GRN_STONE' &&
+      row.type !== 'STORE_GRN_STONE_FLATSHEET' &&
+      row.type !== 'STORE_GRN_ACCESSORY' &&
+      row.type !== 'STORE_ACCESSORY_DIRECT'
+    ) {
+      continue;
+    }
     const receivedOn = iso(row.at_iso) || movementDate(row);
     if (!receivedOn || receivedOn >= endExclusive) continue;
     const po = String(row.ref || '');

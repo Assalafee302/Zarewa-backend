@@ -14,6 +14,9 @@ function hasColumn(db, table, column) {
   }
 }
 
+/** Journals tagged with this memo are prior-period stock corrections, not October production cost. */
+export const PRIOR_PERIOD_STOCK_CORRECTION_MEMO = 'Prior-period stock correction – coil stock check';
+
 /** @param {string} periodKey YYYY-MM */
 export function monthBounds(periodKey) {
   const pk = String(periodKey || '').trim();
@@ -25,6 +28,22 @@ export function monthBounds(periodKey) {
     start: `${pk}-01`,
     end: `${pk}-${String(last).padStart(2, '0')}`,
   };
+}
+
+function priorPeriodStockCorrectionOnCogs(db, start, end, branchScope) {
+  const bw = branchPredicate(db, 'gl_journal_entries', branchScope, 'e');
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(l.debit_ngn - l.credit_ngn), 0) AS s
+       FROM gl_journal_lines l
+       INNER JOIN gl_journal_entries e ON e.id = l.journal_id
+       INNER JOIN gl_accounts a ON a.id = l.account_id
+       WHERE a.code = '5000'
+         AND e.entry_date_iso >= ? AND e.entry_date_iso <= ?
+         AND e.memo LIKE ?${bw.sql}`
+    )
+    .get(start, end, `${PRIOR_PERIOD_STOCK_CORRECTION_MEMO}%`, ...bw.args);
+  return Math.round(Number(row?.s) || 0);
 }
 
 function accountBalanceForType(row, accountType) {
@@ -72,6 +91,23 @@ export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL', 
   const carriageInwardNgn = plLines
     .filter((line) => line.accountCode === '5050')
     .reduce((sum, line) => sum + line.amountNgn, 0);
+
+  const priorPeriodStockCorrectionNgn = priorPeriodStockCorrectionOnCogs(db, b.start, b.end, branchScope);
+  if (priorPeriodStockCorrectionNgn !== 0) {
+    const cogs = plLines.find((line) => line.accountCode === '5000');
+    if (cogs) cogs.amountNgn -= priorPeriodStockCorrectionNgn;
+    if (cogs && cogs.amountNgn === 0) {
+      const idx = plLines.indexOf(cogs);
+      if (idx >= 0) plLines.splice(idx, 1);
+    }
+    plLines.push({
+      accountCode: '5000',
+      accountName: PRIOR_PERIOD_STOCK_CORRECTION_MEMO,
+      accountType: 'expense',
+      amountNgn: priorPeriodStockCorrectionNgn,
+      reportSeparately: true,
+    });
+  }
 
   const bsLines = [];
   let assets = 0;

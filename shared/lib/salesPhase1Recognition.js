@@ -35,6 +35,7 @@
 
 import { jobTotalOutputMetres } from './jobOutputMetres.js';
 import { payeeAccountDigits, payeeAccountRejection } from './refundPayeeAccount.js';
+import { buildManagementPhase1View } from './managementPhase1Report.js';
 import { quotationLineQtyNumber, quotationLineUnitPriceNumber } from './quotationLineNumericForRefund.js';
 
 function roundMoney(n) {
@@ -851,6 +852,11 @@ export function buildSalesPhase1Report(input) {
     const id = String(q.id || '').trim();
     if (id) quoteById.set(id, q);
   }
+  function recognitionBranchId(ref, fallback) {
+    const id = String(ref || '').trim();
+    const fromQuote = id && quoteById.has(id) ? String(quoteById.get(id)?.branchId || '') : '';
+    return fromQuote || String(fallback || '') || '(unallocated)';
+  }
 
   const books = new Map();
   function bookFor(quotationRef) {
@@ -1176,6 +1182,7 @@ export function buildSalesPhase1Report(input) {
       customerId: String(receipt.customerId || receipt.customer_id || ''),
       customerName: String(receipt.customerName || receipt.customer_name || ''),
       quotationRef: String(receipt.quotationRef || receipt.quotation_ref || ''),
+      recognitionBranchId: recognitionBranchId(receipt.quotationRef || receipt.quotation_ref, receipt.branchId || receipt.branch_id),
       status: String(receipt.status || ''),
       amountNgn: roundMoney(receipt.amountNgn ?? receipt.amount_ngn),
       bankReceivedAmountNgn:
@@ -1240,6 +1247,7 @@ export function buildSalesPhase1Report(input) {
       customerId: String(line.customerId || line.counterpartyId || ''),
       customerName: String(line.customerName || line.counterpartyName || ''),
       quotationRef: String(line.quotationRef || ''),
+      recognitionBranchId: recognitionBranchId(line.quotationRef, line.accountBranchId || line.branchId),
       status: 'Advance',
       amountNgn,
       bankReceivedAmountNgn: amountNgn,
@@ -1320,6 +1328,7 @@ export function buildSalesPhase1Report(input) {
         quotationRef: String(line.quotationRef || ''),
         amountNgn: Math.abs(roundMoney(line.amountNgn ?? line.amount_ngn)),
         refundBranchId: String(line.branchId || line.branch_id || ''),
+        recognitionBranchId: recognitionBranchId(line.quotationRef, line.branchId || line.branch_id),
       });
     }
     rows.sort((a, b) => a.dateISO.localeCompare(b.dateISO) || a.movementId.localeCompare(b.movementId));
@@ -1662,8 +1671,22 @@ export function buildSalesPhase1Report(input) {
     openingAsAt,
   });
 
+  const management = buildManagementPhase1View({
+    periodLocked: Boolean(input?.periodLocked),
+    startDate,
+    endDate,
+    cashRows,
+    refundRows,
+    bankEverLines: refundNetAt(closingAsAt).lines,
+    branches: branchBridge.branches,
+    customerDebtors: debtorView.composition?.customerDebtors?.customers || [],
+    refundHeaders: input?.refunds || [],
+    creditApplications,
+  });
+
   return {
     ok: true,
+    management,
     scope: {
       branchScope: input?.branchScope || 'ALL',
       note: 'Revenue, cash, and refunds in this pack cover every branch. A refund is placed in the branch of its quotation, which is the branch of the revenue.',

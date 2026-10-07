@@ -88,6 +88,7 @@ const CATEGORY_TO_LANE = Object.freeze({
   Pension: 'finance_compliance',
   Interest: 'finance_compliance',
   'Staff loan': 'special',
+  'IOU / staff loan': 'special',
   'Chairman withdrawal': 'special',
   'Chairman loan': 'special',
   'Closing stock': 'special',

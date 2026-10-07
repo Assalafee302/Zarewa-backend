@@ -8,6 +8,7 @@ import { registerHttpApi } from './httpApi.js';
 import { registerExpenseMemoFilingRoutes } from './http/expenseMemoFilingRoutes.js';
 import { registerSalesMonthEndPackRoutes } from './http/salesMonthEndPackRoutes.js';
 import { registerSalesPhase1ReportRoutes } from './http/salesPhase1ReportRoutes.js';
+import { registerMonthEndDataPackRoutes } from './http/monthEndDataPackRoutes.js';
 import { registerReportPeriodSourceRoutes } from './http/reportPeriodSourceRoutes.js';
 import { registerBranchRefundFreezePage } from './http/branchRefundFreezePage.js';
 import { registerExpenseCashCatchupPage } from './http/expenseCashCatchupPage.js';
@@ -159,6 +160,7 @@ export function createApp(db) {
   registerExpenseMemoFilingRoutes(app, db);
   registerSalesMonthEndPackRoutes(app, db);
   registerSalesPhase1ReportRoutes(app, db);
+  registerMonthEndDataPackRoutes(app, db);
   registerReportPeriodSourceRoutes(app, db);
   registerBranchRefundFreezePage(app, db);
   registerExpenseCashCatchupPage(app, db);

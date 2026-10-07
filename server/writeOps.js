@@ -9,6 +9,7 @@ import { heldReceiptClearanceBlock } from './sales/receiptClearanceHold.js';
 import { receiptInvestigationClearanceBlock } from './sales/receiptInvestigationClearance.js';
 import { poTransportPayoutHoldBlock } from './procurement/poTransportPayoutHold.js';
 import { poTransportDuplicatePaymentBlock } from './procurement/poTransportDuplicateGuard.js';
+import { poSupplierPaymentCapBlock } from './procurement/poSupplierAdvanceGuard.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import {
   validateSpecialLaneTreasuryPayout,
@@ -211,7 +212,7 @@ import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
-import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, assertBusinessMonthUnlocked, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
 import { assertMatchedRefundStatement } from './sales/refundPayeeControl.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
@@ -448,18 +449,21 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
       const q = db.prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`).get(r.quotationRef);
       if (q) {
         // Outbound refund settlement — not customer payments in. Approval auto-clears the quote.
-          const refundPayoutBookkeeping = /^(REFUND_ADVANCE|REFUND_OVERPAY|REFUND_CONCESSION)$/i.test(
-            String(r.type || '')
-          );
-          if (q.manager_cleared_at_iso) {
-            const allowedCleared =
-              refundPayoutBookkeeping ||
-              (allowManagerClearedQuotes && allowManagerClearedQuotes.has(String(r.quotationRef)));
+        const refundPayoutBookkeeping = /^(REFUND_ADVANCE|REFUND_OVERPAY|REFUND_CONCESSION)$/i.test(
+          String(r.type || '')
+        );
+        // A reversal removes a receipt. It is not new cash on a quote that is already cleared.
+        const reversalBookkeeping = /REVERSAL$/i.test(String(r.type || ''));
+        if (q.manager_cleared_at_iso) {
+          const allowedCleared =
+            refundPayoutBookkeeping ||
+            reversalBookkeeping ||
+            (allowManagerClearedQuotes && allowManagerClearedQuotes.has(String(r.quotationRef)));
           if (!allowedCleared) {
             throw new Error(`Quotation ${r.quotationRef} has been cleared by manager and is closed for further payments.`);
           }
         }
-        if (q.manager_flagged_at_iso && !refundPayoutBookkeeping) {
+        if (q.manager_flagged_at_iso && !refundPayoutBookkeeping && !reversalBookkeeping) {
           throw new Error(`Quotation ${r.quotationRef} is flagged by manager for review and is closed for further payments.`);
         }
       }
@@ -2217,6 +2221,8 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
   if (Number.isNaN(amt) || amt <= 0) return { ok: false, error: 'Invalid amount.' };
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false, error: 'PO not found.' };
+  const cap = poSupplierPaymentCapBlock(db, poID, opts.mdNote);
+  if (cap) return cap;
   try {
     assertPeriodOpen(db, opts.dateISO || new Date().toISOString().slice(0, 10), 'Supplier payment date');
     db.transaction(() => {
@@ -10046,6 +10052,10 @@ export function payAccountsPayable(db, apId, payload) {
   }
   const amountNgn = roundMoney(payload.amountNgn);
   if (amountNgn <= 0) return { ok: false, error: 'Payment amount must be positive.' };
+  if (row.po_ref) {
+    const cap = poSupplierPaymentCapBlock(db, row.po_ref, payload.mdNote);
+    if (cap) return cap;
+  }
   const outstanding = effectiveOutstandingNgn(roundMoney(row.amount_ngn), roundMoney(row.paid_ngn));
   if (outstanding <= 0) {
     return {
@@ -11238,6 +11248,7 @@ function assertQuotationLineEditAgainstProduction(db, quotationId, actor = null)
 export function updateQuotation(db, quotationId, payload, actor = null) {
   const existing = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationId);
   if (!existing) throw new Error('Quotation not found.');
+  assertBusinessMonthUnlocked(db, existing.date_iso, `Quotation ${quotationId}`);
   const st0 = String(existing.status || '').trim();
   if (st0 === 'Expired' || st0 === 'Void') {
     throw new Error('This quotation is archived (expired or void). Use Revive to restore it to the active pipeline.');
@@ -13001,6 +13012,11 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
   const rec = db.prepare(`SELECT * FROM sales_receipts WHERE id = ?`).get(id);
   if (!rec) return { ok: false, error: 'Receipt not found.' };
   if (String(rec.status || '').toLowerCase() === 'reversed') return { ok: true, changed: false };
+  try {
+    assertBusinessMonthUnlocked(db, rec.date_iso, `Receipt ${id}`);
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
 
   const bookAmt = roundMoney(rec.amount_ngn);
   const ledgerId = receiptLedgerEntryIdFromRow(rec);

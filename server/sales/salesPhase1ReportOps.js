@@ -344,7 +344,7 @@ export function buildSalesPhase1ReportFromDb(db, opts = {}) {
   const creditApplications = tableExists(db, 'refund_credit_applications')
     ? db
         .prepare(
-          `SELECT application_id, customer_id, source_quotation_ref, target_quotation_ref, amount_ngn,
+          `SELECT application_id, customer_id, refund_id, source_quotation_ref, target_quotation_ref, amount_ngn,
                   status, created_at_iso, reversed_at_iso
            FROM refund_credit_applications WHERE 1=1${creditBranch.sql}`
         )
@@ -352,6 +352,7 @@ export function buildSalesPhase1ReportFromDb(db, opts = {}) {
         .map((row) => ({
           id: row.application_id,
           customerId: row.customer_id,
+          refundId: row.refund_id || '',
           sourceQuotationRef: row.source_quotation_ref,
           targetQuotationRef: row.target_quotation_ref,
           amountNgn: row.amount_ngn,
@@ -364,7 +365,8 @@ export function buildSalesPhase1ReportFromDb(db, opts = {}) {
   const refunds = tableExists(db, 'customer_refunds')
     ? db
         .prepare(
-          `SELECT refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+          `SELECT refund_id, customer_id, customer_name, quotation_ref, status, amount_ngn, approved_amount_ngn,
+                  paid_amount_ngn, requested_at_iso, reason_category, reason,
                   calculation_lines_json, split_distributions_json, payee_name, payee_bank_name, payee_account_no
            FROM customer_refunds WHERE 1=1${rfBranch.sql}`
         )
@@ -374,6 +376,11 @@ export function buildSalesPhase1ReportFromDb(db, opts = {}) {
           customerId: row.customer_id,
           customerName: row.customer_name,
           quotationRef: row.quotation_ref,
+          status: row.status || '',
+          amountNgn: row.amount_ngn,
+          approvedAmountNgn: row.approved_amount_ngn,
+          paidAmountNgn: row.paid_amount_ngn,
+          requestedAtISO: row.requested_at_iso || '',
           reasonCategory: row.reason_category,
           reason: row.reason,
           calculationText: row.calculation_lines_json,
@@ -493,6 +500,7 @@ export function buildSalesPhase1ReportFromDb(db, opts = {}) {
           dateISO: row.date_iso || '',
           note: row.note || '',
         }))
+        .filter((row) => branchScope === 'ALL' || !row.branchId || row.branchId === branchScope)
     : [];
 
   const staffPayees = [];

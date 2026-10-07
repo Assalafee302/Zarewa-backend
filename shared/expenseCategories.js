@@ -43,6 +43,7 @@ export const EXPENSE_CATEGORY_OPTIONS = Object.freeze([
   'Chairman loan',
   'Truck & mining',
   'Staff loan',
+  'IOU / staff loan',
   'Others',
   'Miscellaneous',
   // Fixed assets (capex / allocations — classify per policy)
@@ -67,6 +68,12 @@ const SET = new Set(EXPENSE_CATEGORY_OPTIONS);
 /** @param {string} category */
 export function isCapexExpenseCategory(category) {
   return CAPEX_SET.has(String(category || '').trim());
+}
+
+/** Staff cash advance that payroll must deduct. Both labels are the same receivable. */
+export function isStaffLoanExpenseCategory(category) {
+  const c = String(category || '').trim();
+  return c === 'Staff loan' || c === 'IOU / staff loan';
 }
 
 /**

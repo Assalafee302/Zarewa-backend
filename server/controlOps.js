@@ -12,7 +12,16 @@ import {
   nextPaymentRequestHumanId,
   nextRefundHumanId,
 } from './humanId.js';
-import { mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
+import { isStaffLoanExpenseCategory, mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
+import { isForkliftRepairText, reviewPaymentRequestIntake } from '../shared/lib/paymentRequestIntake.js';
+import {
+  appendOutsideWorkChargeTx,
+  duplicatePeersForIntake,
+  forkliftRepairAlertForMonth,
+  insertApprovedStaffLoanTx,
+  registerAssetInsteadOfExpense,
+  resolvePayrollStaff,
+} from './finance/paymentRequestIntakeOps.js';
 import {
   actorMayApprovePaymentRequestCategory,
   actorMayBypassStaffLoanHrLink,
@@ -2099,6 +2108,23 @@ export function assertPeriodOpen(db, dateISO, contextLabel = 'Posting date') {
   return periodKey;
 }
 
+/**
+ * A record dated in a locked month cannot be edited. The change belongs in the open month.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} dateISO Business date of the job, quote, or receipt
+ * @param {string} [contextLabel]
+ */
+export function assertBusinessMonthUnlocked(db, dateISO, contextLabel = 'This record') {
+  const periodKey = periodKeyFromDate(dateISO);
+  if (!periodKey) return '';
+  const row = db.prepare(`SELECT period_key, reason FROM accounting_period_locks WHERE period_key = ?`).get(periodKey);
+  if (!row) return periodKey;
+  const note = row.reason ? ` ${row.reason}` : '';
+  throw new Error(
+    `${contextLabel} is dated in locked period ${periodKey}.${note} Post the change in the open month as an adjustment.`
+  );
+}
+
 export function lockAccountingPeriod(db, payload, actor) {
   const periodKey = periodKeyFromDate(payload.periodKey || payload.dateISO);
   const existing = db.prepare(`SELECT period_key FROM accounting_period_locks WHERE period_key = ?`).get(periodKey);
@@ -2341,6 +2367,62 @@ export function insertPaymentRequest(db, payload, actor) {
       Boolean(attB64)
     );
     if (!catCheck.ok) return catCheck;
+    const intake = reviewPaymentRequestIntake(
+      {
+        description,
+        expenseCategory,
+        lineItems,
+        amountNgn: amountRequestedNgn,
+        requestDate,
+        requestReference,
+        quotationRef: payload.quotationRef,
+        staffName: payload.staffName,
+        staffUserId: payload.staffUserId,
+        repaymentMonth: payload.repaymentMonth,
+        duplicateReason: payload.duplicateReason,
+        recordAsAsset: payload.recordAsAsset === true || payload.asset === true,
+        assetName: payload.assetName,
+      },
+      duplicatePeersForIntake(db, requestDate, amountRequestedNgn)
+    );
+    if (!intake.ok) return { ok: false, error: intake.error };
+    if (intake.staffLoan) {
+      const staff = resolvePayrollStaff(db, {
+        staffUserId: payload.staffUserId,
+        staffName: payload.staffName,
+      });
+      if (!staff.ok) return staff;
+      payload._payrollStaff = staff.user;
+      payload._repaymentMonth = String(payload.repaymentMonth || '').slice(0, 7);
+    }
+    if (intake.quotationRef && !requestReference) {
+      payload._storedReference = intake.quotationRef;
+    }
+    if (intake.recordAsAsset) {
+      try {
+        assertPeriodOpen(db, requestDate, 'Asset date');
+      } catch (e) {
+        return { ok: false, error: String(e.message || e) };
+      }
+      const asset = registerAssetInsteadOfExpense(db, {
+        name: String(payload.assetName || description).trim(),
+        branchId,
+        date: requestDate,
+        costNgn: amountRequestedNgn,
+        location: payload.assetLocation,
+        userId: actor?.id,
+      });
+      appendAuditLog(db, {
+        actor,
+        action: 'fixed_asset.create_from_request',
+        entityKind: 'fixed_asset',
+        entityId: asset.assetId,
+        note: `Asset ${asset.assetId} recorded instead of an expense`,
+        details: { name: String(payload.assetName || description).trim(), costNgn: amountRequestedNgn },
+      });
+      return { ok: true, assetId: asset.assetId, routed: 'asset' };
+    }
+    payload._intakeStaffLoan = intake.staffLoan;
   } else {
     if (!legacyExpenseID) {
       return {
@@ -2376,6 +2458,7 @@ export function insertPaymentRequest(db, payload, actor) {
       (i === 0
         ? nextPaymentRequestHumanId(db, branchId)
         : `${nextPaymentRequestHumanId(db, branchId)}-${Math.random().toString(36).slice(2, 7)}`);
+    const storedReference = String(payload._storedReference || requestReference || '').trim();
     try {
       assertPeriodOpen(db, requestDate, 'Payment request date');
       db.transaction(() => {
@@ -2397,7 +2480,7 @@ export function insertPaymentRequest(db, payload, actor) {
                   requestDate,
                   expenseCategory,
                   'Pending',
-                  requestReference || requestID,
+                  storedReference || requestID,
                   branchId,
                   categoryLane,
                 ]
@@ -2408,7 +2491,7 @@ export function insertPaymentRequest(db, payload, actor) {
                   requestDate,
                   expenseCategory,
                   'Pending',
-                  requestReference || requestID,
+                  storedReference || requestID,
                   branchId,
                 ])
           );
@@ -2434,7 +2517,7 @@ export function insertPaymentRequest(db, payload, actor) {
             '',
             '',
             '',
-            requestReference || '',
+            storedReference || '',
             lineItemsJson || null,
             attName || '',
             attMime || '',
@@ -2458,7 +2541,7 @@ export function insertPaymentRequest(db, payload, actor) {
             '',
             '',
             '',
-            requestReference || '',
+            storedReference || '',
             lineItemsJson || null,
             attName || '',
             attMime || '',
@@ -2473,6 +2556,16 @@ export function insertPaymentRequest(db, payload, actor) {
           ).run(payeeName || '', payeeAccountNo || '', payeeBankName || '', requestID);
         }
         stampPaymentRequestRequesterTx(db, requestID, actor);
+        if (payload._intakeStaffLoan && payload._payrollStaff?.id) {
+          insertApprovedStaffLoanTx(db, {
+            requestId: requestID,
+            userId: payload._payrollStaff.id,
+            branchId,
+            amountNgn: amountRequestedNgn,
+            repaymentMonth: payload._repaymentMonth,
+            staffName: payload._payrollStaff.display_name || payload.staffName,
+          });
+        }
         appendAuditLog(db, {
           actor,
           action: 'payment_request.create',
@@ -2554,6 +2647,37 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
     hasAttachment
   );
   if (!catCheck.ok) return catCheck;
+  const intake = reviewPaymentRequestIntake(
+    {
+      id: rid,
+      description,
+      expenseCategory,
+      lineItems,
+      amountNgn: amountRequestedNgn,
+      requestDate,
+      requestReference,
+      quotationRef: payload.quotationRef,
+      staffName: payload.staffName,
+      staffUserId: payload.staffUserId,
+      repaymentMonth: payload.repaymentMonth,
+      duplicateReason: payload.duplicateReason,
+      recordAsAsset: payload.recordAsAsset === true || payload.asset === true,
+      assetName: payload.assetName,
+    },
+    duplicatePeersForIntake(db, requestDate, amountRequestedNgn, rid)
+  );
+  if (!intake.ok) return { ok: false, error: intake.error };
+  if (intake.recordAsAsset) {
+    return { ok: false, error: 'Tick Asset on a new request. It is recorded on the asset register, not as an expense.' };
+  }
+  let payrollStaff = null;
+  if (intake.staffLoan) {
+    payrollStaff = resolvePayrollStaff(db, {
+      staffUserId: payload.staffUserId,
+      staffName: payload.staffName,
+    });
+    if (!payrollStaff.ok) return payrollStaff;
+  }
   const categoryLane = getExpenseCategoryLane(expenseCategory);
   const lineItemsJson = JSON.stringify(lineItems);
   const prHasJustification = hasColumn(db, 'payment_requests', 'category_justification');
@@ -2646,6 +2770,17 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
         }
       }
 
+      if (payrollStaff?.user?.id) {
+        insertApprovedStaffLoanTx(db, {
+          requestId: rid,
+          userId: payrollStaff.user.id,
+          branchId: String(payload.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID,
+          amountNgn: amountRequestedNgn,
+          repaymentMonth: payload.repaymentMonth,
+          staffName: payrollStaff.user.display_name || payload.staffName,
+        });
+      }
+
       appendAuditLog(db, {
         actor,
         action: 'payment_request.update',
@@ -2713,6 +2848,14 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
   }
   const note = String(payload.note ?? '').trim();
   const actedAtISO = String(payload.actedAtISO ?? '').trim() || nowIso().slice(0, 10);
+  const outsideWork =
+    status === 'Approved' &&
+    (expenseCategory === 'Outside corrugation' ||
+      /\b(bending|outside\s+corrugat\w*|outside\s+work)\b/i.test(`${row.description || ''} ${expenseCategory}`));
+  const quoteRef = String(payload.quotationRef || row.request_reference || '').trim();
+  if (outsideWork && !/^QT-/i.test(quoteRef)) {
+    return { ok: false, error: 'Bending and outside work require a quote number.' };
+  }
   const warnings = [];
   const bd = backdateWarningForActedDate(actedAtISO, 'Approval date');
   if (bd) warnings.push(bd);
@@ -2725,6 +2868,15 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
          WHERE request_id = ?`
       ).run(status, actorName(actor), actedAtISO, note, requestID);
       stampPaymentRequestApproverTx(db, requestID, actor);
+      if (outsideWork) {
+        const charged = appendOutsideWorkChargeTx(db, {
+          quotationRef: quoteRef,
+          amountNgn: amountRequestedNgn,
+          requestId: requestID,
+          description: row.description,
+        });
+        if (!charged.ok) throw new Error(charged.error);
+      }
       recordApprovalAction(db, {
         actor,
         entityKind: 'payment_request',
@@ -2752,6 +2904,23 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
         ? `Accounts: payment request ${requestID} was approved by ${actorLabel}.${notePart}`
         : `Accounts: payment request ${requestID} was rejected by ${actorLabel}.${notePart}`
     );
+    if (status === 'Approved' && isForkliftRepairText(row.description)) {
+      const repairAlert = forkliftRepairAlertForMonth(db, {
+        month: String(row.request_date || actedAtISO).slice(0, 7),
+      });
+      if (repairAlert.alert) {
+        const repairNote = `Forklift repairs in ${repairAlert.month} are ₦${repairAlert.totalNgn.toLocaleString('en-NG')}, above ₦${repairAlert.thresholdNgn.toLocaleString('en-NG')}. Operations manager should review.`;
+        warnings.push(repairNote);
+        appendAuditLog(db, {
+          actor,
+          action: 'asset_repair.month_alert',
+          entityKind: 'fixed_asset',
+          entityId: 'Forklift',
+          note: repairNote,
+          details: repairAlert,
+        });
+      }
+    }
     return { ok: true, warnings };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
@@ -2868,7 +3037,7 @@ function buildPaymentRequestPayoutGatePreview(db, row, actor) {
     });
   }
 
-  if (category === 'Staff loan') {
+  if (isStaffLoanExpenseCategory(category)) {
     const hrOk = hasHrLoanLink || bypassHrLoanLink;
     checks.push({
       key: 'hr_loan_link',

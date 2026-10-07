@@ -23,6 +23,7 @@ import {
   paymentRequestStatusApiFields,
 } from '../shared/lib/paymentRequestStatus.js';
 import { SQL_PENDING_BELOW_FLOOR_EXCEPTION } from '../shared/lib/quotationPriceException.js';
+import { listStaleSupplierAdvances } from './procurement/supplierAdvanceAge.js';
 import { approvedRefundsAwaitingPayment, applyRefundSplitRemainingTillPayable, stampRefundPayeeTillDue } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
@@ -5073,6 +5074,17 @@ export function procurementCoilRisk(db, branchScope = 'ALL') {
 export function procurementAlerts(db, branchScope = 'ALL') {
   const summary = procurementDashboardSummary(db, branchScope, {});
   const alerts = [];
+  const stale = listStaleSupplierAdvances(db, branchScope);
+  if (stale.length) {
+    const amount = stale.reduce((sum, row) => sum + (Number(row.advanceNgn) || 0), 0);
+    alerts.push({
+      severity: 'high',
+      type: 'supplier_advance_aged',
+      message: `${stale.length} supplier advance${stale.length === 1 ? '' : 's'} outstanding more than 30 days`,
+      amountNgn: amount,
+      rows: stale,
+    });
+  }
   if ((summary.kpis?.lowStockItemsCount || 0) > 0) {
     alerts.push({ severity: 'high', type: 'low_stock', message: `${summary.kpis.lowStockItemsCount} item(s) below threshold` });
   }

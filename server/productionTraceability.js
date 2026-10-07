@@ -7,7 +7,7 @@ import {
 } from './operations/coilKgEvents.js';
 import { STAIN_COMPLETE_NEEDS_YARD_STOCK } from '../shared/lib/stainMaterialUi.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
-import { appendAuditLog, assertPeriodOpen, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, assertBusinessMonthUnlocked, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { recordRefundIntegrityDriftAfterProductionChange } from './quotationRecalcOrchestrator.js';
 import {
   applyAccessoryCompletionTx,
@@ -3436,6 +3436,7 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
   }
   const atISO = normalizeIso(payload.atISO || payload.effectiveDateISO || nowIso());
   try {
+    assertBusinessMonthUnlocked(db, job.completed_at_iso || job.end_date_iso || job.start_date_iso, `Job ${jobId}`);
     assertPeriodOpen(db, atISO, 'Adjustment date');
     if (delta > 0) {
       const effective = jobEffectiveOutputMetres(db, jobId);
@@ -4043,6 +4044,7 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
   );
 
   try {
+    assertBusinessMonthUnlocked(db, job.completed_at_iso || job.end_date_iso || job.start_date_iso, `Job ${jobId}`);
     assertPeriodOpen(db, atISO, 'Production coil correction date');
     const stockBranch = jobBranchId(job);
     /** Outer transaction from handleWriteWithEditApproval — avoid nested db.transaction for MySQL SAVEPOINTs. */
@@ -4239,6 +4241,7 @@ export function applyCompletedProductionAccessoryCorrections(db, jobID, payload 
   const atISO = normalizeIso(payload.atISO || nowIso());
 
   try {
+    assertBusinessMonthUnlocked(db, job.completed_at_iso || job.end_date_iso || job.start_date_iso, `Job ${jobId}`);
     assertPeriodOpen(db, atISO, 'Production accessory correction date');
     const accPlan = planAccessoryCorrectionExcludingJob(db, job, jobId, payload);
     if (!accPlan.ok) return accPlan;
@@ -4327,6 +4330,7 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
   const atISO = normalizeIso(payload.atISO || nowIso());
 
   try {
+    assertBusinessMonthUnlocked(db, job.completed_at_iso || job.end_date_iso || job.start_date_iso, `Job ${jobId}`);
     assertPeriodOpen(db, atISO, 'Production stone flatsheet correction date');
     const sfPlan = planStoneFlatsheetCorrectionExcludingJob(db, job, jobId, payload);
     if (!sfPlan.ok) return sfPlan;
@@ -4485,6 +4489,7 @@ export function applyCompletedProductionStoneMetresCorrections(db, jobID, payloa
   }
   const atISO = normalizeIso(payload.atISO || nowIso());
   try {
+    assertBusinessMonthUnlocked(db, job.completed_at_iso || job.end_date_iso || job.start_date_iso, `Job ${jobId}`);
     assertPeriodOpen(db, atISO, 'Production stone metres correction date');
     if (pureStone) {
       const adjRow = db

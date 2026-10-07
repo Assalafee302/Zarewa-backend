@@ -49,6 +49,9 @@ export function registerSalesPhase1ReportRoutes(app, db) {
             error: pack.error || 'Invalid period.',
           });
         }
+        if (String(req.query?.view || '') === 'management') {
+          return res.json(pack.management || { ok: false, error: 'Management view is not available.' });
+        }
         return res.json(pack);
       },
       { context: 'sales-phase1', fallbackMessage: 'Could not build the Phase 1 sales report.' }

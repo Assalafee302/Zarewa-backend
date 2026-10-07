@@ -153,19 +153,27 @@ function buildCoilReceiptRow(lot, po, line, masterData) {
   const receivedKg = round2(Number(lot.weightKg ?? lot.qtyReceived) || 0);
   const orderKg = line ? round2(Number(line.qtyOrdered) || 0) : null;
   const unitKg = Math.round(Number(lot.unitCostNgnPerKg) || 0);
-  const totalNgn =
-    lot.landedCostNgn != null
-      ? Math.round(Number(lot.landedCostNgn))
-      : unitKg > 0 && receivedKg > 0
-        ? Math.round(unitKg * receivedKg)
-        : 0;
+  const rateValueNgn = unitKg > 0 && receivedKg > 0 ? Math.round(unitKg * receivedKg) : 0;
+  const landedNgn = lot.landedCostNgn != null ? Math.round(Number(lot.landedCostNgn)) : 0;
+  // Landed cost is the GRN purchase value. Stored ₦/kg × weight can disagree (September coils).
+  const totalNgn = landedNgn > 0 ? landedNgn : rateValueNgn;
+  const onHandKg = round2(Number(lot.currentWeightKg ?? lot.weightKg) || 0);
   const poId = String(lot.poID || '').trim();
   const remarks = [];
+  if (line && orderKg > 0 && receivedKg > orderKg * 1.1) {
+    remarks.push(`Received ${receivedKg} kg is more than 10% above ordered ${orderKg} kg`);
+  }
   if (line && orderKg > 0 && receivedKg + 0.01 < orderKg) {
     const lineRecv = round2(Number(line.qtyReceived) || 0);
     if (lineRecv < orderKg) remarks.push(`PO line recv ${lineRecv} / ${orderKg} kg`);
   }
+  if (landedNgn > 0 && rateValueNgn > 0 && Math.abs(landedNgn - rateValueNgn) > Math.max(1, landedNgn * 0.01)) {
+    remarks.push(`Received kg × stored ₦/kg is ${rateValueNgn.toLocaleString('en-NG')}`);
+  }
   if (String(lot.currentStatus || '').toLowerCase() === 'consumed') remarks.push('Coil consumed');
+  if (unitKg > 0) remarks.push(`Stock value ₦${Math.round(unitKg * onHandKg).toLocaleString('en-NG')}`);
+  const basis = String(po?.billingBasis || po?.supplierBillingBasis || '').trim();
+  if (basis) remarks.push(basis === 'ordered_kg' ? 'Bills on ordered kg' : basis === 'received_kg' ? 'Bills on received kg' : `Bills on ${basis}`);
   const dates = rowDateFields(lot.receivedAtISO);
   return {
     ...dates,
@@ -178,6 +186,8 @@ function buildCoilReceiptRow(lot, po, line, masterData) {
     orderKg,
     kgAmountNgn: unitKg || null,
     totalNgn,
+    remainingStockValueNgn: unitKg > 0 ? Math.round(unitKg * onHandKg) : null,
+    billingBasis: String(po?.billingBasis || po?.supplierBillingBasis || '').trim() || 'Not set',
     poIdDisplay: displayLast4(poId) || displayDocNumber(poId) || '—',
     poId: poId || '—',
     productName: String(line?.productName || lot.productID || '').trim() || '—',
@@ -195,6 +205,9 @@ function buildMovementReceiptRow(m, po, line, product, masterData, kind) {
   const isFs = m.type === 'STORE_GRN_STONE_FLATSHEET';
   const unitLabel = kind === 'accessory' ? 'units' : isFs ? 'sheets' : 'm';
   const remarks = [];
+  if (line && orderQty > 0 && qty > orderQty * 1.1) {
+    remarks.push(`Received ${qty} ${unitLabel} is more than 10% above ordered ${orderQty} ${unitLabel}`);
+  }
   if (line && orderQty > 0 && qty + 0.01 < orderQty) {
     const lineRecv = round2(Number(line.qtyReceived) || 0);
     if (lineRecv < orderQty) remarks.push(`PO line recv ${lineRecv} / ${orderQty} ${unitLabel}`);
@@ -216,6 +229,7 @@ function buildMovementReceiptRow(m, po, line, product, masterData, kind) {
     poIdDisplay: displayLast4(poId) || displayDocNumber(poId) || '—',
     poId: poId || '—',
     productName: String(line?.productName || product?.name || m.productID || '').trim() || '—',
+    billingBasis: String(po?.billingBasis || po?.supplierBillingBasis || '').trim() || 'Not set',
     remark: remarks.length ? remarks.join(' · ') : '—',
   };
 }
@@ -351,6 +365,7 @@ export function buildPurchaseReportSummary(report) {
   push('Aluzinc', 'aluzinc', report.aluzinc, true);
   push('Coil (unclassified)', 'unclassified', report.unclassifiedCoil, true);
   push('Stone-coated', 'stone', report.stoneCoated, false);
+  push('Stone flatsheets', 'stone_flatsheet', report.stoneFlatsheets, false);
   push('Accessories', 'accessories', report.accessories, false);
 
   const byGauge = [];
@@ -359,6 +374,7 @@ export function buildPurchaseReportSummary(report) {
     ['Aluzinc', report.aluzinc],
     ['Coil (unclassified)', report.unclassifiedCoil],
     ['Stone-coated', report.stoneCoated],
+    ['Stone flatsheets', report.stoneFlatsheets],
   ]) {
     for (const g of sec?.groups || []) {
       byGauge.push({
@@ -396,7 +412,7 @@ export function buildPurchaseReportSummary(report) {
     recommendations.push('Clear supplier payables on outstanding POs or confirm accrual with Finance.');
   }
   if (paidInPeriod > 0) {
-    observations.push(`Supplier treasury payments in period: ₦${paidInPeriod.toLocaleString()} (${report.payments?.supplierPayments?.length || 0} posting(s)).`);
+    observations.push(`Paid to suppliers: ₦${paidInPeriod.toLocaleString('en-NG')}.`);
   }
   if (receivedValue > 0) {
     observations.push(`Goods received value in period (GRN): ₦${receivedValue.toLocaleString()} across ${byMaterial.reduce((s, m) => s + m.lineCount, 0)} receipt line(s).`);
@@ -448,6 +464,7 @@ export function buildPurchaseReport(input = {}) {
   const aluzRows = [];
   const unclRows = [];
   const stoneRows = [];
+  const flatsheetRows = [];
   const accRows = [];
 
   for (const lot of coilLots || []) {
@@ -477,7 +494,9 @@ export function buildPurchaseReport(input = {}) {
     }
     const product = m.productID ? productById.get(String(m.productID)) : null;
 
-    if (GRN_STONE.has(m.type)) {
+    if (m.type === 'STORE_GRN_STONE_FLATSHEET') {
+      flatsheetRows.push(buildMovementReceiptRow(m, po, line, product, masterData, 'stone'));
+    } else if (m.type === 'STORE_GRN_STONE') {
       stoneRows.push(buildMovementReceiptRow(m, po, line, product, masterData, 'stone'));
     } else if (m.type === GRN_ACCESSORY) {
       accRows.push(buildMovementReceiptRow(m, po, line, product, masterData, 'accessory'));
@@ -496,6 +515,12 @@ export function buildPurchaseReport(input = {}) {
     totals: summarizeReceiptRows(stoneRows),
   };
 
+  const flatsheetSection = {
+    receivedUnit: 'sheets',
+    groups: groupCoilReceiptsByGauge(flatsheetRows),
+    totals: summarizeReceiptRows(flatsheetRows),
+  };
+
   const accSection = {
     receivedUnit: 'units',
     groups: groupAccessoryReceipts(accRows),
@@ -508,6 +533,7 @@ export function buildPurchaseReport(input = {}) {
     aluzinc: wrapCoil(aluzRows),
     unclassifiedCoil: wrapCoil(unclRows),
     stoneCoated: stoneSection,
+    stoneFlatsheets: flatsheetSection,
     accessories: accSection,
   };
 
@@ -516,6 +542,7 @@ export function buildPurchaseReport(input = {}) {
     body.aluzinc,
     body.unclassifiedCoil,
     body.stoneCoated,
+    body.stoneFlatsheets,
     body.accessories,
   ]);
 
@@ -528,7 +555,7 @@ export function buildPurchaseReport(input = {}) {
 
   const poMeta = buildPoPaymentMeta(poById, poIds, paymentsByPo);
   attachPoPaymentToSections(
-    [body.aluminium, body.aluzinc, body.unclassifiedCoil, body.stoneCoated, body.accessories],
+    [body.aluminium, body.aluzinc, body.unclassifiedCoil, body.stoneCoated, body.stoneFlatsheets, body.accessories],
     poMeta
   );
 

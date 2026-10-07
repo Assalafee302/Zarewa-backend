@@ -29,6 +29,7 @@ import { nextStockMovementHumanId } from '../humanId.js';
 import { insertStockMovementTx } from '../stockMovementOps.js';
 import { insertPurchasePaymentCashierAckTx } from './purchasePaymentCashierAckOps.js';
 import { insertTreasuryMovementTx, syncAccountsPayableFromPurchaseOrder } from '../writeOps.js';
+import { supplierPaymentCapBlock } from '../procurement/poSupplierAdvanceGuard.js';
 
 const EXCESS_REASONS = {
   duplicate_payment: 'Duplicate supplier payment',
@@ -242,6 +243,12 @@ function existingMovement(db, sourceKind, poId, reference, amountNgn, type) {
 export function recordSupplierExcessPayment(db, poId, payload = {}) {
   const ctx = assertPostingContext(db, poId, payload, 'payment');
   if (!ctx.ok) return ctx;
+  const cap = supplierPaymentCapBlock({
+    paidNgn: ctx.position.supplierPaidNgn,
+    orderedNgn: ctx.position.orderedValueNgn,
+    mdNote: payload.mdNote,
+  });
+  if (cap) return cap;
   if (ctx.amountNgn <= ctx.position.stillOwedNgn) {
     return {
       ok: false,

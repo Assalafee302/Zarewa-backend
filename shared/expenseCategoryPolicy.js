@@ -107,7 +107,7 @@ export function actorMaySelectExpenseCategory(actor, category, hasPermission = (
 
   const lane = getExpenseCategoryLane(cat);
   if (!RESTRICTED_EXPENSE_LANE_KEYS.includes(lane)) return true;
-  if (lane === 'special' && cat === 'Staff loan') {
+  if (lane === 'special' && (cat === 'Staff loan' || cat === 'IOU / staff loan')) {
     if (actorMaySelectRestrictedExpenseCategories(actor, hasPermission)) return true;
     const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
     return HR_LOAN_ROLES.has(rk);
@@ -291,7 +291,7 @@ export function validateSpecialLaneTreasuryPayout(input = {}) {
     const capex = validateCapexTreasuryPayout(input);
     if (!capex.ok) return capex;
   }
-  if (category === 'Staff loan' && !input.hasHrLoanLink) {
+  if ((category === 'Staff loan' || category === 'IOU / staff loan') && !input.hasHrLoanLink) {
     const hasPermission = typeof input.hasPermission === 'function' ? input.hasPermission : () => false;
     if (actorMayBypassStaffLoanHrLink(input.actor, hasPermission)) {
       return { ...base, staffLoanHrLinkBypass: true };

@@ -28,6 +28,7 @@ import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { buildMdCockpitPulses, buildChampionCustomerSnippet } from './mdCockpitOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { listStaleSupplierAdvances } from './procurement/supplierAdvanceAge.js';
 import {
   quotationHasPaymentForMdBelowFloorQueue,
   SQL_PENDING_BELOW_FLOOR_EXCEPTION,
@@ -1110,7 +1111,8 @@ export function buildExecutiveDecisionAlerts(
   execSummary,
   inventoryPanels = {},
   enrichedBranches = [],
-  sales = {}
+  sales = {},
+  branchScope = 'ALL'
 ) {
   const panels = inventoryPanels || {};
   const pack = biPack || {};
@@ -1245,6 +1247,21 @@ export function buildExecutiveDecisionAlerts(
       source: 'finance',
       sourceSection: 'Executive Work Tray',
       route: '/manager',
+    });
+  }
+
+  const staleAdvances = listStaleSupplierAdvances(db, branchScope);
+  if (staleAdvances.length) {
+    const amount = staleAdvances.reduce((sum, row) => sum + (Number(row.advanceNgn) || 0), 0);
+    push({
+      id: 'supplier-advances-aged',
+      level: 'warning',
+      title: 'Supplier advances over 30 days',
+      message: `${staleAdvances.length} prepaid purchase order${staleAdvances.length === 1 ? '' : 's'} have been outstanding more than 30 days (${formatNgnCompact(amount)}).`,
+      source: 'procurement',
+      sourceSection: 'Cash & Working Capital',
+      route: '/procurement',
+      rows: staleAdvances,
     });
   }
 
@@ -1628,7 +1645,8 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
         execSummary,
         inventoryPanels,
         enrichedBranches,
-        sales
+        sales,
+        branchScope
       )
     : [];
   const criticalAlerts = decisionAlerts.filter((a) => a.level === 'critical').length;

@@ -6,13 +6,15 @@ import {
   isAllowedExpenseCategory,
 } from '../expenseCategories.js';
 
-/** @typedef {'production_labour'|'diesel_fuel'|'production_repairs_maintenance'|'factory_consumables'|'transport_landing'|'admin_office'|'selling_marketing'|'finance_bank'|'owner_drawings'|'unclassified'} CostingExpenseBucket */
+/** @typedef {'production_labour'|'diesel_fuel'|'production_repairs_maintenance'|'factory_consumables'|'stock_accessories'|'carriage_inward'|'transport_landing'|'admin_office'|'selling_marketing'|'finance_bank'|'owner_drawings'|'unclassified'} CostingExpenseBucket */
 
 export const COSTING_EXPENSE_BUCKET_LABELS = Object.freeze({
   production_labour: 'Production labour',
   diesel_fuel: 'Diesel / fuel',
   production_repairs_maintenance: 'Production repairs / maintenance',
   factory_consumables: 'Factory consumables',
+  stock_accessories: 'Stock – accessories',
+  carriage_inward: 'Carriage inward',
   transport_landing: 'Transport / landing cost',
   admin_office: 'Admin / office expenses',
   selling_marketing: 'Selling / marketing',
@@ -29,8 +31,8 @@ const CANONICAL_TO_BUCKET = Object.freeze({
   'Fuel & lubricant': 'diesel_fuel',
   Maintenance: 'production_repairs_maintenance',
   Depreciation: 'production_repairs_maintenance',
-  Accessories: 'factory_consumables',
-  'Carriage inward': 'transport_landing',
+  Accessories: 'stock_accessories',
+  'Carriage inward': 'carriage_inward',
   Purchases: 'factory_consumables',
   'Closing stock': 'unclassified',
   'Admin expenses': 'admin_office',

@@ -69,6 +69,9 @@ export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL', 
     if (t === 'revenue') revenueTotal += bal;
     if (t === 'expense') expenseTotal += bal;
   }
+  const carriageInwardNgn = plLines
+    .filter((line) => line.accountCode === '5050')
+    .reduce((sum, line) => sum + line.amountNgn, 0);
 
   const bsLines = [];
   let assets = 0;
@@ -112,6 +115,7 @@ export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL', 
     branchScope,
     profitAndLoss: {
       revenueTotalNgn: revenueTotal,
+      carriageInwardNgn,
       expenseTotalNgn: expenseTotal,
       netIncomeNgn: netIncome,
       lines: summaryOnly ? [] : plLines,

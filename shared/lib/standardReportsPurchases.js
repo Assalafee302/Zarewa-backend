@@ -116,14 +116,16 @@ export function purchasesOrderedRows(purchaseOrders = [], startDate, endDate) {
  * Supplier payments from treasury (posted date in period).
  */
 export function purchasesPaidRows(treasuryMovements = [], startDate, endDate) {
-  const PAY_TYPES = new Set(['SUPPLIER_PAYMENT', 'PO_SUPPLIER_PAYMENT', 'SUPPLIER_OVERPAYMENT']);
+  const PAY_TYPES = new Set(['SUPPLIER_PAYMENT', 'PO_SUPPLIER_PAYMENT', 'SUPPLIER_OVERPAYMENT', 'AP_PAYMENT']);
   const REVERSAL_TYPES = new Set(['SUPPLIER_OVERPAYMENT_REVERSAL']);
   const rows = [];
   for (const t of treasuryMovements || []) {
     const type = String(t.type || '');
     const cashIn = REVERSAL_TYPES.has(type);
     if (!PAY_TYPES.has(type) && !cashIn) continue;
-    if (String(t.counterpartyKind || '').toUpperCase() !== 'SUPPLIER') continue;
+    if (String(t.reversesMovementId || t.reverses_movement_id || '').trim()) continue;
+    const kind = String(t.counterpartyKind || '').toUpperCase();
+    if (type !== 'AP_PAYMENT' && kind && kind !== 'SUPPLIER') continue;
     const iso = toIsoDate(t.postedAtISO);
     if (!iso) continue;
     if (startDate && iso < startDate) continue;

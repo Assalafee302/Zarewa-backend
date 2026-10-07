@@ -99,6 +99,7 @@ import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 import { insertStockMovementTx } from './stockMovementOps.js';
 import {
   latestPayoutDay,
+  latestPayoutPostedAtISO,
   payoutLinePostedAtISO,
   payoutLinePostedDay,
 } from '../shared/lib/treasuryPayoutDates.js';
@@ -10351,7 +10352,8 @@ export function payRefundEntry(db, refundId, payload) {
   if (payoutAmountNgn > cashOutstandingNgn) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
   }
-  const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
+  // Full timestamp from payout lines (not date-only) so vouchers print transfer time, not 01:00 Lagos.
+  const paidAtISO = latestPayoutPostedAtISO(paymentLines, defaultPaidDay);
   const segPay = assertActorMayPayCustomerRefund(row, payload.actor, hasPerm);
   if (!segPay.ok) return { ok: false, error: segPay.error };
 

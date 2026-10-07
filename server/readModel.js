@@ -3978,15 +3978,21 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
   if (settlementSummary && 'creditTargets' in settlementSummary) {
     delete settlementSummary.creditTargets;
   }
-  // Prefer repaired payee-only paid amount when legacy rows still include company cut.
-  const paidAmountForApi = settlementSummary.payeeSettledNgn;
+  // Voucher "Paid" = treasury REFUND_PAYOUT sum only (not leftover-clear / remainder / credit).
+  const paidAmountForApi = Math.max(0, Math.round(Number(settlementSummary.treasuryPaidNgn) || 0));
   const walletOpenCredits = Array.isArray(settlementSummary.walletOpenCredits)
     ? settlementSummary.walletOpenCredits
     : [];
-  const creditAppliedNgn = Math.max(
-    Number(row.credit_applied_ngn) || 0,
-    Number(settlementSummary.creditAppliedNgn) || 0
-  );
+  const creditAppliedNgn = Math.max(0, Math.round(Number(settlementSummary.creditAppliedNgn) || 0));
+  const paidAtFromTreasury = (() => {
+    let best = '';
+    for (const line of payoutHistory) {
+      const iso = String(line?.postedAtISO || '').trim();
+      if (iso && (!best || iso > best)) best = iso;
+    }
+    return best;
+  })();
+  const paidAtISO = paidAtFromTreasury || String(row.paid_at_iso || '').trim();
   const tillPayableNgn = Math.max(0, Math.round(Number(settlementSummary.tillPayableNgn) || 0));
   const cashierPayoutLines = Array.isArray(settlementSummary.cashierPayoutLines)
     ? settlementSummary.cashierPayoutLines
@@ -4027,7 +4033,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     approvedAmountNgn: finalApprovedAmountNgn,
     managerComments: row.manager_comments,
     paidAmountNgn: paidAmountForApi,
-    paidAtISO: row.paid_at_iso,
+    paidAtISO,
     paidBy: row.paid_by,
     paymentNote: row.payment_note ?? '',
     payeeName: row.payee_name ?? '',

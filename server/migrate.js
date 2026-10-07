@@ -7437,6 +7437,22 @@ function migrateRefundPayoutHold2026(db) {
       /* already present */
     }
   }
+  // Live MySQL once shipped manager_comments as VARCHAR(100); voucher notes were cut at 100 chars.
+  try {
+    const row = db
+      .prepare(
+        `SELECT COLUMN_TYPE AS t FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = 'customer_refunds'
+           AND column_name = 'manager_comments' LIMIT 1`
+      )
+      .get();
+    const typ = String(row?.t || row?.T || '').toLowerCase();
+    if (typ.startsWith('varchar')) {
+      db.exec(`ALTER TABLE customer_refunds MODIFY COLUMN manager_comments TEXT`);
+    }
+  } catch {
+    /* sqlite / already TEXT */
+  }
 }
 
 function migrateRefundCreditApplications(db) {

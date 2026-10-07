@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
+  isRefundCreditLeftoverClearApplication,
   allocateRefundCreditAcrossSources,
   planCashierRefundOffset,
   refundFundDecisionRequiredOnConfirm,
@@ -28,6 +29,22 @@ import {
 } from './refundCreditApply.js';
 
 describe('refundCreditApply pure helpers', () => {
+  it('recognises leftover-fund clears so they never count as payee credit', () => {
+    expect(
+      isRefundCreditLeftoverClearApplication({
+        status: 'Applied',
+        ledger_bank_reference: 'LEFTOVER_CLEAR:RF-1',
+      })
+    ).toBe(true);
+    expect(isRefundCreditLeftoverClearApplication({ status: 'Leftover clear' })).toBe(true);
+    expect(
+      isRefundCreditLeftoverClearApplication({
+        status: 'Applied',
+        ledger_bank_reference: 'CREDIT_APPLY:RF-1',
+      })
+    ).toBe(false);
+  });
+
   it('treats overpayment-only categories correctly', () => {
     expect(refundCategoriesAreOverpaymentOnly('Overpayment', [])).toBe(true);
     expect(refundCategoriesAreOverpaymentOnly(['Overpayment'], [])).toBe(true);

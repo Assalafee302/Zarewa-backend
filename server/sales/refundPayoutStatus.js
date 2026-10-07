@@ -41,8 +41,16 @@ function roundMoney(value) {
   return Math.round(n);
 }
 
-/** Naira closed without a payout (rounding or a cancelled unpaid remainder). */
+/**
+ * Naira closed without a payout (rounding or a cancelled unpaid remainder).
+ * Leftover-fund clears must not use this column — if a row was mis-tagged, ignore it so
+ * Paid/status stay driven by REFUND_PAYOUT + real credit apply only.
+ */
 function refundRemainderClosedNgn(row) {
+  const reason = String(row?.remainder_closed_reason ?? row?.remainderClosedReason ?? '')
+    .trim()
+    .toLowerCase();
+  if (reason.includes('leftover clear')) return 0;
   return Math.max(0, roundMoney(row?.remainder_closed_ngn ?? row?.remainderClosedNgn));
 }
 

@@ -5,6 +5,7 @@
  */
 import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
+  REFUND_CREDIT_PAYEE_APPLY_SQL,
   refundAbsorbsQuoteToQuoteOverpay,
   refundCreditOpenAmountFromStoredRefund,
   refundOverpayConsumedNgn,
@@ -117,7 +118,7 @@ export function healRefundCreditAppliedFromApplicationsTx(db, refundId) {
         `SELECT COALESCE(SUM(amount_ngn), 0) AS s
          FROM refund_credit_applications
          WHERE refund_id = ?
-           AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')`
+           AND ${REFUND_CREDIT_PAYEE_APPLY_SQL}`
       )
       .get(rid);
     const linkedSum = roundMoney(linkedSumRow?.s);
@@ -128,7 +129,7 @@ export function healRefundCreditAppliedFromApplicationsTx(db, refundId) {
           `SELECT target_quotation_ref AS t
            FROM refund_credit_applications
            WHERE refund_id = ?
-             AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')
+             AND ${REFUND_CREDIT_PAYEE_APPLY_SQL}
            ORDER BY created_at_iso DESC, application_id DESC
            LIMIT 1`
         )

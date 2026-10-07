@@ -7,7 +7,7 @@
  * that module and controlOps.
  */
 import {
-  REFUND_CREDIT_REVERSED_STATUS,
+  REFUND_CREDIT_PAYEE_APPLY_SQL,
   refundAbsorbsQuoteToQuoteOverpay,
   refundCreditOpenAmountFromStoredRefund,
   refundOverpayConsumedNgn,
@@ -58,9 +58,9 @@ export function refundCreditAppliedNgn(db, refundId) {
         `SELECT COALESCE(SUM(amount_ngn), 0) AS s
          FROM refund_credit_applications
          WHERE refund_id = ?
-           AND LOWER(TRIM(COALESCE(status, ''))) != ?`
+           AND ${REFUND_CREDIT_PAYEE_APPLY_SQL}`
       )
-      .get(rid, REFUND_CREDIT_REVERSED_STATUS.toLowerCase());
+      .get(rid);
     return Math.max(0, roundMoney(row?.s));
   } catch {
     // Table or column missing on this host (migration pending) — caller falls back to
@@ -91,10 +91,10 @@ export function refundCreditAppliedByIds(db, refundIds) {
         `SELECT refund_id, COALESCE(SUM(amount_ngn), 0) AS s
          FROM refund_credit_applications
          WHERE refund_id IN (${ph})
-           AND LOWER(TRIM(COALESCE(status, ''))) != ?
+           AND ${REFUND_CREDIT_PAYEE_APPLY_SQL}
          GROUP BY refund_id`
       )
-      .all(...ids, REFUND_CREDIT_REVERSED_STATUS.toLowerCase());
+      .all(...ids);
     for (const row of rows) {
       map.set(String(row.refund_id), Math.max(0, roundMoney(row.s)));
     }
@@ -125,10 +125,10 @@ export function refundCreditTargetsFor(db, refundId) {
       .prepare(
         `SELECT target_quotation_ref FROM refund_credit_applications
          WHERE refund_id = ?
-           AND LOWER(TRIM(COALESCE(status, ''))) != ?
+           AND ${REFUND_CREDIT_PAYEE_APPLY_SQL}
          ORDER BY created_at_iso ASC`
       )
-      .all(rid, REFUND_CREDIT_REVERSED_STATUS.toLowerCase());
+      .all(rid);
     const seen = [];
     for (const r of rows) {
       const ref = String(r?.target_quotation_ref || '').trim();

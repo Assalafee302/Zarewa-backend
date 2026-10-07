@@ -4948,9 +4948,12 @@ export function previewRefundRequest(db, payload) {
   // 2. Quoted vs produced shortfall (not the same as order cancellation — see eligible categories)
   if (quotedMeters > 0 && pricePerMeter) {
     const unproducedPotential = Math.max(0, quotedMeters - producedMetersForUnproduced);
+    /* Match fullyProducedRoofing (≤0.001 m) — do not suggest Unproduced when production already covers the quote. */
     if (
-      unproducedPotential > 0 &&
+      unproducedPotential > 0.001 &&
+      !productionFulfillment.fullyProducedRoofing &&
       !hardBlockedCategories.has('Unproduced meterage') &&
+      !blockedRefundCategories.includes('Unproduced meterage') &&
       !materialDelivered
     ) {
       const unproducedLine = buildUnproducedMetresRefundLine(unproducedPotential, pricePerMeter);
@@ -4967,7 +4970,9 @@ export function previewRefundRequest(db, payload) {
   if (
     quotedTrimFinishedM > 0.001 &&
     trimPricePerMeter > 0 &&
+    !productionFulfillment.fullyProducedRoofing &&
     !hardBlockedCategories.has('Unproduced meterage') &&
+    !blockedRefundCategories.includes('Unproduced meterage') &&
     !materialDelivered
   ) {
     const poolQuoted = stoneMeterQuoteForUnproduced
@@ -5680,7 +5685,9 @@ export function previewRefundRequest(db, payload) {
     derivedCategoryMaxNgn
   );
 
-  let finalSuggestedLines = [...cappedSuggestedLines];
+  let finalSuggestedLines = cappedSuggestedLines.filter(
+    (l) => !blockedRefundCategories.includes(String(l.category || '').trim())
+  );
   const orderCancelDerivedCap = roundMoney(effectiveCategorySuggestedMaxNgn['Order cancellation'] || 0);
   if (
     cancelledNotProduced &&

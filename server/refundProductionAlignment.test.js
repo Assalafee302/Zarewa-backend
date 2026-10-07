@@ -119,6 +119,34 @@ describe('refundProductionAlignment', () => {
     });
     expect(blocked.ok).toBe(false);
     expect(blocked.blockedCode).toBe('unproduced_with_full_production');
+
+    const bmOverride = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Unproduced meterage'], {
+      actor: { roleKey: 'branch_manager' },
+      overrideNote: 'Trying to force unproduced despite full production.',
+    });
+    expect(bmOverride.ok).toBe(false);
+    expect(bmOverride.requiresOverride).toBe(false);
+    expect(bmOverride.blockedCode).toBe('unproduced_with_full_production');
+  });
+
+  it('does not block Overpayment-only when roofing is fully produced', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q1',
+      lines_json: JSON.stringify({ products: [{ name: 'Roofing Sheet', qty: '3', unitPrice: '3900' }] }),
+    });
+    db.data.production_jobs.push({
+      job_id: 'J-OFF',
+      quotation_ref: 'Q1',
+      status: 'Completed',
+      planned_meters: 5,
+      actual_meters: 3,
+    });
+    const ok = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Overpayment'], {
+      actor: { roleKey: 'sales' },
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.issues.some((i) => i.code === 'unproduced_with_full_production')).toBe(false);
   });
 
   it('warns on cancellation with completed coil production', () => {

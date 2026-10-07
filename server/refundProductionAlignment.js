@@ -65,10 +65,12 @@ const SUBMIT_ACTION_BY_CODE = {
   cutting_list_exceeds_produced: 'acknowledge',
 };
 
-/** Blockers that cannot be overridden with a manager note (double-count / cross-refund). */
+/** Blockers that cannot be overridden with a manager note (double-count / cross-refund / fully produced). */
 const NON_OVERRIDABLE_ALIGNMENT_BLOCK_CODES = new Set([
   'multi_category_overlap',
   'multi_category_overlap_same_request',
+  /* Create hard-stops UNPRODUCED_NOT_APPLICABLE — override note must not look like a fix. */
+  'unproduced_with_full_production',
 ]);
 
 /**

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assessCuttingListQuotationConsumption,
+  cuttingListTrimBlankBlocksDeskSave,
   finishedTrimMetresToBlankMetres,
   quotedCuttingListSheetPoolMetresFromProducts,
   quotedTrimBlankMetresFromProducts,
@@ -74,6 +75,25 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.ok).toBe(false);
     expect(assessment.code).toBe('cutting_list_quotation_metre_mismatch');
     expect(assessment.cuttingListTotalM).toBe(120);
+  });
+
+  it('lets a short cutting list be saved, and still blocks save when trim metres sit on Roof', () => {
+    const lines = {
+      products: [{ name: 'Roofing Sheet', qty: 100 }, { name: 'Ridge Cap', qty: 3, girthMm: 400 }],
+    };
+    const under = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [{ lineType: 'Roof', sheets: 40, lengthM: 2 }],
+    });
+    expect(under.trimBlankProductionBlocked).toBe(true);
+    expect(cuttingListTrimBlankBlocksDeskSave(under)).toBe(false);
+
+    const parkedOnRoof = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [{ lineType: 'Roof', sheets: 101, lengthM: 1 }],
+    });
+    expect(parkedOnRoof.ok).toBe(true);
+    expect(cuttingListTrimBlankBlocksDeskSave(parkedOnRoof)).toBe(true);
   });
 
   it('blocks production when flatsheet section is short of trim blank', () => {

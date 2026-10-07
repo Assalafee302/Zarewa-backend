@@ -91,6 +91,7 @@ import {
 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 import {
   assessCuttingListQuotationConsumption,
+  cuttingListTrimBlankBlocksDeskSave,
   validateCuttingListTrimBlankForProduction,
 } from '../shared/lib/cuttingListBlankConsumption.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
@@ -7251,16 +7252,26 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
     accessoriesOnly,
   });
   if (!check.ok) return { ok: false, error: check.message, code: check.code };
-  const trimBlank = validateCuttingListTrimBlankForProduction({
+  // Under-quote lists may be saved while trim is still short. Production registration
+  // still requires the flatsheet section (see insertProductionJob).
+  const assessed = assessCuttingListQuotationConsumption({
     quotationLinesJson: qrow.lines_json,
     cuttingListLines: lines,
+    accessoriesOnly,
+    stoneMeterQuote: false,
   });
-  if (!trimBlank.ok) {
-    return {
-      ok: false,
-      error: trimBlank.message || trimBlank.error || 'Trim blank must be recorded under Flatsheet.',
-      code: trimBlank.code || 'trim_blank_cl_missing',
-    };
+  if (cuttingListTrimBlankBlocksDeskSave(assessed)) {
+    const trimBlank = validateCuttingListTrimBlankForProduction({
+      quotationLinesJson: qrow.lines_json,
+      cuttingListLines: lines,
+    });
+    if (!trimBlank.ok) {
+      return {
+        ok: false,
+        error: trimBlank.message || trimBlank.error || 'Trim blank must be recorded under Flatsheet.',
+        code: trimBlank.code || 'trim_blank_cl_missing',
+      };
+    }
   }
   return { ok: true };
 }
@@ -7899,7 +7910,7 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
       : 0
     : Number(existing.production_release_pending) || 0;
 
-  const txResult = db.transaction(() => {
+  const applyCuttingListUpdate = () => {
     // Autosave: only write while still Draft so a concurrent Save list finalize wins.
     const upd = isAutosave
       ? db
@@ -8002,7 +8013,10 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
       }
     }
     return { skipped: false };
-  })();
+  };
+  // Sales edits that already hold an edit-approval transaction must not open another one.
+  // Nested MySQL savepoints fail the save (`SAVEPOINT … does not exist`).
+  const txResult = db.inTransaction ? applyCuttingListUpdate() : db.transaction(applyCuttingListUpdate)();
 
   return { ok: true, id: cuttingListId, ...(txResult?.skipped ? { skipped: true } : {}) };
 }
@@ -11078,8 +11092,7 @@ export function reconcileAutoOverpayApplyForQuotation(db, quotationId, ctx, acto
   const customerID = String(ctx.customerId || '').trim();
   if (!qid || !customerID) return { appliedNgn: 0, deletedRows: 0 };
 
-  try {
-    const out = db.transaction(() => {
+  const applyOverpay = () => {
       const deletedRows = deleteAutoOverpayApplyBundlesForQuotation(db, qid);
       syncQuotationPaidFromLedger(db, qid);
 
@@ -11135,8 +11148,9 @@ export function reconcileAutoOverpayApplyForQuotation(db, quotationId, ctx, acto
       );
       syncQuotationPaidFromLedger(db, qid);
       return { appliedNgn: applyAmt, deletedRows };
-    })();
+  };
 
+  const finish = (out) => {
     if (out.deletedRows > 0 || out.appliedNgn > 0) {
       appendAuditLog(db, {
         actor,
@@ -11147,8 +11161,15 @@ export function reconcileAutoOverpayApplyForQuotation(db, quotationId, ctx, acto
         details: { customerID, deletedRows: out.deletedRows, appliedNgn: out.appliedNgn },
       });
     }
-
     return out;
+  };
+
+  // Inside an edit-approval transaction, a nested savepoint breaks the MySQL worker.
+  // Let a failure roll the caller's transaction back instead of committing a half-written overpay.
+  if (db.inTransaction) return finish(applyOverpay());
+
+  try {
+    return finish(db.transaction(applyOverpay)());
   } catch {
     return { appliedNgn: 0, deletedRows: 0 };
   }
@@ -11358,7 +11379,7 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   const linesStr = JSON.stringify(linesJson);
   const persistHandlerUserId = hasColumn(db, 'quotations', 'handled_by_user_id');
 
-  db.transaction(() => {
+  const persistQuotation = () => {
     if (persistHandlerUserId) {
       db.prepare(
         `
@@ -11518,7 +11539,10 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
         /* optional */
       }
     }
-  })();
+  };
+  // Same rule as cutting-list save: do not nest a transaction under edit-approval.
+  if (db.inTransaction) persistQuotation();
+  else db.transaction(persistQuotation)();
 
   /** Booked paid must follow receipts + advance applied, not whatever the client last sent. */
   syncQuotationPaidFromLedger(db, quotationId);

@@ -644,3 +644,19 @@ export function validateCuttingListTrimBlankForProduction({
     message: `Cutting list flatsheet section (${assessment.clFlatsheetM.toFixed(2)} m) is missing ${assessment.trimBlankGapM.toFixed(2)} m of trim blank required by the quotation (${assessment.quotedTrimBlankM.toFixed(2)} m total). Add trim under Flatsheet before production.`,
   };
 }
+
+/**
+ * Desk save of a cutting list that is still short of the quotation (partial / unproduced).
+ * Missing trim blank stays a production gate. A list whose total already matches the quote
+ * but parked those metres on Roof (Flatsheet section short) is still blocked on save.
+ * @param {{ ok?: boolean, code?: string, signedDeltaM?: number, trimBlankProductionBlocked?: boolean } | null | undefined} assessment
+ */
+export function cuttingListTrimBlankBlocksDeskSave(assessment) {
+  if (!assessment?.trimBlankProductionBlocked) return false;
+  const code = String(assessment.code || '').trim();
+  if (code === 'cutting_list_quotation_metre_under' || code === 'cutting_list_missing_for_quotation') {
+    return false;
+  }
+  if (assessment.ok !== false && Number(assessment.signedDeltaM) < -1e-6) return false;
+  return true;
+}

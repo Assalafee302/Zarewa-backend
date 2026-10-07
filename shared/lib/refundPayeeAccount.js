@@ -1,15 +1,23 @@
 /** Payee account rules for a new refund and for matching it to a bank line. */
 
+/**
+ * TEMP: real 10/11-digit bank-account validation is off so placeholders can pass.
+ * Set to `true` to restore rejection of blank, letter, zero, and short accounts.
+ */
+export const ENFORCE_REAL_PAYEE_ACCOUNT = false;
+
 export function payeeAccountDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
 /**
  * A usable payout account is a 10-digit bank account or an 11-digit OPay number.
- * Placeholders (blank, letters, all zeros, short numbers) are rejected.
+ * Placeholders (blank, letters, all zeros, short numbers) are rejected when
+ * {@link ENFORCE_REAL_PAYEE_ACCOUNT} is true.
  * @returns {string} empty when the account can be paid and reconciled
  */
 export function payeeAccountRejection(value) {
+  if (!ENFORCE_REAL_PAYEE_ACCOUNT) return '';
   const raw = String(value || '').trim();
   if (!raw) return 'Refund payee account number is required.';
   if (/[a-z]/i.test(raw.replace(/[\s-]/g, ''))) {

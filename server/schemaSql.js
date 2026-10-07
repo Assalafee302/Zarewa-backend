@@ -257,7 +257,10 @@ CREATE TABLE IF NOT EXISTS coil_lots (
   material_origin_note TEXT,
   landed_cost_ngn INTEGER,
   unit_cost_ngn_per_kg INTEGER,
-  gauge_revised_at_iso TEXT
+  gauge_revised_at_iso TEXT,
+  -- Set when kg stays on the coil but is not prime stock (finished-roll tail).
+  -- Reports and count sheets exclude this kg from the prime coil total.
+  stock_hold TEXT
 );
 
 -- Damaged metal still in inventory. Same coil number, colour, gauge, and unit cost as the prime coil.

@@ -2490,6 +2490,7 @@ function migrateStockRegister2026(db) {
   ensureCoilCol('production_blocked', `ALTER TABLE coil_lots ADD COLUMN production_blocked INTEGER NOT NULL DEFAULT 0`);
   ensureCoilCol('production_block_reason', `ALTER TABLE coil_lots ADD COLUMN production_block_reason TEXT`);
   ensureCoilCol('production_block_set_at_iso', `ALTER TABLE coil_lots ADD COLUMN production_block_set_at_iso TEXT`);
+  ensureCoilCol('stock_hold', `ALTER TABLE coil_lots ADD COLUMN stock_hold TEXT`);
   const pjCols = db.prepare(`PRAGMA table_info(production_jobs)`).all();
   if (!pjCols.some((c) => c.name === 'production_date_iso')) {
     db.exec(`ALTER TABLE production_jobs ADD COLUMN production_date_iso TEXT`);
@@ -4423,6 +4424,16 @@ function migrateAccountingLayer(db) {
   }
   if (cl.size && !cl.has('unit_cost_ngn_per_kg')) {
     db.exec(`ALTER TABLE coil_lots ADD COLUMN unit_cost_ngn_per_kg INTEGER`);
+  }
+  try {
+    db.exec(`ALTER TABLE stock_movements MODIFY detail VARCHAR(500)`);
+  } catch {
+    /* SQLite stores detail as TEXT. MySQL widens the 100-character column. */
+  }
+  try {
+    db.exec(`ALTER TABLE coil_control_events MODIFY scrap_reason VARCHAR(500)`);
+  } catch {
+    /* SQLite TEXT, or the table is not created yet on this pass. */
   }
   const sm = tableCols('stock_movements');
   if (sm.size && !sm.has('value_ngn')) {

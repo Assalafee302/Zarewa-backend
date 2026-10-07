@@ -2171,6 +2171,7 @@ function mapCoilLotRow(db, row, masterData) {
     branchId: row.branch_id ?? '',
     parentCoilNo: row.parent_coil_no ?? '',
     materialOriginNote: row.material_origin_note ?? '',
+    stockHold: hasColumn(db, 'coil_lots', 'stock_hold') ? String(row.stock_hold || '') : '',
     landedCostNgn: row.landed_cost_ngn != null ? Number(row.landed_cost_ngn) : null,
     unitCostNgnPerKg: row.unit_cost_ngn_per_kg != null ? Number(row.unit_cost_ngn_per_kg) : null,
   };

@@ -130,6 +130,10 @@ export function buildSupplierAdvanceReport(db, opts = {}) {
     const payDate = lastSupplierPaymentDate(db, poId) || String(po.order_date_iso || '').slice(0, 10);
     const ageDays = daysSince(payDate);
 
+    let qtyReceived = 0;
+    for (const line of lines) qtyReceived += Number(line.qty_received) || 0;
+    const receivedUnvalued = qtyReceived > 0 && Number(econ.receivedValueNgn) <= 0;
+
     const row = {
       poId,
       supplierId: econ.supplierId,
@@ -138,6 +142,8 @@ export function buildSupplierAdvanceReport(db, opts = {}) {
       status: po.status,
       classification: cls.classification,
       labels: cls.labels,
+      qtyReceived,
+      receivedUnvalued,
       receivedValueNgn: econ.receivedValueNgn,
       supplierPaidNgn: econ.supplierPaidNgn,
       payableOutstandingNgn: cls.payableOutstandingNgn,

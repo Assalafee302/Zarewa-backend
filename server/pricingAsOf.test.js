@@ -125,7 +125,7 @@ describe('pricingAsOf', () => {
     expect(longspan).toHaveLength(1);
     expect(longspan[0].id).toBe('PL-MPS-YL');
     expect(longspan[0].unitPricePerMeterNgn).toBe(4550);
-    expect(longspan[0].gaugeDisplayKey).toBe('0.35mm');
+    expect(longspan[0].gaugeDisplayKey).toBe('0.28mm');
   });
 
   it('resolvePriceListItemFloorNgnAsOf prefers branch publish over richer global', () => {
@@ -140,7 +140,7 @@ describe('pricingAsOf', () => {
     const hit = resolvePriceListItemFloorNgnAsOf(
       db,
       {
-        gaugeLabel: '0.35mm',
+        gaugeLabel: '0.28mm',
         designLabel: 'longspan',
         materialTypeName: 'alu',
         branchId: 'BR-YL',

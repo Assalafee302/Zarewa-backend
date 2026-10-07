@@ -25,23 +25,27 @@ describe('gaugeDisplayAlias', () => {
     expect(canonicalGaugeLabelForBranchInput('BR-KD', '0.28')).toBe('0.28mm');
   });
 
-  it('Yola maps trade names ↔ true gauges', () => {
+  it('Yola keeps selected gauges for production', () => {
     expect(branchUsesYolaGaugeNames(YOLA_BRANCH_ID)).toBe(true);
-    expect(displayGaugeLabelForBranch('BR-YL', '0.28mm')).toBe('0.35mm');
-    expect(displayGaugeLabelForBranch('BR-YL', '0.24mm')).toBe('0.30mm');
+    expect(displayGaugeLabelForBranch('BR-YL', '0.28mm')).toBe('0.28mm');
+    expect(displayGaugeLabelForBranch('BR-YL', '0.35mm')).toBe('0.35mm');
+    expect(displayGaugeLabelForBranch('BR-YL', '0.24mm')).toBe('0.24mm');
+    expect(displayGaugeLabelForBranch('BR-YL', '0.30mm')).toBe('0.30mm');
     expect(displayGaugeLabelForBranch('BR-YL', '0.22mm')).toBe('0.22mm');
     expect(displayGaugeLabelForBranch('BR-YL', '0.20mm')).toBe('0.20mm');
     expect(displayGaugeLabelForBranch('BR-YL', '0.18mm')).toBe('0.18mm');
 
-    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.35')).toBe('0.28mm');
-    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.35mm')).toBe('0.28mm');
-    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.30')).toBe('0.24mm');
-    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.30mm')).toBe('0.24mm');
+    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.35')).toBe('0.35mm');
+    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.35mm')).toBe('0.35mm');
+    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.28')).toBe('0.28mm');
     expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.28mm')).toBe('0.28mm');
+    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.30')).toBe('0.30mm');
+    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.30mm')).toBe('0.30mm');
+    expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.24mm')).toBe('0.24mm');
     expect(canonicalGaugeLabelForBranchInput('BR-YL', '0.22')).toBe('0.22mm');
   });
 
-  it('decorates setup gauges and hides colliding Yola options', () => {
+  it('decorates setup gauges and keeps every Yola thickness selectable', () => {
     const gauges = [
       { id: 'GAU-003', label: '0.24mm', gaugeMm: 0.24, active: true },
       { id: 'GAU-004', label: '0.28mm', gaugeMm: 0.28, active: true },
@@ -52,22 +56,30 @@ describe('gaugeDisplayAlias', () => {
     const decorated = decorateSetupGaugesForBranch(gauges, 'BR-YL');
     expect(decorated.find((g) => g.id === 'GAU-004')).toMatchObject({
       label: '0.28mm',
-      displayLabel: '0.35mm',
+      displayLabel: '0.28mm',
       quotationOption: true,
     });
     expect(decorated.find((g) => g.id === 'GAU-003')).toMatchObject({
       label: '0.24mm',
+      displayLabel: '0.24mm',
+      quotationOption: true,
+    });
+    expect(decorated.find((g) => g.id === 'GAU-005')).toMatchObject({
+      label: '0.30mm',
       displayLabel: '0.30mm',
       quotationOption: true,
     });
-    expect(decorated.find((g) => g.id === 'GAU-011')?.quotationOption).toBe(false);
-    expect(decorated.find((g) => g.id === 'GAU-005')?.quotationOption).toBe(false);
+    expect(decorated.find((g) => g.id === 'GAU-011')).toMatchObject({
+      label: '0.35mm',
+      displayLabel: '0.35mm',
+      quotationOption: true,
+    });
 
     const kd = decorateSetupGaugesForBranch(gauges, 'BR-KD');
     expect(kd.every((g) => g.displayLabel === g.label && g.quotationOption)).toBe(true);
 
     const opts = quotationGaugeSelectOptions(gauges, 'BR-YL');
-    expect(opts.map((o) => o.label)).toEqual(['0.30mm', '0.35mm', '0.22mm']);
-    expect(opts.map((o) => o.value)).toEqual(['0.24mm', '0.28mm', '0.22mm']);
+    expect(opts.map((o) => o.label)).toEqual(['0.24mm', '0.28mm', '0.30mm', '0.35mm', '0.22mm']);
+    expect(opts.map((o) => o.value)).toEqual(['0.24mm', '0.28mm', '0.30mm', '0.35mm', '0.22mm']);
   });
 });

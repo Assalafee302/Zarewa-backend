@@ -209,7 +209,7 @@ function normKey(s) {
     .replace(/\s+/g, ' ');
 }
 
-/** Yola workbook customer label when none was posted (0.28 → 0.35mm, 0.24 → 0.30mm). */
+/** Customer label only when a branch display alias exists. Yola stores 0.28 and 0.35 as themselves. */
 function defaultYolaGaugeCustomerLabel(branchId, gaugeMm) {
   const display = displayGaugeLabelForBranch(branchId, formatGaugeLabelMm(gaugeMm));
   const canonical = formatGaugeLabelMm(gaugeMm);

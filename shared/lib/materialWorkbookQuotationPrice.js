@@ -23,7 +23,7 @@ export function gaugeMmKeyFromLabel(label) {
 }
 
 /**
- * Gauge mm key after branch trade-label → canonical (Yola 0.35→0.28, 0.30→0.24).
+ * Gauge mm key. Yola keeps the selected thickness (0.28 stays 0.28, 0.35 stays 0.35).
  * @param {string | null | undefined} branchId
  * @param {unknown} label
  */
@@ -172,7 +172,7 @@ export function designKeysToTry(designLabel, extraDesignKeys = []) {
 export function resolvePublishedListUnitNgnFromItems(items, ctx) {
   if (!Array.isArray(items) || items.length === 0) return 0;
   const branchId = String(ctx?.branchId ?? '').trim();
-  // Yola trade labels (0.35 / 0.30) must resolve against canonical published keys (0.28 / 0.24).
+  // Lookup uses the selected gauge. Yola 0.28 and 0.35 resolve to their own publishes.
   const gaugeK = gaugeMmKeyForBranch(branchId, ctx?.gaugeLabel ?? ctx?.gaugeMm);
   const materialKey = normPricingKey(ctx?.materialTypeKey ?? ctx?.materialKey);
   const designKeys = ctx?.skipDesign ? [] : designKeysToTry(ctx?.designLabel, ctx?.designKeys);

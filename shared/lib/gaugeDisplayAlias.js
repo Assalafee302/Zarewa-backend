@@ -2,7 +2,8 @@
  * Branch-local coil gauge names (Yola trade labels) vs canonical setup_gauges / stock mm.
  * Frontend copies via sync → src/shared/lib/gaugeDisplayAlias.js
  *
- * Yola desk: "0.35" means true 0.28mm; "0.30" means true 0.24mm.
+ * Yola produces the gauge selected on the quotation. 0.28mm and 0.35mm are separate
+ * thicknesses — do not rewrite 0.35 to 0.28, or 0.30 to 0.24.
  * Kaduna and other branches keep canonical labels only.
  */
 
@@ -12,14 +13,11 @@ export const YOLA_BRANCH_ID = 'BR-YL';
  * Canonical setup label → Yola customer / quotation display label.
  * @type {Readonly<Record<string, string>>}
  */
-export const YOLA_GAUGE_DISPLAY_BY_CANONICAL = Object.freeze({
-  '0.24mm': '0.30mm',
-  '0.28mm': '0.35mm',
-});
+export const YOLA_GAUGE_DISPLAY_BY_CANONICAL = Object.freeze({});
 
 /**
- * Master gauges whose labels are Yola *display* names for other thicknesses —
- * hide them as quotation picks on Yola so "0.35" is unambiguous (true 0.28).
+ * Master gauges hidden on Yola quotations because their label is only a trade name
+ * for another thickness. Empty while every setup gauge is a real production thickness.
  * @type {ReadonlySet<string>}
  */
 export const YOLA_QUOTATION_HIDDEN_CANONICAL_LABELS = Object.freeze(
@@ -84,7 +82,7 @@ export function canonicalGaugeLabelForBranchInput(branchId, inputLabel) {
   const formatted = formatGaugeLabelMm(raw);
   if (!branchUsesYolaGaugeNames(branchId)) return formatted || raw;
 
-  // Display → true thickness (0.35 → 0.28, 0.30 → 0.24).
+  // No Yola trade-name rewrite. Selected 0.28 and 0.35 stay those thicknesses for production.
   for (const [canonical, display] of Object.entries(YOLA_GAUGE_DISPLAY_BY_CANONICAL)) {
     if (formatted === display) return canonical;
     if (formatted === canonical) return canonical;

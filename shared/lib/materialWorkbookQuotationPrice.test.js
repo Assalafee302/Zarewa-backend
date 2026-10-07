@@ -232,7 +232,7 @@ describe('materialWorkbookQuotationPrice', () => {
     ];
     expect(
       resolvePublishedListUnitNgnFromItems(items, {
-        gaugeLabel: '0.35mm',
+        gaugeLabel: '0.28mm',
         designLabel: 'longspan',
         materialTypeKey: 'alu',
         branchId: 'BR-YL',
@@ -240,7 +240,7 @@ describe('materialWorkbookQuotationPrice', () => {
     ).toBe(4550);
   });
 
-  it('resolvePublishedListUnitNgnFromItems maps Yola 0.30 trade label to canonical 0.24 publish', () => {
+  it('resolvePublishedListUnitNgnFromItems keeps Yola 0.30 on the 0.30 publish', () => {
     const items = [
       {
         id: 'PL-MPS-TRUE30',
@@ -268,6 +268,6 @@ describe('materialWorkbookQuotationPrice', () => {
         materialTypeKey: 'alu',
         branchId: 'BR-YL',
       })
-    ).toBe(3800);
+    ).toBe(9999);
   });
 });

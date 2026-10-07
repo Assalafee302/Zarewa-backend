@@ -3696,7 +3696,8 @@ function migrateEnsureQuotationGauges2026(db) {
 }
 
 /**
- * Yola trade names on material pricing workbook: true 0.28 → "0.35mm", true 0.24 → "0.30mm".
+ * Yola no longer stamps a trade name onto workbook gauges. 0.28mm and 0.35mm stay
+ * distinct so quotations and production keep the thickness that was selected.
  * Only fills empty gauge_customer_label so manual overrides are preserved. Kaduna untouched.
  */
 function migrateYolaGaugeCustomerLabels2026(db) {
@@ -3708,10 +3709,7 @@ function migrateYolaGaugeCustomerLabels2026(db) {
   const cols = db.prepare(`PRAGMA table_info(material_pricing_sheet_rows)`).all();
   if (!cols.some((c) => c.name === 'gauge_customer_label')) return;
 
-  const pairs = [
-    [0.28, '0.35mm'],
-    [0.24, '0.30mm'],
-  ];
+  const pairs = [];
   const upd = db.prepare(
     `UPDATE material_pricing_sheet_rows
      SET gauge_customer_label = ?

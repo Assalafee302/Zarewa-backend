@@ -11,6 +11,9 @@ export default defineConfig([
     'playwright.config.js',
     'e2e/**',
     '.build/**',
+    // Local one-off probes (gitignored); do not fail CI/desk lint.
+    'scripts/_adhoc/**',
+    'tmp-reports/**',
   ]),
   {
     files: ['server/**/*.js', 'shared/**/*.js', 'scripts/**/*.mjs'],

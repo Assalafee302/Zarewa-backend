@@ -42,8 +42,6 @@ import { listInTransitLoads } from './inTransitOps.js';
 import { getProductRowForWorkspace } from './productBranchInventory.js';
 import { listProductionJobCoils } from './productionTraceability.js';
 import {
-  isBranchManagerApprovalAuthority,
-  isExecutiveRoleKey,
   userMayPerformStockRegisterBmActions,
   userMayPerformStockRegisterExecutiveActions,
 } from '../shared/workspaceGovernance.js';
@@ -384,7 +382,6 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
   const row = getPeriodRow(db, bid, pk);
   if (!row) return { ok: false, error: 'Register period not found. Print the register first.' };
 
-  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
   const now = nowIso();
   const notes = String(body?.countNotes ?? body?.notes ?? '').trim();
 

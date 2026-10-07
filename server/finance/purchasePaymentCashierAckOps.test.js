@@ -7,7 +7,6 @@ import {
   insertPurchasePaymentCashierAckTx,
   listPurchasePaymentCashierAcks,
   listPurchasePaymentCashierAcksPending,
-  getPurchasePaymentCashierAck,
   enrichPurchasePaymentCashierAcks,
   mapPurchasePaymentCashierAckRow,
 } from './purchasePaymentCashierAckOps.js';
@@ -55,7 +54,7 @@ function createMockDb({
           }
           return null;
         },
-        all(...args) {
+        all(..._args) {
           if (/FROM purchase_payment_cashier_acks/i.test(s)) {
             return acks;
           }

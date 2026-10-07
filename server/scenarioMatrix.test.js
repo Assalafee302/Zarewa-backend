@@ -181,13 +181,6 @@ async function cancelPlannedJobForRefundEligibility(agent, jobID) {
   expect(res.body.ok).toBe(true);
 }
 
-async function createExpense(agent, payload) {
-  const res = await agent.post('/api/expenses').send(payload);
-  expect(res.status).toBe(201);
-  expect(res.body.ok).toBe(true);
-  return res.body;
-}
-
 async function createPaymentRequest(agent, payload) {
   const res = await agent.post('/api/payment-requests').send(payload);
   expect(res.status).toBe(201);

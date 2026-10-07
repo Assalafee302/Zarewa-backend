@@ -3,7 +3,6 @@ import {
   buildStockRegisterPack,
   coilMaterialFamily,
   coilProductionUsedMByCoil,
-  colourFullNameForRegister,
   enrichStockRegisterValuation,
   netKgFromGrossClosing,
   periodBoundsFromEndDate,

@@ -9998,6 +9998,8 @@ export function registerHttpApi(app, db) {
       });
       if (!r.ok) return res.status(400).json(r);
 
+      // Commit already posted — filter the write-delta to the till that was charged.
+      const paidFromId = Number(r.paidFromAccountId) || 0;
       const branchScope = resolveBootstrapBranchScope(req);
       const accounts = listTreasuryAccounts(db, branchScope);
       const createdIds = (r.created || []).map((c) => String(c.expenseID || '').trim()).filter(Boolean);

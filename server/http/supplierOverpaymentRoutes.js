@@ -1274,7 +1274,7 @@ export function renderSupplierOverpaymentPage(model = {}) {
       } else {
         var settlement = Math.min(raw, stillOwed);
         var advance = Math.max(0, raw - settlement);
-        box.innerHTML = '<strong>📊 Financial Allocation:</strong> ₦' + formatNumberNgn(settlement) + ' will clear the remaining order balance, and <strong style=\"color:#7e22ce;\">₦' + formatNumberNgn(advance) + '</strong> will be booked as an excess supplier advance (GL 1400) ready for reversal.';
+        box.innerHTML = '<strong>📊 Financial Allocation:</strong> ₦' + formatNumberNgn(settlement) + ' will clear the remaining order balance, and <strong style="color:#7e22ce;">₦' + formatNumberNgn(advance) + '</strong> will be booked as an excess supplier advance (GL 1400) ready for reversal.';
         box.style.borderColor = '#93c5fd';
         box.style.background = '#eff6ff';
       }
@@ -1297,17 +1297,17 @@ export function renderSupplierOverpaymentPage(model = {}) {
       } else {
         var remainingExcess = Math.max(0, maxExcess - raw);
         var nextPaid = Math.max(0, currentPaid - raw);
-        box.innerHTML = '<strong>↺ Reversal Impact:</strong> Cumulative PO paid will drop from ₦' + formatNumberNgn(currentPaid) + ' to <strong style=\"color:#047857;\">₦' + formatNumberNgn(nextPaid) + '</strong>. Remaining excess held: ₦' + formatNumberNgn(remainingExcess) + '.';
+        box.innerHTML = '<strong>↺ Reversal Impact:</strong> Cumulative PO paid will drop from ₦' + formatNumberNgn(currentPaid) + ' to <strong style="color:#047857;">₦' + formatNumberNgn(nextPaid) + '</strong>. Remaining excess held: ₦' + formatNumberNgn(remainingExcess) + '.';
         box.style.borderColor = '#86efac';
         box.style.background = '#f0fdf4';
       }
     }
 
     function handleFormSubmit(form, loadingText) {
-      var btn = form.querySelector('button[type=\"submit\"]');
+      var btn = form.querySelector('button[type="submit"]');
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span class=\"btn-icon\">⏳</span> ' + (loadingText || 'Processing...');
+        btn.innerHTML = '<span class="btn-icon">⏳</span> ' + (loadingText || 'Processing...');
       }
       return true;
     }

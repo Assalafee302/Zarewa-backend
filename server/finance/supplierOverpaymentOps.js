@@ -255,8 +255,6 @@ export function recordSupplierExcessPayment(db, poId, payload = {}) {
       error: `₦${ctx.amountNgn.toLocaleString('en-NG')} is still within what this purchase order owes (₦${ctx.position.stillOwedNgn.toLocaleString('en-NG')}). Record that as a normal supplier payment. Use this only for the extra cash above the order.`,
     };
   }
-  const settlementNgn = ctx.position.stillOwedNgn;
-  const advanceNgn = roundMoney(ctx.amountNgn - settlementNgn);
   const poBranchId = ctx.position.branchId;
   const treasuryWorkspace = ctx.hqSettle ? poBranchId : payload.workspaceBranchId;
   try {

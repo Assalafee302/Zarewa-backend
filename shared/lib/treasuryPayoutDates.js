@@ -26,7 +26,6 @@ export function payoutLinePostedDay(line, fallbackDay = '') {
  * A full timestamp on the line is kept as written so vouchers show the real transfer time
  * (e.g. 17:39) instead of collapsing to noon or a date-only 01:00 Lagos display.
  */
-// eslint-disable-next-line no-unused-vars
 export function payoutLinePostedAtISO(line, fallbackDay = '', _normalizeIsoTimestamp) {
   const raw = String(line?.dateISO ?? line?.postedAtISO ?? line?.paidAtISO ?? '').trim();
   if (raw.includes('T')) {

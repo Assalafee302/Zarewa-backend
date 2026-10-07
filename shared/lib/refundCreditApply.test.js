@@ -22,7 +22,6 @@ import {
   refundCreditIsFreshSource,
   refundSplitHasMultiplePayees,
   refundSplitPayeeKeys,
-  refundCreditPayeeIsQuoteCustomerOnly,
   refundOpenReservesConfirmLeftoverOverpay,
   stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,

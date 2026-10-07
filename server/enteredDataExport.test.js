@@ -3,7 +3,6 @@ import XLSX from 'xlsx';
 import {
   buildEnteredDataXlsx,
   collectEnteredDataPack,
-  enteredDataFilename,
   enteredDataFlatten,
 } from './enteredDataExport.js';
 

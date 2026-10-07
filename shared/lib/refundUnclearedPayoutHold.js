@@ -38,7 +38,7 @@ function isAdminTrialActor(actor, hasPermission) {
  * @param {(perm: string) => boolean} [hasPermission]
  * @param {{ heldNetNgn?: number }} [opts]
  */
-export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission, opts = {}) {
+export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission, _opts = {}) {
   if (isAdminTrialActor(actor, hasPermission)) return true;
   const rk = normalizeRoleKey(actor);
   if (rk === 'ceo' || rk === 'chairman') return false;

@@ -10,22 +10,22 @@ function readProjectFiles() {
   const files = {};
   try {
     files.writeOps = fs.readFileSync('./server/writeOps.js', 'utf-8').slice(0, 4000);
-  } catch (e) {
+  } catch {
     files.writeOps = 'writeOps.js not found';
   }
   try {
     files.httpApi = fs.readFileSync('./server/httpApi.js', 'utf-8').slice(0, 3000);
-  } catch (e) {
+  } catch {
     files.httpApi = 'httpApi.js not found';
   }
   try {
     files.auth = fs.readFileSync('./server/auth.js', 'utf-8').slice(0, 2000);
-  } catch (e) {
+  } catch {
     files.auth = 'auth.js not found';
   }
   try {
     files.bootstrap = fs.readFileSync('./server/bootstrap.js', 'utf-8').slice(0, 2000);
-  } catch (e) {
+  } catch {
     files.bootstrap = 'bootstrap.js not found';
   }
   return files;

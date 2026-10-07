@@ -18,7 +18,6 @@ import {
   refundCategoriesAreOverpaymentOnly,
   refundCreditIsFreshSource,
   refundCreditOpenAmountFromStoredRefund,
-  refundCreditOpenAmountNgn,
   refundCreditUnavailableReason,
   refundIsEligibleCreditSource,
   refundIsEligibleCreditSourceKind,

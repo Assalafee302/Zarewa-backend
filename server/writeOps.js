@@ -213,9 +213,9 @@ import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
-import { appendAuditLog, assertPeriodOpen, assertBusinessMonthUnlocked, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, assertBusinessMonthUnlocked, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationUnlinkedOverpayCreditOutNgn, assertQuotationProductionNotBlockedByRefund, PAYMENT_REQUEST_PLACEHOLDER_EXPENSE_TYPE } from './controlOps.js';
 import { assertMatchedRefundStatement } from './sales/refundPayeeControl.js';
-import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
+import { refundHasOpenWalletCredit, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
 import {
   isQuotationActiveRefundLockError,
@@ -233,7 +233,6 @@ import { refundPayoutHoldBlock } from './sales/refundPayoutHoldOps.js';
 import {
   assertRefundMoneyOutWithinApproved,
   buildRefundSettlementSummary,
-  refundCashOutstandingNgn,
   refundStatusAllowsTreasuryPayout,
   repairRefundPayoutStateTx,
   resolveRefundStatus,
@@ -2655,7 +2654,7 @@ export function confirmGrn(
   entries,
   supplierID,
   supplierName,
-  branchFallback = DEFAULT_BRANCH_ID,
+  _branchFallback = DEFAULT_BRANCH_ID,
   opts = {}
 ) {
   const po = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
@@ -10219,7 +10218,6 @@ export function payRefundEntry(db, refundId, payload) {
     };
   }
   const approvedAmountNgn = roundMoney(row.approved_amount_ngn || row.amount_ngn);
-  const paidAmountNgn = roundMoney(row.paid_amount_ngn);
   const hasPerm = (p) => userHasPermission(payload.actor, p);
   const payRelaxed = refundCashierPayRelaxed();
   const holdOpts = payRelaxed ? { skipUnclearedFloat: true } : {};

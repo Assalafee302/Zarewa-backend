@@ -40,3 +40,6 @@ scripts/_adhoc/
 # Real business data exports should never land in git history
 /zarewa-entered-data*.xlsx
 /*.xlsx
+docs/**/*.xlsx
+docs/import/
+docs/SALARY/

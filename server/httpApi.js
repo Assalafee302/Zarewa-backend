@@ -608,6 +608,12 @@ import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterQuotationL
 import * as write from './writeOps.js';
 import { quotationOperationsBlockedReason } from './quotationLifecycleOps.js';
 import { postCoilPhysicalCount } from './operations/coilPhysicalCountOps.js';
+import {
+  assertCountSheetBranchId,
+  buildStockCountSheet,
+  buildStockCountSheetWorkbook,
+  stockCountSheetFilename,
+} from './operations/stockCountSheetOps.js';
 import { markCoilStainedDamaged } from './operations/coilStainedLotOps.js';
 import {
   assertCorrectionApproval,
@@ -8761,6 +8767,63 @@ export function registerHttpApi(app, db) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
+
+  /** Store / OM / BM walk count sheets — store copy hides ERP; manager copy includes it. */
+  const stockCountSheetPerms = [
+    'operations.manage',
+    'production.manage',
+    'inventory.adjust',
+    'inventory.receive',
+  ];
+  app.get('/api/operations/stock-count-sheet', requirePermission(stockCountSheetPerms), (req, res) => {
+    try {
+      const scope = resolveBootstrapBranchScope(req);
+      const requested = String(req.query.branchId || req.query.branch || '').trim();
+      let branchId = '';
+      if (requested) {
+        const gate = assertCountSheetBranchId(requested);
+        if (!gate.ok) return res.status(400).json(gate);
+        if (scope !== 'ALL' && requested !== scope && !canUseAllBranchesRollup(req.user)) {
+          return res.status(403).json({
+            ok: false,
+            error: `This workspace is ${scope}. Switch branch or use HQ all-branches to print another factory.`,
+            code: 'FORBIDDEN',
+          });
+        }
+        branchId = gate.branchId;
+      } else if (scope === 'ALL') {
+        return res.status(400).json({
+          ok: false,
+          error: 'Select a branch (KD, YL, or MDG). Count sheets are not an all-branches roll-up.',
+        });
+      } else {
+        const gate = assertCountSheetBranchId(scope);
+        if (!gate.ok) return res.status(400).json(gate);
+        branchId = gate.branchId;
+      }
+
+      const built = buildStockCountSheet(db, branchId);
+      if (!built.ok) return res.status(400).json(built);
+
+      const format = String(req.query.format || 'json').toLowerCase();
+      if (format === 'xlsx' || format === 'excel') {
+        const buf = buildStockCountSheetWorkbook(built.pack);
+        const filename = stockCountSheetFilename(built.pack);
+        res.setHeader(
+          'Content-Type',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        return res.send(buf);
+      }
+
+      return res.json({ ok: true, ...built.pack });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not build stock count sheet.' });
+    }
+  });
+
   app.post('/api/coil-lots/:coilNo/undo-finish-roll', (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });

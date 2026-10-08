@@ -126,5 +126,3 @@ export function listNegativeStockApprovalsForOm(db, { branchId = '', limit = 50 
     .prepare(`SELECT * FROM negative_stock_approvals ORDER BY approved_at_iso DESC LIMIT ?`)
     .all(lim);
 }
-
-export { isNegativeStockGateActive };

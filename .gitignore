@@ -36,6 +36,7 @@ tmp-reports/
 
 # Local one-off investigation scripts (customer/bank probes) — never commit
 scripts/_adhoc/
+scripts/tmp-*
 
 # Real business data exports should never land in git history
 /zarewa-entered-data*.xlsx

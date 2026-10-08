@@ -2,6 +2,12 @@ import mysql from 'mysql2/promise';
 import { runAsWorker } from 'synckit';
 import { sqliteDdlToMysql } from './schemaMysqlTransform.js';
 import { adaptSqlForMysql, adaptExecSqlForMysql } from './mysqlSqlAdapt.js';
+import { defaultMigrationLockWaitSec } from './migrationLock.js';
+import {
+  migrationLockNameForDatabase,
+  inspectLockHolderAsync,
+  lockAcquireFailureMessage,
+} from './mysqlNamedLock.js';
 
 /** @type {import('mysql2/promise').Pool | null} */
 let pool = null;
@@ -135,14 +141,19 @@ function deadlockBackoffMs(attempt) {
 }
 
 function schemaLockName() {
-  const db = String(activeDbName || '').replace(/`/g, '').trim();
-  const raw = db ? `zarewa_mig_${db}` : 'zarewa_run_migrations';
-  return raw.length <= 64 ? raw : raw.slice(0, 64);
+  return migrationLockNameForDatabase(String(activeDbName || '').replace(/`/g, '').trim());
+}
+
+function schemaLockWaitSec() {
+  const fromEnv = Number(process.env.ZAREWA_MIGRATION_LOCK_WAIT_SEC);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  return defaultMigrationLockWaitSec();
 }
 
 /**
  * Hold GET_LOCK on one connection for wipe + bootstrap so concurrent Vitest
  * processes cannot interleave DROP TABLE with CREATE TABLE.
+ * Same lock name as withMigrationLock — only one boot may DDL/migrate a schema at a time.
  * @template T
  * @param {(conn: import('mysql2/promise').PoolConnection) => Promise<T>} fn
  */
@@ -150,14 +161,23 @@ async function withSchemaLock(fn) {
   if (!pool) throw new Error('MySQL pool not initialized');
   const conn = await pool.getConnection();
   const lockName = schemaLockName();
+  const waitSec = schemaLockWaitSec();
   let acquired = false;
   try {
-    const [rows] = await conn.query('SELECT GET_LOCK(?, ?) AS got', [lockName, 120]);
+    const [rows] = await conn.query('SELECT GET_LOCK(?, ?) AS got', [lockName, waitSec]);
     acquired = Number(/** @type {{ got?: number }[]} */ (rows)[0]?.got) === 1;
     if (!acquired) {
-      throw new Error(
-        `Could not acquire schema lock "${lockName}" within 120s. Stop other Vitest/API processes using this database.`
-      );
+      const holder = await inspectLockHolderAsync(conn, lockName);
+      const msg = lockAcquireFailureMessage(lockName, waitSec, holder, 'schema');
+      console.error('[zarewa] schema lock acquire failed:', msg);
+      if (holder.holderConnId != null && !holder.process) {
+        console.error(
+          `[zarewa] dead/orphan lock holder id=${holder.holderConnId} (not in processlist)`
+        );
+      } else if (holder.holderConnId != null) {
+        console.error(`[zarewa] lock holder connection id=${holder.holderConnId}`);
+      }
+      throw new Error(msg);
     }
     return await fn(conn);
   } finally {
@@ -172,11 +192,6 @@ async function withSchemaLock(fn) {
   }
 }
 
-/**
- * @template T
- * @param {() => Promise<T>} fn
- * @param {{ attempts?: number }} [opts]
- */
 async function withDeadlockRetry(fn, opts = {}) {
   const attempts = Math.max(Number(opts.attempts) || 4, 1);
   let lastErr;

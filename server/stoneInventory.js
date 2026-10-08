@@ -17,11 +17,18 @@ function slugPart(s) {
     .slice(0, 48);
 }
 
+/** Survivor profile is Shingle — map legacy "Single" design labels. */
+export function canonicalStoneDesignLabel(designLabel) {
+  const d = String(designLabel || '').trim();
+  if (/^single$/i.test(d)) return 'Shingle';
+  return d;
+}
+
 /**
  * Stable product_id for a stone SKU from human-readable dimensions.
  */
 export function stoneProductIdFromSpec(designLabel, colourLabel, gaugeLabel) {
-  const a = slugPart(designLabel) || 'x';
+  const a = slugPart(canonicalStoneDesignLabel(designLabel)) || 'x';
   const b = slugPart(colourLabel) || 'x';
   const c = slugPart(gaugeLabel) || 'x';
   return `STONE-${a}-${b}-${c}`;
@@ -131,7 +138,7 @@ export function isStoneCoatedMetreProductId(db, productId, branchId) {
  * @param {{ designLabel: string, colourLabel: string, gaugeLabel: string, branchId?: string }} spec
  */
 export function ensureStoneProduct(db, spec) {
-  const designLabel = String(spec.designLabel || '').trim();
+  const designLabel = canonicalStoneDesignLabel(String(spec.designLabel || '').trim());
   const colourLabel = String(spec.colourLabel || '').trim();
   const gaugeLabel = String(spec.gaugeLabel || '').trim();
   const id = stoneProductIdFromSpec(designLabel, colourLabel, gaugeLabel);
@@ -216,6 +223,7 @@ export function ensureStoneFlatsheetProduct(db, spec) {
     stoneFlatsheetLengthM: lengthM,
     stoneFlatsheetColour: colourLabel,
     materialTypeId: STONE_COATED_MATERIAL_TYPE_ID,
+    stockUnit: 'sheet',
   });
   db.prepare(
     `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, gauge, colour, material_type, dashboard_attrs_json, branch_id)
@@ -224,7 +232,7 @@ export function ensureStoneFlatsheetProduct(db, spec) {
     id,
     name,
     0,
-    'm2',
+    'sheet',
     0,
     0,
     '',

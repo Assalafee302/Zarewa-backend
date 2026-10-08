@@ -282,12 +282,17 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
         error: `Stone flatsheet "${line.name}" maps to unknown stock product ${inventoryProductId}.`,
       };
     }
+    const sheetsNeeded = stoneFlatsheetM2ToPcs(totalUse, line.lengthM);
     const stock = Number(p.stock_level) || 0;
-    if (stock + EPS < totalUse) {
+    const stockIsSheets = String(p.unit || '').toLowerCase() === 'sheet';
+    const stockCompare = stockIsSheets ? sheetsNeeded : totalUse;
+    if (stock + EPS < stockCompare) {
       stoneFlatsheetStockWarnings.push(
-        `"${line.name}" (${line.lengthM} m, ${p.name || inventoryProductId}): ${totalUse.toFixed(
-          2
-        )} m² from stock but only ${stock.toFixed(2)} m² in stock — balance may go negative.`
+        stockIsSheets
+          ? `"${line.name}" (${line.lengthM} m, ${p.name || inventoryProductId}): ${sheetsNeeded} sheet(s) from stock but only ${stock} sheet(s) in stock — balance may go negative.`
+          : `"${line.name}" (${line.lengthM} m, ${p.name || inventoryProductId}): ${totalUse.toFixed(
+              2
+            )} m² from stock but only ${stock.toFixed(2)} m² in stock — balance may go negative.`
       );
     }
 
@@ -298,6 +303,7 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
       orderedM2: line.orderedM2,
       suppliedM2,
       deductionM2,
+      sheetsUsed: sheetsNeeded,
       inventoryProductId,
       demandKind: 'sold_sf',
     });
@@ -373,11 +379,14 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
     }
     const totalUse = suppliedM2 + deductionM2;
     const stock = Number(p.stock_level) || 0;
-    if (stock + EPS < totalUse) {
+    const stockIsSheets = String(p.unit || '').toLowerCase() === 'sheet';
+    if (stock + EPS < (stockIsSheets ? sheetsUsed : totalUse)) {
       stoneFlatsheetStockWarnings.push(
-        `"${line.name}" yield (${lengthM} m × ${sheetsUsed} sheet(s)): ${totalUse.toFixed(
-          2
-        )} m² from stock but only ${stock.toFixed(2)} m² in stock — balance may go negative.`
+        stockIsSheets
+          ? `"${line.name}" yield (${lengthM} m × ${sheetsUsed} sheet(s)): need ${sheetsUsed} but only ${stock} sheet(s) in stock — balance may go negative.`
+          : `"${line.name}" yield (${lengthM} m × ${sheetsUsed} sheet(s)): ${totalUse.toFixed(
+              2
+            )} m² from stock but only ${stock.toFixed(2)} m² in stock — balance may go negative.`
       );
     }
 
@@ -439,9 +448,16 @@ export function applyStoneFlatsheetCompletionTx(
       line.inventoryProductId || null,
       completedAtISO
     );
-    const totalOut = (Number(line.suppliedM2) || 0) + (Number(line.deductionM2) || 0);
-    if (line.inventoryProductId && totalOut > 0) {
-      adjustProductStockTx(db, line.inventoryProductId, -totalOut);
+    // Stock is sheets by length; suppliedM2 retained on usage row for quote/refund maths only.
+    const sheetsOut =
+      line.sheetsUsed != null && Number.isFinite(Number(line.sheetsUsed))
+        ? Number(line.sheetsUsed)
+        : stoneFlatsheetM2ToPcs(
+            (Number(line.suppliedM2) || 0) + (Number(line.deductionM2) || 0),
+            line.lengthM
+          );
+    if (line.inventoryProductId && sheetsOut > 0) {
+      adjustProductStockTx(db, line.inventoryProductId, -sheetsOut);
       const offcutNote =
         Number(line.offcutFinishedM) > 0
           ? ` · offcut ${Number(line.offcutFinishedM).toFixed(2)} m kept`
@@ -451,8 +467,8 @@ export function applyStoneFlatsheetCompletionTx(
         type: 'STONE_FLATSHEET_ISSUE',
         ref: jobID,
         productID: line.inventoryProductId,
-        qty: -totalOut,
-        detail: `${line.name} ${line.lengthM} m · supplied ${line.suppliedM2} m² · deduction ${line.deductionM2} m²${offcutNote} · ${jobID} · ${quotationRef || ''}`,
+        qty: -sheetsOut,
+        detail: `${line.name} ${line.lengthM} m · ${sheetsOut} sheet(s) · supplied ${line.suppliedM2} m² note · deduction ${line.deductionM2} m² note${offcutNote} · ${jobID} · ${quotationRef || ''}`,
         dateISO: at,
       });
     }

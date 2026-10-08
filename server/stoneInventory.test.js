@@ -95,13 +95,13 @@ describe.skipIf(!mysqlOk)('stoneInventory', () => {
     expect(isStoneMeterQuotationLinesJson(db, '{')).toBe(false);
   });
 
-  it('ensureStoneFlatsheetProduct inserts m² SKU', () => {
+  it('ensureStoneFlatsheetProduct inserts sheet SKU', () => {
     const pid = ensureStoneFlatsheetProduct(db, { colourLabel: 'Red', lengthM: 1.4, branchId: 'BR-YL' });
     expect(pid).toBe('STONE-FS-red-1p4m');
     const row = db
       .prepare(`SELECT unit, gauge, branch_id FROM products WHERE product_id = ? AND branch_id = ?`)
       .get(pid, 'BR-YL');
-    expect(row.unit).toBe('m2');
+    expect(row.unit).toBe('sheet');
     expect(String(row.gauge || '').trim()).toBe('');
     expect(row.branch_id).toBe('BR-YL');
   });

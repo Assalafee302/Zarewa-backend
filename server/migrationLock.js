@@ -1,12 +1,12 @@
-const MIGRATION_LOCK_NAME = 'zarewa_run_migrations';
+import {
+  migrationLockNameForDatabase,
+  inspectLockHolderSync,
+  lockAcquireFailureMessage,
+} from './mysqlNamedLock.js';
 
-/** MySQL GET_LOCK names are capped at 64 characters. */
-export function migrationLockNameForDatabase(databaseName) {
-  const db = String(databaseName || '').trim();
-  if (!db) return MIGRATION_LOCK_NAME;
-  const raw = `zarewa_mig_${db}`;
-  return raw.length <= 64 ? raw : raw.slice(0, 64);
-}
+export { migrationLockNameForDatabase } from './mysqlNamedLock.js';
+
+const MIGRATION_LOCK_NAME = 'zarewa_run_migrations';
 
 function resolveMigrationLockName(db) {
   try {
@@ -68,10 +68,17 @@ export function withMigrationLock(db, fn) {
     const row = db.prepare(`SELECT GET_LOCK(?, ?) AS got`).get(lockName, waitSec);
     acquired = Number(row?.got) === 1;
     if (!acquired) {
-      throw new Error(
-        `Could not acquire migration lock "${lockName}" within ${waitSec}s. ` +
-          'Another Zarewa process may be migrating the same database — wait and retry, or stop duplicate instances.'
-      );
+      const holder = inspectLockHolderSync(db, lockName);
+      const msg = lockAcquireFailureMessage(lockName, waitSec, holder, 'migration');
+      console.error('[zarewa] migration lock acquire failed:', msg);
+      if (holder.holderConnId != null && !holder.process) {
+        console.error(
+          `[zarewa] dead/orphan lock holder id=${holder.holderConnId} (not in processlist)`
+        );
+      } else if (holder.holderConnId != null) {
+        console.error(`[zarewa] lock holder connection id=${holder.holderConnId}`);
+      }
+      throw new Error(msg);
     }
     return withDeadlockRetry(fn);
   } finally {

@@ -599,8 +599,12 @@ function buildAccessorySection(
       Number.isFinite(liveStock) ? liveStock : opening + received - used
     );
     if (opening <= 0 && received <= 0 && used <= 0 && balance <= 0) continue;
+    const typeKey = accessoryRegisterTypeKey(itemName || catalogName);
     rows.push({
       productID: pid,
+      productIds: [pid],
+      typeKey,
+      typeLabel: accessoryRegisterTypeLabel(typeKey),
       itemName,
       unit,
       opening,
@@ -795,7 +799,7 @@ export function parseBmAdjustments(raw) {
 /**
  * Apply branch-manager physical count overrides before procurement costing.
  * @param {object} register
- * @param {{ coilLines?: { coilNo: string; closingKg?: number|null; note?: string }[]; stoneLines?: { productID: string; remainingM?: number }[]; accessoryLines?: { typeKey: string; unit: string; balance?: number }[] } | null} adjustments
+ * @param {{ coilLines?: { coilNo: string; closingKg?: number|null; note?: string }[]; stoneLines?: { productID: string; remainingM?: number }[]; accessoryLines?: { productID?: string; typeKey?: string; unit?: string; balance?: number }[] } | null} adjustments
  */
 export function applyBmAdjustmentsToRegister(register, adjustments) {
   if (!register || !adjustments) return register;
@@ -803,9 +807,14 @@ export function applyBmAdjustmentsToRegister(register, adjustments) {
     (adjustments.coilLines || []).map((l) => [String(l.coilNo || '').trim(), l]).filter(([k]) => k)
   );
   const stoneMap = new Map((adjustments.stoneLines || []).map((l) => [String(l.productID || '').trim(), l]));
-  const accMap = new Map(
-    (adjustments.accessoryLines || []).map((l) => [`${l.typeKey}|${l.unit}`, l])
-  );
+  // Prefer productID (one row = one SKU). Legacy typeKey|unit kept as fallback only.
+  const accByProduct = new Map();
+  const accByTypeUnit = new Map();
+  for (const l of adjustments.accessoryLines || []) {
+    const pid = String(l.productID || l.productId || '').trim();
+    if (pid) accByProduct.set(pid, l);
+    else accByTypeUnit.set(`${l.typeKey}|${l.unit}`, l);
+  }
 
   for (const family of ['aluminium', 'aluzinc']) {
     for (const g of register.coilSections?.[family]?.groups || []) {
@@ -827,7 +836,10 @@ export function applyBmAdjustmentsToRegister(register, adjustments) {
     }
   }
   for (const r of register.accessories?.rows || []) {
-    const adj = accMap.get(`${r.typeKey}|${r.unit}`);
+    const pid = String(r.productID || r.productIds?.[0] || '').trim();
+    const adj =
+      (pid && accByProduct.get(pid)) ||
+      accByTypeUnit.get(`${r.typeKey}|${r.unit}`);
     if (!adj || adj.balance == null) continue;
     r.balance = round2(Math.max(0, Number(adj.balance)));
     r.bmAdjusted = true;

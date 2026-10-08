@@ -21,6 +21,18 @@ fi
 
 echo "Backend: $BACKEND"
 cd "$BACKEND"
+
+# Stop the old Node process BEFORE pull/boot so MySQL GET_LOCK (zarewa_mig_<db>)
+# is released. Overlapping restarts cause: Could not acquire schema lock … within 120s.
+echo "Stopping existing API process (if any)…"
+if command -v pkill >/dev/null 2>&1; then
+  pkill -f "$BACKEND/server/index.js" 2>/dev/null || true
+  pkill -f "node server/index.js" 2>/dev/null || true
+  sleep 3
+else
+  echo "pkill not available — stop the Node app in hPanel before continuing"
+fi
+
 git pull origin main
 npm ci --omit=dev
 node scripts/hostinger-boot-check.mjs
@@ -51,7 +63,9 @@ else
 fi
 
 echo ""
-echo "=== Restart Node app in hPanel now (Websites -> Node.js -> Restart) ==="
+echo "=== Start Node app in hPanel now (Websites -> Node.js -> Restart / Start) ===
+echo "Prefer Stop then Start (not overlapping Restart) so only one boot holds the schema lock."
+echo "If boot fails on schema lock: node scripts/diagnose-migration-lock.mjs""
 echo "Then verify:"
 echo "  curl -sS https://api.zarewaglobalservices.com/api/health"
 echo "  open https://erp.zarewaglobalservices.com"

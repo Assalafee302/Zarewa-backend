@@ -48,11 +48,12 @@ export function productsTableHasBranchCompositePk(db) {
 }
 
 /**
+ * Legacy overdraw allowance for ACC-/STONE- (used only until opening reset posts / gate env).
  * @param {import('better-sqlite3').Database} db
  * @param {string} productId
  * @param {string} workspaceBranchId
  */
-function productAllowsNegativeStock(productId, row) {
+function productAllowsNegativeStockLegacy(productId, row) {
   const pid = String(productId || '').trim();
   if (/^ACC-/i.test(pid)) return true;
   if (!row || !/^STONE-/i.test(pid)) return false;
@@ -61,6 +62,34 @@ function productAllowsNegativeStock(productId, row) {
   if (attrs.inventoryModel === 'stone_meter') return true;
   if (String(row.unit || '').toLowerCase() === 'm' && attrs.stoneDesign) return true;
   return /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid);
+}
+
+function isAccOrStoneSku(productId) {
+  const pid = String(productId || '').trim();
+  return /^ACC-/i.test(pid) || /^STONE-/i.test(pid);
+}
+
+/** True after opening reset posts for the branch, or when env forces the gate. */
+export function isNegativeStockGateActive(db, branchId) {
+  if (process.env.ZAREWA_GATE_ACC_STONE_NEGATIVE === '1') return true;
+  if (process.env.ZAREWA_GATE_ACC_STONE_NEGATIVE === '0') return false;
+  const bid = String(branchId || '').trim();
+  if (!bid) return false;
+  try {
+    const row = db
+      .prepare(
+        `SELECT 1 AS ok FROM opening_stock_reset_runs
+         WHERE branch_id = ? AND status = 'posted' LIMIT 1`
+      )
+      .get(bid);
+    return Boolean(row);
+  } catch {
+    return false;
+  }
+}
+
+function negativeStockGateActive(db, branchId) {
+  return isNegativeStockGateActive(db, branchId);
 }
 
 /**
@@ -74,8 +103,9 @@ export function getProductStockLevelForBranch(db, productId, branchId) {
 
 /**
  * Branch-scoped stock delta.
- * Negatives are blocked by default. Pass `{ allowNegative: true }` only for known fulfilment paths
- * that intentionally overdraw accessories/stone (legacy). Prefer preventing oversell.
+ * After the 5 Oct opening reset posts (or ZAREWA_GATE_ACC_STONE_NEGATIVE=1), ACC-/STONE-
+ * overdraw requires `{ allowNegative: true }` from an OM/BM approval path.
+ * Before the gate: legacy ACC/STONE overdraw still allowed (so completions are not blocked by nails/rivets).
  * @returns {boolean} whether a row was updated
  */
 export function adjustProductStockForBranch(db, productId, delta, branchId, opts = {}) {
@@ -84,16 +114,24 @@ export function adjustProductStockForBranch(db, productId, delta, branchId, opts
   const row = getProductRowForWorkspace(db, pid, branchId);
   if (!row) return false;
   const pb = String(row.branch_id ?? '').trim();
+  const bid = pb || String(branchId || '').trim();
   const raw = Number(row.stock_level) + Number(delta || 0);
-  const allowNegative =
-    opts.allowNegative === true ||
-    (opts.allowNegative !== false &&
-      productAllowsNegativeStock(pid, row) &&
-      process.env.ZAREWA_BLOCK_NEGATIVE_STOCK !== '1');
+  const gateOn =
+    isAccOrStoneSku(pid) &&
+    process.env.ZAREWA_BLOCK_NEGATIVE_STOCK !== '0' &&
+    (process.env.ZAREWA_BLOCK_NEGATIVE_STOCK === '1' || negativeStockGateActive(db, bid));
+  const legacyAllow =
+    !gateOn &&
+    opts.allowNegative !== false &&
+    productAllowsNegativeStockLegacy(pid, row) &&
+    process.env.ZAREWA_BLOCK_NEGATIVE_STOCK !== '1';
+  const allowNegative = opts.allowNegative === true || legacyAllow;
   if (!allowNegative && raw < -1e-9) {
-    throw new Error(
+    const err = new Error(
       `Insufficient stock for ${pid} (stock ${Number(row.stock_level) || 0}, change ${Number(delta) || 0}).`
     );
+    err.code = gateOn ? 'NEGATIVE_STOCK_BLOCKED' : 'INSUFFICIENT_STOCK';
+    throw err;
   }
   const next = allowNegative ? raw : Math.max(0, raw);
   db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(

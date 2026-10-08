@@ -6,11 +6,15 @@
  */
 import { spawn } from 'node:child_process';
 
+// Force local XAMPP after loadProjectEnv in vitestProdDbGuard (avoids production .env / .env.local).
+process.env.ZAREWA_LOCAL_XAMPP = '1';
 process.env.ZAREWA_MYSQL_HOST = '127.0.0.1';
 process.env.ZAREWA_MYSQL_PORT = '3306';
 process.env.ZAREWA_MYSQL_USER = 'root';
 process.env.ZAREWA_MYSQL_PASSWORD = '';
-process.env.ZAREWA_MYSQL_DATABASE = process.env.ZAREWA_MYSQL_DATABASE || 'zarewa_test';
+process.env.ZAREWA_MYSQL_DATABASE = 'zarewa_db';
+process.env.ZAREWA_MYSQL_TEST_DATABASE =
+  process.env.ZAREWA_MYSQL_TEST_DATABASE || 'zarewa_test';
 
 const args = ['vitest', 'run', ...process.argv.slice(2)];
 const child = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', args, {

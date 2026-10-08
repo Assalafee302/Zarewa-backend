@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyBmAdjustmentsToRegister,
   buildStockRegisterPack,
   coilMaterialFamily,
   coilProductionUsedMByCoil,
@@ -343,6 +344,45 @@ describe('stockRegisterCore', () => {
     // Cross-branch tagged movement is ignored; zero Yola stock → row omitted (not inflated to 500).
     expect(row).toBeUndefined();
     expect(pack.accessories.rows.every((r) => r.balance !== 500)).toBe(true);
+  });
+
+  it('BM accessory adjustment keys by productID so same-unit rows stay independent', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      coilLots: [],
+      productionJobs: [],
+      productionJobCoils: [],
+      coilControlEvents: [],
+      products: [
+        {
+          productID: 'ACC-DRIVE-SCREW-PACK',
+          name: 'Drive screw',
+          stockLevel: 100,
+          unit: 'pack',
+          dashboardAttrs: { inventoryModel: 'consumable' },
+        },
+        {
+          productID: 'ACC-RIVET-PACK',
+          name: 'Rivets',
+          stockLevel: 50,
+          unit: 'pack',
+          dashboardAttrs: { inventoryModel: 'consumable' },
+        },
+      ],
+      stockMovements: [],
+    });
+    expect(pack.accessories.rows[0].productIds).toEqual([pack.accessories.rows[0].productID]);
+    expect(pack.accessories.rows[0].typeKey).toBeTruthy();
+    applyBmAdjustmentsToRegister(pack, {
+      accessoryLines: [{ productID: 'ACC-DRIVE-SCREW-PACK', balance: 80 }],
+    });
+    const drive = pack.accessories.rows.find((r) => r.productID === 'ACC-DRIVE-SCREW-PACK');
+    const rivet = pack.accessories.rows.find((r) => r.productID === 'ACC-RIVET-PACK');
+    expect(drive.balance).toBe(80);
+    expect(drive.bmAdjusted).toBe(true);
+    expect(rivet.balance).toBe(50);
+    expect(rivet.bmAdjusted).toBeFalsy();
   });
 
   it('does not count untagged accessory receipts against another branch', () => {

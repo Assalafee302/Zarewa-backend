@@ -54,6 +54,17 @@ import {
 import {
   stoneFlatsheetSheetsToM2,
 } from '../shared/lib/poLineTypes.js';
+import { qtyToBase, formatQtyBothUnits } from '../shared/lib/productUom.js';
+import {
+  normalizeStoneFlatsheetLengthM,
+  stoneFlatsheetM2ToPcs,
+} from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import { listPackSizesForProduct } from './operations/productPackSizeOps.js';
+import {
+  accessoryBelowFloorViolations,
+  assertQuoteAccessoriesFromMaster,
+  freeTextAccessoriesBlocked,
+} from './sales/quoteAccessoryCatalog.js';
 import { mapPoLineFromDb, poLinesFullyReceived } from '../shared/lib/inTransitVisibility.js';
 import {
   assertQuotationLineIntegrity,
@@ -2854,7 +2865,8 @@ export function confirmGrn(
         const fsRef = `SF-${String(poID).replace(/[^A-Za-z0-9-]/g, '')}-${String(line.line_key || i)}`;
         coilNumbers.push(fsRef);
         const lengthM = Number(line.meters_offered) || 0;
-        const m2 = stoneFlatsheetSheetsToM2(qty, lengthM);
+        // Stock is sheets by length; m² is display-only (legacy width kept for notes).
+        const m2Note = stoneFlatsheetSheetsToM2(qty, lengthM);
         const upSheet = Math.round(Number(line.unit_price_ngn) || 0);
         const landedFs = upSheet > 0 && qty > 0 ? Math.round(qty * upSheet) : null;
         updLine.run(qty, poID, line.line_key);
@@ -2863,8 +2875,8 @@ export function confirmGrn(
           type: 'STORE_GRN_STONE_FLATSHEET',
           ref: poID,
           productID: e.productID,
-          qty: m2,
-          detail: `${fsRef} · ${qty} sheets → ${m2.toFixed(2)} m² · ${e.location || 'main store'}`,
+          qty,
+          detail: `${fsRef} · ${qty} sheets (${lengthM} m${m2Note ? ` · ~${m2Note.toFixed(2)} m² note` : ''}) · ${e.location || 'main store'}`,
           dateISO: lineDateISO,
           atISO: entryReceivedAtISO(lineDateISO),
           unitPriceNgn: upSheet || null,
@@ -2923,16 +2935,23 @@ export function confirmGrn(
       if (isAcc) {
         const accRef = `AC-${String(poID).replace(/[^A-Za-z0-9-]/g, '')}-${String(line.line_key || i)}`;
         coilNumbers.push(accRef);
+        const { baseUnit, packSizes } = listPackSizesForProduct(db, e.productID, coilBranch);
+        const qtyUnit = String(
+          e.qtyUnit || e.qty_unit || line.qty_unit || baseUnit || product?.unit || 'unit'
+        ).trim();
+        const qtyBase = qtyToBase(qty, qtyUnit, baseUnit, packSizes);
+        const dual = formatQtyBothUnits(qty, qtyUnit, baseUnit, packSizes);
         const upEach = Math.round(Number(line.unit_price_ngn) || 0);
-        const landedAcc = upEach > 0 && qty > 0 ? Math.round(qty * upEach) : null;
-        updLine.run(qty, poID, line.line_key);
-        pushShortReceiptAlertIfNeeded(line, qty, accRef);
+        // Unit price is per base unit when converting from cartons.
+        const landedAcc = upEach > 0 && qtyBase > 0 ? Math.round(qtyBase * upEach) : null;
+        updLine.run(qtyBase, poID, line.line_key);
+        pushShortReceiptAlertIfNeeded(line, qtyBase, accRef);
         appendMovementTx(db, {
           type: 'STORE_GRN_ACCESSORY',
           ref: poID,
           productID: e.productID,
-          qty,
-          detail: `${accRef} · ${qty} u · ${e.location || 'main store'}`,
+          qty: qtyBase,
+          detail: `${accRef} · ${dual} · ${e.location || 'main store'}`,
           dateISO: lineDateISO,
           atISO: entryReceivedAtISO(lineDateISO),
           unitPriceNgn: upEach || null,
@@ -3072,9 +3091,14 @@ export function confirmGrn(
       const w = wRaw != null && Number.isFinite(wRaw) && wRaw > 0 ? wRaw : null;
       let qtyDelta;
       if (isFs) {
-        const lengthM = Number(line?.meters_offered) || 0;
-        qtyDelta = stoneFlatsheetSheetsToM2(Number(e.qtyReceived), lengthM);
-      } else if (isStone || isAcc) {
+        qtyDelta = Number(e.qtyReceived); // sheets
+      } else if (isAcc) {
+        const { baseUnit, packSizes } = listPackSizesForProduct(db, e.productID, coilBranch);
+        const qtyUnit = String(
+          e.qtyUnit || e.qty_unit || line?.qty_unit || baseUnit || 'unit'
+        ).trim();
+        qtyDelta = qtyToBase(Number(e.qtyReceived), qtyUnit, baseUnit, packSizes);
+      } else if (isStone) {
         qtyDelta = Number(e.qtyReceived);
       } else {
         qtyDelta = w != null ? w : Number(e.qtyReceived);
@@ -3178,18 +3202,15 @@ export function postStoneInventoryReceipt(db, payload, branchFallback = '', opts
 }
 
 /**
- * Direct stone flatsheet receipt (m²) without a PO — optional supplier for traceability.
+ * Direct stone flatsheet receipt in SHEETS (by length). Optional supplier for traceability.
+ * Accepts sheetsReceived / qtyReceived as sheet count (preferred). Legacy m2Received converted via length.
  * @param {import('better-sqlite3').Database} db
  */
 export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback = '', opts = {}) {
   const colourLabel = String(payload?.colourLabel ?? '').trim();
   const lengthMRaw = payload?.lengthM ?? payload?.stoneFlatsheetLengthM;
-  const m2 = Number(payload?.m2Received ?? payload?.qtyReceived ?? payload?.metresReceived);
   if (!colourLabel) {
     return { ok: false, error: 'Colour is required.' };
-  }
-  if (!Number.isFinite(m2) || m2 <= 0) {
-    return { ok: false, error: 'Enter a valid m² received.' };
   }
   const branchGate = requireExplicitBranchId(branchFallback || payload?.branchId, 'stone flatsheet receipt');
   if (!branchGate.ok) return { ok: false, error: branchGate.error };
@@ -3200,26 +3221,36 @@ export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback =
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
-  const upM2 = Math.round(Number(payload?.unitPricePerM2Ngn) || 0);
-  const landed = upM2 > 0 ? Math.round(m2 * upM2) : null;
+  let sheets = Number(payload?.sheetsReceived ?? payload?.qtyReceived);
+  if (!(Number.isFinite(sheets) && sheets > 0) && payload?.m2Received != null) {
+    const lengthM = normalizeStoneFlatsheetLengthM(lengthMRaw);
+    sheets = stoneFlatsheetM2ToPcs(Number(payload.m2Received), lengthM);
+  }
+  if (!Number.isFinite(sheets) || sheets <= 0) {
+    return { ok: false, error: 'Enter a valid sheets received.' };
+  }
+  const upSheet = Math.round(
+    Number(payload?.unitPricePerSheetNgn ?? payload?.unitPricePerM2Ngn) || 0
+  );
+  const landed = upSheet > 0 ? Math.round(sheets * upSheet) : null;
   const dateISO = String(payload?.dateISO || new Date().toISOString()).slice(0, 10);
   const glUserId = opts?.actor?.id != null ? String(opts.actor.id) : null;
   const supplierNote = String(payload?.supplierName ?? payload?.supplier_name ?? '').trim();
-  const detail = [supplierNote || 'Stone flatsheet receipt', `${m2} m²`].filter(Boolean).join(' · ');
+  const detail = [supplierNote || 'Stone flatsheet receipt', `${sheets} sheets`].filter(Boolean).join(' · ');
 
   try {
     db.transaction(() => {
-      if (!bumpProductStockLevel(db, productId, bid, m2)) {
+      if (!bumpProductStockLevel(db, productId, bid, sheets)) {
         throw new Error('Stone flatsheet product row missing for this branch.');
       }
       appendMovementTx(db, {
         type: 'STORE_STONE_FLATSHEET_DIRECT',
         ref: String(payload?.refNote ?? '').trim() || 'DIRECT',
         productID: productId,
-        qty: m2,
+        qty: sheets,
         detail,
         dateISO,
-        unitPriceNgn: upM2 || null,
+        unitPriceNgn: upSheet || null,
         valueNgn: landed,
         branchId: bid,
       });
@@ -3235,7 +3266,7 @@ export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback =
       });
       if (landed && glS && glS.ok === false) throw new Error(glS.error || 'GL failed.');
     })();
-    return { ok: true, productId, m2Received: m2 };
+    return { ok: true, productId, sheetsReceived: sheets, m2Received: sheets };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
@@ -3666,8 +3697,13 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO,
           `Insufficient stock for this adjustment (stock ${onHand}, change ${delta}). Negatives are not allowed on manual adjust.`
         );
       }
-      const unitCost = resolveProductAdjustUnitCostNgn(db, productID, bid);
+      const overrideCost = Number(opts.unitCostNgn);
+      const unitCost =
+        Number.isFinite(overrideCost) && overrideCost > 0
+          ? overrideCost
+          : resolveProductAdjustUnitCostNgn(db, productID, bid);
       const valueNgn = Math.round(Math.abs(delta) * unitCost);
+      const unitPriceStored = unitCost > 0 ? Math.round(unitCost) : null;
       if (
         (Math.abs(delta) >= LARGE_QTY || valueNgn >= LARGE_VALUE_NGN) &&
         !opts.acknowledgeLargeAdjust
@@ -3694,7 +3730,7 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO,
         detail: `${reasonCode}${note ? ` — ${note}` : ''}`.slice(0, 500),
         dateISO: day,
         branchId: bid,
-        unitPriceNgn: unitCost > 0 ? unitCost : null,
+        unitPriceNgn: unitPriceStored,
         valueNgn: valueNgn > 0 ? valueNgn : null,
       });
       if (valueNgn > 0) {
@@ -10979,6 +11015,21 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   applyStainQuotationHeader(db, linesJson, payload);
   assertQuotationMaterialHeaderRequired(linesJson);
   assertQuotationLineIntegrity(linesJson);
+  {
+    const accGate = assertQuoteAccessoriesFromMaster(db, linesJson.accessories);
+    if (!accGate.ok) throw new Error(accGate.error);
+    if (accGate.enforced) linesJson.accessories = accGate.lines;
+    const below = accessoryBelowFloorViolations(linesJson.accessories);
+    if (
+      below.length &&
+      !payload.accessoryBelowFloorApproved &&
+      freeTextAccessoriesBlocked()
+    ) {
+      throw new Error(
+        `Accessory price below floor: ${below.map((b) => b.name).join(', ')}. Manager approval required.`
+      );
+    }
+  }
   assertServiceAssignments(db, linesJson, bid);
   assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
@@ -11299,6 +11350,19 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   if (payload.lines != null) {
     assertQuotationLineIntegrity(linesJson);
     assertServiceAssignments(db, linesJson, String(existing.branch_id || DEFAULT_BRANCH_ID).trim());
+    const accGate = assertQuoteAccessoriesFromMaster(db, linesJson.accessories);
+    if (!accGate.ok) throw new Error(accGate.error);
+    if (accGate.enforced) linesJson.accessories = accGate.lines;
+    const below = accessoryBelowFloorViolations(linesJson.accessories);
+    if (
+      below.length &&
+      !payload.accessoryBelowFloorApproved &&
+      freeTextAccessoriesBlocked()
+    ) {
+      throw new Error(
+        `Accessory price below floor: ${below.map((b) => b.name).join(', ')}. Manager approval required.`
+      );
+    }
   }
   assertQuotationMaterialRules(db, linesJson);
 

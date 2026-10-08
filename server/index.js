@@ -32,13 +32,18 @@ process.on('unhandledRejection', (reason) => {
 });
 
 let app;
+/** @type {{ close?: () => void } | null} */
+let bootDb = null;
 let dbPath = '';
 let bootDegraded = false;
+/** @type {import('node:http').Server | null} */
+let httpServer = null;
+let shuttingDown = false;
 
 try {
-  const db = createDatabase({ seed: runBootSeed });
+  bootDb = createDatabase({ seed: runBootSeed });
   dbPath = defaultDbPath();
-  app = createApp(db);
+  app = createApp(bootDb);
 } catch (e) {
   bootDegraded = true;
   const errMsg = String(e?.message || e || 'unknown');
@@ -52,9 +57,10 @@ try {
   dbPath = '(not connected)';
   app = express();
   app.disable('x-powered-by');
+  const lockFail = /Could not acquire (?:migration|schema) lock/i.test(errMsg);
   const bootFixHint =
-    lastBootPhase === 'migrations_failed' && /Could not acquire migration lock/i.test(errMsg)
-      ? 'Another API instance is migrating this database (boot can take 15+ min on remote MySQL). Stop duplicate instances, wait for the first boot to finish, or set ZAREWA_MIGRATION_LOCK_WAIT_SEC=1200. Run: npm run mysql:smoke'
+    lockFail
+      ? 'Another API instance holds the MySQL schema/migration GET_LOCK (overlapping restart or stuck boot). Stop the old process first, wait for it to exit (SIGTERM closes the pool and releases the lock), then start once. Check logs for holder connection id. Run: node scripts/diagnose-migration-lock.mjs'
       : lastBootPhase === 'migrations_failed' && /Atomics\.wait/i.test(errMsg)
         ? 'Boot migrations timed out talking to MySQL. Redeploy the latest backend, ensure only one API instance migrates at once, and set ZAREWA_MYSQL_SYNC_TIMEOUT_MS=900000 if the database is large. Run: npm run mysql:smoke'
         : 'Start MySQL so host:port accepts TCP connections, create the database if missing, and match ZAREWA_MYSQL_USER / ZAREWA_MYSQL_PASSWORD in .env. Run: npm run mysql:smoke';
@@ -136,10 +142,39 @@ function onListen() {
   }
 }
 
-if (listenHost) {
-  app.listen(port, listenHost, onListen);
-} else {
-  app.listen(port, onListen);
+/**
+ * Release MySQL GET_LOCK holders by ending the pool on SIGTERM/SIGINT.
+ * Overlapping Hostinger restarts otherwise leave the old process holding
+ * zarewa_mig_<db> while the new boot waits and fails.
+ */
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[zarewa] ${signal} — closing HTTP + MySQL pool (release schema/migration locks)`);
+  const done = () => {
+    try {
+      bootDb?.close?.();
+    } catch (e) {
+      console.error('[zarewa] db.close during shutdown:', e?.message || e);
+    }
+    bootDb = null;
+    process.exit(0);
+  };
+  if (httpServer) {
+    httpServer.close(() => done());
+    setTimeout(done, 8_000).unref?.();
+  } else {
+    done();
+  }
 }
 
-export { app, port, listenHost, bootDegraded, dbPath, onListen };
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+if (listenHost) {
+  httpServer = app.listen(port, listenHost, onListen);
+} else {
+  httpServer = app.listen(port, onListen);
+}
+
+export { app, port, listenHost, bootDegraded, dbPath, onListen, gracefulShutdown };

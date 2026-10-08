@@ -5,6 +5,7 @@ import {
   defaultMigrationLockWaitSec,
   migrationLockNameForDatabase,
 } from './migrationLock.js';
+import { lockAcquireFailureMessage } from './mysqlNamedLock.js';
 
 describe('migrationLock', () => {
   it('defaultMigrationLockWaitSec is 120s under test', () => {
@@ -47,5 +48,57 @@ describe('migrationLock', () => {
     expect(out).toBe('done');
     expect(get).toHaveBeenCalledWith('zarewa_mig_zarewa_test_w1', expect.any(Number));
     expect(run).toHaveBeenCalledWith('zarewa_mig_zarewa_test_w1');
+  });
+
+  it('withMigrationLock logs dead holder id when processlist miss', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('DATABASE()')) return { get: () => ({ n: 'u172282559_ZAREWA' }) };
+        if (s.includes('GET_LOCK')) return { get: () => ({ got: 0 }) };
+        if (s.includes('IS_USED_LOCK')) return { get: () => ({ holderConnId: 4242 }) };
+        if (s.includes('processlist')) return { get: () => undefined };
+        throw new Error(`unexpected sql: ${s}`);
+      },
+    };
+    expect(() => withMigrationLock(db, () => 'nope')).toThrow(/dead\/orphaned connection|id=4242/);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('dead/orphan lock holder id=4242')
+    );
+    errSpy.mockRestore();
+  });
+
+  it('lockAcquireFailureMessage distinguishes live vs dead holder', () => {
+    const dead = lockAcquireFailureMessage(
+      'zarewa_mig_x',
+      120,
+      { holderConnId: 9, process: null },
+      'schema'
+    );
+    expect(dead).toMatch(/schema lock/);
+    expect(dead).toMatch(/id=9/);
+    expect(dead).toMatch(/NOT in processlist/);
+
+    const live = lockAcquireFailureMessage(
+      'zarewa_mig_x',
+      120,
+      {
+        holderConnId: 9,
+        process: {
+          id: 9,
+          user: 'u1',
+          host: 'localhost',
+          db: 'zarewa',
+          command: 'Sleep',
+          time: 30,
+          state: '',
+          info: null,
+        },
+      },
+      'schema'
+    );
+    expect(live).toMatch(/Held by connection id=9/);
+    expect(live).toMatch(/Stop the old API process/);
   });
 });

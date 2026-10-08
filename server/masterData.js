@@ -371,16 +371,31 @@ const MASTER_DATA_CONFIG = {
       if (!['product', 'accessory', 'service'].includes(itemType)) {
         throw new Error('Quote item type must be product, accessory, or service.');
       }
-      const invPid = trimText(payload.inventoryProductId ?? payload.inventory_product_id ?? '');
+      const p = payload && typeof payload === 'object' ? payload : {};
+      // Omitted fields must not wipe stock links / floor / sort (workbook accessory save).
+      const hasInv =
+        Object.prototype.hasOwnProperty.call(p, 'inventoryProductId') ||
+        Object.prototype.hasOwnProperty.call(p, 'inventory_product_id');
+      const hasFloor =
+        Object.prototype.hasOwnProperty.call(p, 'floorUnitPriceNgn') ||
+        Object.prototype.hasOwnProperty.call(p, 'floor_unit_price_ngn');
+      const hasSort =
+        Object.prototype.hasOwnProperty.call(p, 'sortOrder') ||
+        Object.prototype.hasOwnProperty.call(p, 'sort_order');
+      const invPid = hasInv
+        ? trimText(p.inventoryProductId ?? p.inventory_product_id ?? '')
+        : undefined;
       return {
         itemType,
         name: requireName(payload.name, 'Item name'),
         unit: trimText(payload.unit || 'unit') || 'unit',
         defaultUnitPriceNgn: roundMoney(payload.defaultUnitPriceNgn),
-        floorUnitPriceNgn: roundMoney(payload.floorUnitPriceNgn ?? payload.floor_unit_price_ngn ?? 0),
+        floorUnitPriceNgn: hasFloor
+          ? roundMoney(p.floorUnitPriceNgn ?? p.floor_unit_price_ngn ?? 0)
+          : undefined,
         active: boolFlag(payload.active),
-        sortOrder: sortNumber(payload.sortOrder, fallbackSort),
-        inventoryProductId: invPid || null,
+        sortOrder: hasSort ? sortNumber(p.sortOrder ?? p.sort_order, fallbackSort) : undefined,
+        inventoryProductId: hasInv ? invPid || null : undefined,
       };
     },
     toClient(row) {
@@ -961,12 +976,55 @@ function existingBaseActive(db, itemId) {
   }
 }
 
+function existingQuoteItemPreserveFields(db, itemId) {
+  try {
+    return (
+      db
+        .prepare(
+          `SELECT inventory_product_id, floor_unit_price_ngn, sort_order
+           FROM setup_quote_items WHERE item_id = ?`
+        )
+        .get(itemId) || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Fill omitted quote-item fields from the existing row so partial PATCH/workbook saves cannot NULL links. */
+function applyQuoteItemPreserveOnUpdate(db, id, row, fallbackSort) {
+  const prev = existingQuoteItemPreserveFields(db, id);
+  if (!prev) {
+    return {
+      ...row,
+      floorUnitPriceNgn: row.floorUnitPriceNgn ?? 0,
+      sortOrder: row.sortOrder ?? fallbackSort,
+      inventoryProductId: row.inventoryProductId ?? null,
+    };
+  }
+  return {
+    ...row,
+    floorUnitPriceNgn:
+      row.floorUnitPriceNgn !== undefined
+        ? row.floorUnitPriceNgn
+        : roundMoney(prev.floor_unit_price_ngn ?? 0),
+    sortOrder:
+      row.sortOrder !== undefined ? row.sortOrder : Number(prev.sort_order) || fallbackSort,
+    inventoryProductId:
+      row.inventoryProductId !== undefined
+        ? row.inventoryProductId
+        : prev.inventory_product_id != null && String(prev.inventory_product_id).trim()
+          ? String(prev.inventory_product_id).trim()
+          : null,
+  };
+}
+
 export function upsertMasterDataRecord(db, kind, payload, actor) {
   const resolved = resolveKind(kind);
   const cfg = MASTER_DATA_CONFIG[resolved];
   const currentRows = listRows(db, resolved);
   const fallbackSort = currentRows.length + 1;
-  const row = cfg.normalizePayload(payload || {}, fallbackSort);
+  let row = cfg.normalizePayload(payload || {}, fallbackSort);
   const requestedId = trimText(payload?.id);
   const id = requestedId || nextMasterId(db, cfg);
   const existing = requestedId
@@ -974,6 +1032,17 @@ export function upsertMasterDataRecord(db, kind, payload, actor) {
     : null;
   if (resolved === 'colours' && row.active) {
     assertNoDuplicateSetupColour(db, row, existing ? id : null);
+  }
+
+  if (resolved === 'quote-items' && existing) {
+    row = applyQuoteItemPreserveOnUpdate(db, id, row, fallbackSort);
+  } else if (resolved === 'quote-items') {
+    row = {
+      ...row,
+      floorUnitPriceNgn: row.floorUnitPriceNgn ?? 0,
+      sortOrder: row.sortOrder ?? fallbackSort,
+      inventoryProductId: row.inventoryProductId ?? null,
+    };
   }
 
   const accessoryBranchId =

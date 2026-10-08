@@ -186,6 +186,29 @@ function maxTreasuryBatchSerial(db, prefix, fullYear, yy) {
   return max;
 }
 
+function humanIdPatterns(prefix, code, yy, fullYear, global, extraPatterns) {
+  const escP = escRe(prefix);
+  const patterns = [];
+  if (global) {
+    patterns.push(new RegExp(`^${escP}-${yy}-(\\d+)$`));
+    patterns.push(new RegExp(`^${escP}-${fullYear}-(\\d+)$`));
+  } else {
+    patterns.push(new RegExp(`^${escP}-${escRe(code)}-${yy}-(\\d+)$`));
+    patterns.push(new RegExp(`^${escP}-${escRe(code)}-${fullYear}-(\\d+)$`));
+    patterns.push(new RegExp(`^${escP}-${fullYear}-(\\d+)$`));
+    patterns.push(new RegExp(`^${escP}-${yy}-(\\d+)$`));
+  }
+  if (Array.isArray(extraPatterns)) {
+    for (const re of extraPatterns) patterns.push(re);
+  }
+  return patterns;
+}
+
+function formatHumanId(prefix, code, yy, n, width, global) {
+  if (global) return `${prefix}-${yy}-${String(n).padStart(width, '0')}`;
+  return `${prefix}-${code}-${yy}-${String(n).padStart(width, '0')}`;
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} prefix e.g. LE, QT
@@ -200,29 +223,36 @@ export function allocateHumanId(db, prefix, branchId, opts) {
   const global = opts.global === true;
   const code = global ? null : getBranchCodeUpper(db, branchId);
   const scope = global ? `${prefix}||${fullYear}` : `${prefix}|${code}|${fullYear}`;
+  const patterns = humanIdPatterns(prefix, code, yy, fullYear, global, opts.extraPatterns);
   ensureHumanIdSequencesTable(db);
   const existing = db.prepare(`SELECT \`last_value\` FROM human_id_sequences WHERE scope = ?`).get(scope);
   if (!existing) {
-    const escP = escRe(prefix);
-    const patterns = [];
-    if (global) {
-      patterns.push(new RegExp(`^${escP}-${yy}-(\\d+)$`));
-      patterns.push(new RegExp(`^${escP}-${fullYear}-(\\d+)$`));
-    } else {
-      patterns.push(new RegExp(`^${escP}-${escRe(code)}-${yy}-(\\d+)$`));
-      patterns.push(new RegExp(`^${escP}-${escRe(code)}-${fullYear}-(\\d+)$`));
-      patterns.push(new RegExp(`^${escP}-${fullYear}-(\\d+)$`));
-      patterns.push(new RegExp(`^${escP}-${yy}-(\\d+)$`));
-    }
-    if (Array.isArray(opts.extraPatterns)) {
-      for (const re of opts.extraPatterns) patterns.push(re);
-    }
     const max = opts.table ? maxMatchFromColumn(db, opts.table, idColumn, patterns) : 0;
     db.prepare(`INSERT INTO human_id_sequences (scope, \`last_value\`) VALUES (?, ?)`).run(scope, max);
   }
-  const n = bumpHumanSerial(db, scope);
-  if (global) return `${prefix}-${yy}-${String(n).padStart(width, '0')}`;
-  return `${prefix}-${code}-${yy}-${String(n).padStart(width, '0')}`;
+  let n = bumpHumanSerial(db, scope);
+  let id = formatHumanId(prefix, code, yy, n, width, global);
+  if (!opts.table) return id;
+
+  // Catch sequence lag after manual inserts / imports that skipped human_id_sequences.
+  assertSafeTable(opts.table);
+  assertSafeIdColumn(idColumn);
+  const taken = db.prepare(`SELECT 1 AS o FROM ${opts.table} WHERE ${idColumn} = ? LIMIT 1`).get(id);
+  if (!taken) return id;
+
+  const max = maxMatchFromColumn(db, opts.table, idColumn, patterns);
+  if (max > Number(n)) {
+    db.prepare(
+      `UPDATE human_id_sequences SET \`last_value\` = ? WHERE scope = ? AND \`last_value\` < ?`
+    ).run(max, scope, max);
+  }
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    n = bumpHumanSerial(db, scope);
+    id = formatHumanId(prefix, code, yy, n, width, global);
+    const hit = db.prepare(`SELECT 1 AS o FROM ${opts.table} WHERE ${idColumn} = ? LIMIT 1`).get(id);
+    if (!hit) return id;
+  }
+  throw new Error(`humanId: could not allocate unique ${prefix} id after sequence resync`);
 }
 
 export function nextLedgerEntryId(db, branchId) {

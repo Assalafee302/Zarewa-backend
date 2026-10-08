@@ -7,6 +7,7 @@ import { isEmptySeedMode } from './emptySeed.js';
 import { legacyDemoPackActive } from './legacyDemoPackPolicy.js';
 import { createMysqlDatabase, databaseLabel, mysqlConfigFromEnv } from './mysqlDatabase.js';
 import { withDeadlockRetry } from './migrationLock.js';
+import { assertNotProductionMysqlDatabase } from './mysqlProdGuard.js';
 import { resetSchemaCache } from './schemaCache.js';
 import { clearReadModelSchemaCache } from './readModel.js';
 
@@ -77,6 +78,14 @@ export function createDatabase(pathOrOpts = {}, maybeOpts) {
   const cfg = mysqlConfigFromEnv();
   if (testDbOverride) cfg.database = testDbOverride;
   else if (opts.database) cfg.database = String(opts.database);
+
+  const underVitest = process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
+  if (underVitest || reset) {
+    assertNotProductionMysqlDatabase(
+      cfg.database,
+      underVitest ? 'Vitest createDatabase' : 'database reset/wipe'
+    );
+  }
 
   const attempts = reset ? 4 : 1;
   let lastErr;

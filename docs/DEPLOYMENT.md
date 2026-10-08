@@ -137,6 +137,7 @@ After TLS is in front of the app, keep `CORS_ORIGIN` aligned with `https://` + t
 ### 6. Updates
 
 ```bash
+# Always stop before start so MySQL GET_LOCK is released (SIGTERM closes the pool).
 sudo systemctl stop zarewa
 sudo -u zarewa -H bash -c '
   cd /opt/zarewa/app
@@ -148,6 +149,10 @@ sudo -u zarewa -H bash -c '
 '
 sudo systemctl start zarewa
 ```
+
+Do **not** run two API boots against the same schema at once. If a restart fails with
+`Could not acquire schema lock`, check the logged holder connection id and
+`node scripts/diagnose-migration-lock.mjs`.
 
 ### 7. Trial hygiene
 

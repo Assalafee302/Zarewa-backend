@@ -30,6 +30,8 @@ import {
   ensureWorkspaceSearchFtsSchema,
   rebuildWorkspaceSearchFts,
 } from './workspaceSearchFts.js';
+import { migrateProductPackSizes } from './operations/productPackSizeOps.js';
+import { migrateAccessoryStonePhase1 } from './operations/accessoryStonePhase1Migrate.js';
 
 const SCHEMA_MIGRATION_PO_LINE_TYPE = 'po-line-type-migrate-v4';
 const SCHEMA_MIGRATION_PROCUREMENT_KIND = 'procurement-order-kind-v2';
@@ -1598,6 +1600,16 @@ function runMigrationsUnlocked(db) {
     }
   } catch (e) {
     console.warn('[migrate] hanging coil short receipts close skipped:', e?.message || e);
+  }
+  try {
+    migrateProductPackSizes(db);
+  } catch (e) {
+    console.warn('[migrate] product pack sizes skipped:', e?.message || e);
+  }
+  try {
+    migrateAccessoryStonePhase1(db);
+  } catch (e) {
+    console.warn('[migrate] accessory/stone phase1 skipped:', e?.message || e);
   }
 }
 

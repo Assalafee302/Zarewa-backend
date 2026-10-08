@@ -14,6 +14,7 @@ export default defineConfig({
       forks: { singleFork: true },
     },
     environment: 'node',
+    setupFiles: ['server/vitestProdDbGuard.js'],
     include: ['server/**/*.test.js', 'shared/**/*.test.js'],
     testTimeout: 360_000,
     hookTimeout: 600_000,

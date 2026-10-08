@@ -60,6 +60,7 @@ import {
   adjustProductStockForBranch,
   getProductRowForWorkspace,
 } from './productBranchInventory.js';
+import { consumeNegativeStockApprovalTx } from './operations/negativeStockApprovalOps.js';
 import {
   procurementCatalogMaterialAlignedWithCoil,
   resolveCoilMaterialFamilyKey,
@@ -235,10 +236,30 @@ export function appendStockMovementTx(db, payload) {
   return id;
 }
 
-export function adjustProductStockTx(db, productID, delta, branchId) {
+export function adjustProductStockTx(db, productID, delta, branchId, opts = {}) {
   if (!productID) return;
   const bid = String(branchId ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  adjustProductStockForBranch(db, productID, delta, bid);
+  try {
+    adjustProductStockForBranch(db, productID, delta, bid, opts);
+  } catch (e) {
+    if (e?.code !== 'NEGATIVE_STOCK_BLOCKED') throw e;
+    const approvals = opts.negativeStockApprovals || opts.negativeStockApprovalByProduct || {};
+    const approvalId = approvals[productID] || opts.negativeStockApprovalId;
+    if (!approvalId) throw e;
+    const consumed = consumeNegativeStockApprovalTx(db, {
+      approvalId,
+      productId: productID,
+      branchId: bid,
+      actor: opts.actor,
+      qty: Math.abs(Number(delta) || 0),
+    });
+    if (!consumed.ok) {
+      const err = new Error(consumed.error || e.message);
+      err.code = consumed.code || e.code;
+      throw err;
+    }
+    adjustProductStockForBranch(db, productID, delta, bid, { allowNegative: true });
+  }
 }
 
 function coilRow(db, coilNo) {
@@ -2024,10 +2045,16 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       ...(sfPlan.stoneFlatsheetStockWarnings ?? []),
     ];
     const stockBranch = jobBranchId(job);
-    const adjustStock = (db, pid, delta) => adjustProductStockTx(db, pid, delta, stockBranch);
+    const negStockOpts = {
+      actor,
+      negativeStockApprovals:
+        payload.negativeStockApprovals || payload.negativeStockApprovalByProduct || {},
+    };
+    const adjustStock = (db, pid, delta) =>
+      adjustProductStockTx(db, pid, delta, stockBranch, negStockOpts);
     db.transaction(() => {
       if (stonePid && Math.abs(metres) >= 1e-9) {
-        adjustProductStockTx(db, stonePid, -metres, stockBranch);
+        adjustProductStockTx(db, stonePid, -metres, stockBranch, negStockOpts);
         appendStockMovementTx(db, {
           atISO: completedAtISO,
           type: 'STONE_CONSUMPTION',

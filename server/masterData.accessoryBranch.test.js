@@ -196,6 +196,39 @@ describe('accessory quote-item branch overlays', () => {
     db.close();
   });
 
+  it('partial quote-item upsert preserves inventory_product_id, floor, and sort when omitted', async () => {
+    const db = await tryMemDb();
+    if (!db) return;
+
+    db.prepare(
+      `INSERT INTO setup_quote_items (
+         item_id, item_type, name, unit, default_unit_price_ngn, floor_unit_price_ngn, active, sort_order, inventory_product_id
+       ) VALUES ('SQI-012','accessory','Drive screw nail','pack',2500,2000,1,105,'ACC-DRIVE-SCREW-PACK')`
+    ).run();
+
+    upsertMasterDataRecord(
+      db,
+      'quote-items',
+      {
+        id: 'SQI-012',
+        itemType: 'accessory',
+        name: 'Drive screw nail',
+        unit: 'pack',
+        defaultUnitPriceNgn: 2600,
+        active: true,
+        // intentionally omit inventoryProductId, floorUnitPriceNgn, sortOrder
+      },
+      null
+    );
+
+    const row = db.prepare(`SELECT * FROM setup_quote_items WHERE item_id = 'SQI-012'`).get();
+    expect(row.inventory_product_id).toBe('ACC-DRIVE-SCREW-PACK');
+    expect(row.floor_unit_price_ngn).toBe(2000);
+    expect(row.sort_order).toBe(105);
+    expect(row.default_unit_price_ngn).toBe(2600);
+    db.close();
+  });
+
   it('inventory product id resolution still works after overlay migrate', async () => {
     const db = await tryMemDb();
     if (!db) return;

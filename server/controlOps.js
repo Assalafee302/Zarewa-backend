@@ -2186,7 +2186,7 @@ function normalizePaymentRequestLineItems(raw) {
   return arr
     .map((row) => {
       const item = String(row?.item ?? row?.description ?? '').trim();
-      const unit = Number.parseFloat(String(row?.unit ?? row?.qty ?? '').replace(/,/g, ''));
+      const unit = Number.parseFloat(String(row?.unit ?? row?.qty ?? row?.quantity ?? '').replace(/,/g, ''));
       const unitPriceNgn = roundMoney(row?.unitPriceNgn ?? row?.unit_price_ngn ?? 0);
       let lineTotalNgn = roundMoney(row?.lineTotalNgn ?? row?.line_total_ngn ?? 0);
       const u = Number.isFinite(unit) ? unit : 0;

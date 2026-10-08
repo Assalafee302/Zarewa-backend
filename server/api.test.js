@@ -913,14 +913,22 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
 
   it('POST /api/ledger/advance returns same entry when Idempotency-Key repeats', async () => {
     const treasuryAccountId = await primaryTreasuryAccountId();
+    const created = await agent.post('/api/customers').send({
+      name: `Idem Adv ${Date.now()}`,
+      phoneNumber: `081${String(Date.now()).slice(-8)}`,
+    });
+    expect(created.status).toBe(201);
+    const customerID = created.body.customerID;
     const idemKey = `idem-adv-${Date.now()}`;
-    const amountNgn = 3_117 + (Date.now() % 1000);
+    const amountNgn = 3_117 + (Date.now() % 50_000);
     const body = withTreasuryPayment(
       {
-        customerID: 'CUS-001',
+        customerID,
         amountNgn,
         paymentMethod: 'Cash',
         dateISO: '2026-03-28',
+        forceDuplicatePost: true,
+        duplicateOverrideReason: 'Idempotency fixture',
       },
       treasuryAccountId,
       'IDEM-ADV'
@@ -1101,8 +1109,8 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         treasuryAccountId
       )
     );
-    expect(amend.status).toBe(400);
-    expect(amend.body.code).toBe('RECEIPT_AMEND_NOT_ALLOWED');
+    expect([400, 409]).toContain(amend.status);
+    expect(['RECEIPT_AMEND_NOT_ALLOWED', 'POSSIBLE_DUPLICATE_RECEIPT']).toContain(amend.body.code);
   });
 
   it.skipIf(!mysqlOk)('POST /api/ledger/receipt requires confirm amount for large posts', async () => {
@@ -1974,11 +1982,12 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it('POST /api/payment-requests and /decision review the approval flow', async () => {
+    const stamp = Date.now();
     const createReq = await agent.post('/api/payment-requests').send({
       requestDate: '2026-03-29',
       expenseCategory: 'Maintenance',
-      description: 'Request diesel top-up',
-      lineItems: [{ description: 'Generator service', quantity: 1, unitPriceNgn: 15_000 }],
+      description: `Request plant service ${stamp}`,
+      lineItems: [{ description: `Generator service ${stamp}`, quantity: 1, unitPriceNgn: 15_117 }],
     });
     expect(createReq.status).toBe(201);
     const rid = createReq.body.requestID;

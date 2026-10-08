@@ -13,7 +13,12 @@ import {
   buildFinanceDomainSnapshot,
   buildSalesDomainSnapshot,
 } from './domainBootstrap.js';
-import { listCoilLotsForDesk, listEligibleProductionCoils, searchCoilLots } from './readModel.js';
+import {
+  getCoilLotByNo,
+  listCoilLotsForDesk,
+  listEligibleProductionCoils,
+  searchCoilLots,
+} from './readModel.js';
 import { coilDeskListOpts } from './listQueryOpts.js';
 import { insertAssociatedStaff } from './writeOps.js';
 
@@ -96,6 +101,9 @@ describe.skipIf(!mysqlOk)('coil desk bootstrap (past lean-bootstrap lessons)', (
     // Consumed history still reachable via search / eligible stays complete for on-hand.
     expect(searchCoilLots(db, 'BR-KD', '2043').some((c) => c.coilNo === 'CL-26-2043')).toBe(true);
     expect(listEligibleProductionCoils(db, 'BR-KD').some((c) => c.coilNo === 'CL-26-2043')).toBe(true);
+    const byNo = getCoilLotByNo(db, 'CL-26-2043', 'BR-KD');
+    expect(byNo?.coilNo).toBe('CL-26-2043');
+    expect(Number(byNo?.currentWeightKg)).toBeCloseTo(1200, 1);
     db.close();
   });
 

@@ -2276,6 +2276,25 @@ export function listEligibleProductionCoils(db, branchScope = 'ALL', jobId = '')
 }
 
 /**
+ * Exact coil lot by number for profile / deep links (branch-scoped).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} coilNo
+ * @param {'ALL' | string} [branchScope]
+ */
+export function getCoilLotByNo(db, coilNo, branchScope = 'ALL') {
+  const cn = String(coilNo || '').trim();
+  if (!cn) return null;
+  const masterData = masterDataColoursFromDb(db);
+  const b = branchWhere(db, 'coil_lots', branchScope);
+  const row =
+    db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?${b.sql}`).get(cn, ...b.args) ||
+    db
+      .prepare(`SELECT * FROM coil_lots WHERE LOWER(coil_no) = LOWER(?)${b.sql}`)
+      .get(cn, ...b.args);
+  return row ? mapCoilLotRow(db, row, masterData) : null;
+}
+
+/**
  * Find coils by number fragment (e.g. "2043", "CL-26-2043") when not in trimmed bootstrap.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} [branchScope]

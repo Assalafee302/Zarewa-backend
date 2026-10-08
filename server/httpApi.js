@@ -529,6 +529,7 @@ import {
   listPeriodLocks,
   listCustomerCrmInteractions,
   listCoilLots,
+  getCoilLotByNo,
   searchCoilLots,
   listPurchaseOrders,
   listInventoryCoilSnapshots,
@@ -8897,6 +8898,21 @@ export function registerHttpApi(app, db) {
         minGapKg: Number.isFinite(minGapKg) ? minGapKg : 0.05,
         issues,
       });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  /** Single coil for Operations profile when the lot is missing from bootstrap inventory. */
+  app.get('/api/coil-lots/:coilNo', requirePermission(OPERATIONS_DOMAIN_PERMS), (req, res) => {
+    try {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      if (!coilNo) return res.status(400).json({ ok: false, error: 'coilNo required' });
+      const branchScope = resolveBootstrapBranchScope(req);
+      const coilLot = getCoilLotByNo(db, coilNo, branchScope);
+      if (!coilLot) return res.status(404).json({ ok: false, error: 'Coil not found.' });
+      res.json({ ok: true, coilLot });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

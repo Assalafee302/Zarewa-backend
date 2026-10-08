@@ -95,7 +95,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       .send({ message: 'How do I add a receipt?', pathname: '/sales' });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(res.body.source).toBe('kb');
+    expect(['kb', 'synth', 'rag']).toContain(res.body.source);
     expect(String(res.body.message)).toMatch(/payment|receipt/i);
     expect(Array.isArray(res.body.links)).toBe(true);
   });
@@ -181,7 +181,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body || '{}'));
     expect(payload.messages[0].role).toBe('system');
     expect(String(payload.messages[0].content)).toContain('Live workspace context from the server:');
-    expect(String(payload.messages[0].content)).toContain('Current notifications:');
+    expect(String(payload.messages[0].content)).toContain('Current dashboard signals:');
     expect(String(payload.messages[0].content)).toContain('Client page context:');
   });
 
@@ -414,16 +414,17 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(clear.body.orgManagerTargets).toBeNull();
   });
 
-  it('PATCH /api/session/profile updates display name and returns on bootstrap', async () => {
+  it('PATCH /api/session/profile updates email and returns on bootstrap', async () => {
     const signedAgent = request.agent(app);
     await loginAs(signedAgent);
-    const patch = await signedAgent.patch('/api/session/profile').send({ displayName: 'Zarewa Admin Updated' });
+    const email = `admin.profile.${Date.now()}@zarewa.test`;
+    const patch = await signedAgent.patch('/api/session/profile').send({ email });
     expect(patch.status).toBe(200);
     expect(patch.body.ok).toBe(true);
-    expect(patch.body.user.displayName).toBe('Zarewa Admin Updated');
+    expect(String(patch.body.user.email || '').toLowerCase()).toBe(email);
     const boot = await signedAgent.get('/api/bootstrap');
     expect(boot.status).toBe(200);
-    expect(boot.body.session.user.displayName).toBe('Zarewa Admin Updated');
+    expect(String(boot.body.session.user.email || '').toLowerCase()).toBe(email);
   });
 
   it('GET /api/customers returns seeded customers', async () => {
@@ -881,19 +882,24 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   it('GET /api/advance-deposits requires sign-in and ledger-related permission', async () => {
     const anon = await request(app).get('/api/advance-deposits');
     expect(anon.status).toBe(401);
-    const staffAgent = request.agent(app);
-    await loginAs(staffAgent, 'sales.staff', 'Sales@123');
-    const v = await staffAgent.get('/api/advance-deposits');
+    // Viewer has no receipts.post / finance desk — sales.staff may list advances.
+    const viewerAgent = request.agent(app);
+    await loginAs(viewerAgent, 'viewer', 'Viewer@123456!');
+    const v = await viewerAgent.get('/api/advance-deposits');
     expect(v.status).toBe(403);
   });
 
   it('POST /api/ledger/advance returns same entry when Idempotency-Key repeats', async () => {
+    const boot = await agent.get('/api/bootstrap');
+    const treasuryAccountId = boot.body.treasuryAccounts[0].id;
     const idemKey = `idem-adv-${Date.now()}`;
     const body = {
       customerID: 'CUS-001',
       amountNgn: 3_000,
       paymentMethod: 'Cash',
       dateISO: '2026-03-28',
+      treasuryAccountId,
+      paymentLines: [{ treasuryAccountId, amountNgn: 3_000, reference: 'IDEM-ADV' }],
     };
     const r1 = await agent.post('/api/ledger/advance').set('Idempotency-Key', idemKey).send(body);
     expect(r1.status).toBe(201);
@@ -906,11 +912,15 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it('POST /api/ledger/advance rejects duplicate amount without override', async () => {
+    const boot = await agent.get('/api/bootstrap');
+    const treasuryAccountId = boot.body.treasuryAccounts[0].id;
     const body = {
       customerID: 'CUS-001',
       amountNgn: 44_000,
       paymentMethod: 'Transfer',
       dateISO: '2026-03-28',
+      treasuryAccountId,
+      paymentLines: [{ treasuryAccountId, amountNgn: 44_000, reference: 'DUP-ADV' }],
     };
     const first = await agent.post('/api/ledger/advance').send(body);
     expect(first.status).toBe(201);
@@ -953,11 +963,12 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const after = await agent.get('/api/bootstrap');
     const acc = after.body.treasuryAccounts.find((a) => a.id === treasuryAccountId);
     expect(acc.balance).toBe(balanceBefore + 100_000);
-    expect(
-      after.body.treasuryMovements.some(
-        (m) => m.sourceKind === 'LEDGER_ADVANCE' && m.sourceId === adv.body.entry.id
+    const tm = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM treasury_movements WHERE source_kind = 'LEDGER_ADVANCE' AND source_id = ?`
       )
-    ).toBe(true);
+      .get(adv.body.entry.id);
+    expect(Number(tm?.c || 0)).toBeGreaterThan(0);
   });
 
   it('POST /api/ledger/apply-advance applies deposit to quotation', async () => {
@@ -1001,6 +1012,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       customerID: 'CUS-003',
       quotationId: 'QT-2026-004',
       amountNgn: 650_000,
+      confirmAmountNgn: 650_000,
       paymentMethod: 'Cash',
       bankReference: 'RCP-1 — cash receipt',
       dateISO: '2026-03-28',

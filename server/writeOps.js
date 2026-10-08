@@ -1269,7 +1269,7 @@ export function getCustomerDeleteBlockers(db, customerID) {
   push('customer_refunds', countWhere(db, `SELECT COUNT(*) AS c FROM customer_refunds WHERE customer_id = ?`, id));
   push('deliveries', countWhere(db, `SELECT COUNT(*) AS c FROM deliveries WHERE customer_id = ?`, id));
   push('advance_in_events', countWhere(db, `SELECT COUNT(*) AS c FROM advance_in_events WHERE customer_id = ?`, id));
-  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_jobs'`).get()) {
+  if (tableExists(db, 'production_jobs')) {
     push('production_jobs', countWhere(db, `SELECT COUNT(*) AS c FROM production_jobs WHERE customer_id = ?`, id));
   }
   return { ok: true, blockers };

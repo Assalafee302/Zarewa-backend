@@ -1521,8 +1521,9 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
   });
 
   const roleKey = String(user?.roleKey || '').trim().toLowerCase();
-  const canAct = actorCanActOnApprovals(user);
-  const readOnlyExecutiveView = roleKey === 'ceo' && !canAct;
+  // CEO stays observe-only even when HR executive bundles include md_approve bits.
+  const canAct = roleKey === 'ceo' ? false : actorCanActOnApprovals(user);
+  const readOnlyExecutiveView = roleKey === 'ceo';
   const canViewAudit = userHasPermission(user, 'audit.view') || userHasPermission(user, '*');
 
   const sourceSlices = loadBusinessIntelligenceSourceSlices(db, branchScope);

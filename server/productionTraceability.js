@@ -2046,7 +2046,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
     ];
     const stockBranch = jobBranchId(job);
     const negStockOpts = {
-      actor,
+      actor: opts.actor,
       negativeStockApprovals:
         payload.negativeStockApprovals || payload.negativeStockApprovalByProduct || {},
     };

@@ -7,7 +7,12 @@ import {
 } from './operations/coilKgEvents.js';
 import { STAIN_COMPLETE_NEEDS_YARD_STOCK } from '../shared/lib/stainMaterialUi.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
-import { appendAuditLog, assertPeriodOpen, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
+import {
+  appendAuditLog,
+  assertPeriodOpen,
+  assertQuotationProductionNotBlockedByRefund,
+  resolveOpenPeriodPostingAtISO,
+} from './controlOps.js';
 import { recordRefundIntegrityDriftAfterProductionChange } from './quotationRecalcOrchestrator.js';
 import {
   applyAccessoryCompletionTx,
@@ -3461,10 +3466,13 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
   if (note.length < 12) {
     return { ok: false, error: 'Enter a detailed note (at least 12 characters) explaining the correction.' };
   }
-  const atISO = normalizeIso(payload.atISO || payload.effectiveDateISO || nowIso());
+  const atISO = resolveOpenPeriodPostingAtISO(
+    db,
+    payload.atISO || payload.effectiveDateISO || nowIso(),
+    'Adjustment date'
+  );
   try {
     // Job may sit in a locked month (e.g. Sep); stock/audit must post on an open adjustment date (e.g. Oct).
-    assertPeriodOpen(db, atISO, 'Adjustment date');
     if (delta > 0) {
       const effective = jobEffectiveOutputMetres(db, jobId);
       const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
@@ -4054,7 +4062,8 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     return { ok: false, error: metreHard.message, code: 'METER_OVERRUN_HARD_BLOCK' };
   }
   const productId = String(job.product_id ?? '').trim();
-  const atISO = normalizeIso(payload.atISO || nowIso());
+  // Locked completion month: rewrite operational coil lines, but stamp stock moves on an open-month date.
+  const atISO = resolveOpenPeriodPostingAtISO(db, payload.atISO || nowIso(), 'Adjustment date');
 
   const updPjc = db.prepare(
     `UPDATE production_job_coils
@@ -4071,8 +4080,6 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
   );
 
   try {
-    // Locked completion month: rewrite operational coil lines, but stamp stock moves on open-month atISO.
-    assertPeriodOpen(db, atISO, 'Adjustment date');
     const stockBranch = jobBranchId(job);
     /** Outer transaction from handleWriteWithEditApproval — avoid nested db.transaction for MySQL SAVEPOINTs. */
     for (const r of existing) {
@@ -4265,10 +4272,9 @@ export function applyCompletedProductionAccessoryCorrections(db, jobID, payload 
   if (note.length < 12) {
     return { ok: false, error: 'Enter a detailed reason (at least 12 characters) for this correction.' };
   }
-  const atISO = normalizeIso(payload.atISO || nowIso());
+  const atISO = resolveOpenPeriodPostingAtISO(db, payload.atISO || nowIso(), 'Adjustment date');
 
   try {
-    assertPeriodOpen(db, atISO, 'Adjustment date');
     const accPlan = planAccessoryCorrectionExcludingJob(db, job, jobId, payload);
     if (!accPlan.ok) return accPlan;
     const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
@@ -4353,10 +4359,9 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
   if (note.length < 12) {
     return { ok: false, error: 'Enter a detailed reason (at least 12 characters) for this correction.' };
   }
-  const atISO = normalizeIso(payload.atISO || nowIso());
+  const atISO = resolveOpenPeriodPostingAtISO(db, payload.atISO || nowIso(), 'Adjustment date');
 
   try {
-    assertPeriodOpen(db, atISO, 'Adjustment date');
     const sfPlan = planStoneFlatsheetCorrectionExcludingJob(db, job, jobId, payload);
     if (!sfPlan.ok) return sfPlan;
     const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
@@ -4512,9 +4517,8 @@ export function applyCompletedProductionStoneMetresCorrections(db, jobID, payloa
       error: 'Could not resolve stone-coated stock SKU from the quotation (design, colour, gauge).',
     };
   }
-  const atISO = normalizeIso(payload.atISO || nowIso());
+  const atISO = resolveOpenPeriodPostingAtISO(db, payload.atISO || nowIso(), 'Adjustment date');
   try {
-    assertPeriodOpen(db, atISO, 'Adjustment date');
     if (pureStone) {
       const adjRow = db
         .prepare(

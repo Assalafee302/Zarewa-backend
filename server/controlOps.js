@@ -2113,6 +2113,25 @@ export function assertPeriodOpen(db, dateISO, contextLabel = 'Posting date') {
 }
 
 /**
+ * Prefer the caller's posting date; if that month is locked, stamp today instead
+ * (e.g. September job corrections post as October adjustments).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} [dateISO]
+ * @param {string} [contextLabel]
+ * @returns {string} ISO timestamp in an unlocked period
+ */
+export function resolveOpenPeriodPostingAtISO(db, dateISO, contextLabel = 'Adjustment date') {
+  const requested = String(dateISO || '').trim() || nowIso();
+  const periodKey = periodKeyFromDate(requested);
+  const locked =
+    periodKey &&
+    db.prepare(`SELECT period_key FROM accounting_period_locks WHERE period_key = ?`).get(periodKey);
+  const resolved = locked ? nowIso() : requested;
+  assertPeriodOpen(db, resolved, contextLabel);
+  return resolved.includes('T') ? resolved : `${resolved.slice(0, 10)}T12:00:00.000Z`;
+}
+
+/**
  * A record dated in a locked month cannot be edited. The change belongs in the open month.
  * @param {import('better-sqlite3').Database} db
  * @param {string} dateISO Business date of the job, quote, or receipt

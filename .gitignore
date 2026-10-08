@@ -13,6 +13,8 @@ finance-profile-run.log
 npm-debug.log*
 data/*.sqlite
 data/*.sqlite-*
+data/*.sqlite*
+data/*.bak
 
 playwright-report
 test-results

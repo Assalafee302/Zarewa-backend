@@ -3865,7 +3865,7 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     return {
       ok: false,
       code: 'CORRECTION_APPROVAL_REQUIRED',
-      error: 'A Branch Manager or Operations Manager must approve this correction before it posts.',
+      error: 'A Branch Manager, Operations Manager, Admin, or MD must approve this correction before it posts.',
     };
   }
   const lines = Array.isArray(payload.readings) ? payload.readings : [];

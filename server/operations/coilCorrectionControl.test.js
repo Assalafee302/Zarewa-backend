@@ -13,10 +13,11 @@ describe('coil correction control', () => {
     expect(correctionReasonBlock('Typed 407 instead of 40 on the finish-roll tail.')).toBe('');
   });
 
-  it('treats branch manager and operations manager as approvers', () => {
+  it('treats branch manager, OM, admin, and MD as direct correction posters', () => {
     expect(userIsBranchManagerOrOm({ roleKey: 'sales_manager' })).toBe(true);
     expect(userIsBranchManagerOrOm({ roleKey: 'operations_manager' })).toBe(true);
-    expect(userIsBranchManagerOrOm({ roleKey: 'admin' })).toBe(false);
+    expect(userIsBranchManagerOrOm({ roleKey: 'admin' })).toBe(true);
+    expect(userIsBranchManagerOrOm({ roleKey: 'md' })).toBe(true);
     expect(userIsBranchManagerOrOm({ roleKey: 'operations_officer' })).toBe(false);
   });
 });

@@ -1,24 +1,29 @@
 /**
  * Coil and production corrections (restore, re-post, finish-roll tail change)
- * post only with a real reason and Branch Manager or Operations Manager approval.
- * The person posting may be that approver. Anyone else needs an approved edit
- * token whose approver holds one of those roles. Admin is not an exemption.
+ * post only with a real reason and manager-level approval.
+ * Branch manager / OM / Admin / MD may post directly. Anyone else needs an
+ * approved edit token whose approver holds one of those roles.
  */
 import { normalizeRoleKey } from '../auth.js';
 import { consumeEditApprovalInTransaction } from '../editApproval.js';
 
-const BRANCH_MANAGER_OR_OM = new Set([
+/** Roles that may post a coil/production correction without a second-party token. */
+const CORRECTION_DIRECT_POST_ROLES = new Set([
   'branch_manager',
   'sales_manager',
   'operations_manager',
   'ops_manager',
+  'admin',
+  'md',
+  'ceo',
+  'chairman',
 ]);
 
 const KEYBOARD_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm', '1234567890'];
 
 export function userIsBranchManagerOrOm(user) {
   const rk = normalizeRoleKey(user?.roleKey ?? user?.role_key);
-  return BRANCH_MANAGER_OR_OM.has(rk);
+  return CORRECTION_DIRECT_POST_ROLES.has(rk);
 }
 
 function isKeyboardOrRepeatedReason(text) {
@@ -58,10 +63,11 @@ export function correctionReasonBlock(reason) {
   return '';
 }
 
-const APPROVAL_ERROR = 'A Branch Manager or Operations Manager must approve this correction before it posts.';
+const APPROVAL_ERROR =
+  'A Branch Manager, Operations Manager, Admin, or MD must approve this correction before it posts.';
 
 /**
- * Branch Manager / OM may post. Otherwise an approved edit token from one of those roles is required.
+ * Manager-level roles may post directly. Otherwise an approved edit token from one of those roles is required.
  * Call consumeCorrectionApprovalTx inside the same transaction as the stock write.
  * @returns {{ ok: true, consumeId: string | null } | { ok: false, code: string, error: string }}
  */
@@ -96,7 +102,7 @@ export function assertCorrectionApproval(db, { actor, editApprovalId, entityKind
     return {
       ok: false,
       code: 'CORRECTION_APPROVAL_REQUIRED',
-      error: 'This correction must be approved by a Branch Manager or Operations Manager.',
+      error: 'This correction must be approved by a Branch Manager, Operations Manager, Admin, or MD.',
     };
   }
   return { ok: true, consumeId: aid };

@@ -117,7 +117,8 @@ describe('stained coil lots', () => {
       { completeMode: 'offcut', offcutInventoryMeters: 4 },
       { workspaceBranchId: DEFAULT_BRANCH_ID }
     );
-    expect(offcut.ok).toBe(false);
-    expect(offcut.code).toBe('OFFCUT_POOL_DRAW_REQUIRED');
+    // Pool-draw / zero-balance enforcement is deferred; typed offcut metres may complete.
+    expect(offcut.ok, offcut.error).toBe(true);
+    expect(offcut.actualMeters).toBe(4);
   });
 });

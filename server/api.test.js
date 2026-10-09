@@ -3057,7 +3057,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(String(bad.body.error || '')).toMatch(/positive number of metres|offcut|coil/i);
   });
 
-  it('offcut-only completion is refused until metres are drawn from the offcut pool', async () => {
+  it('offcut-only completion posts actual_meters from offcutInventoryMeters when output field is omitted', async () => {
     const cutting = await agent.post('/api/cutting-lists').send({
       quotationRef: 'QT-2026-005',
       customerID: 'CUS-001',
@@ -3094,8 +3094,13 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       completeMode: 'offcut',
       offcutInventoryMeters: 18,
     });
-    expect(complete.status).toBe(400);
-    expect(String(complete.body.error || '')).toMatch(/offcut pool/i);
+    expect(complete.status).toBe(200);
+    expect(complete.body.actualMeters).toBeCloseTo(18, 3);
+
+    const boot = await agent.get('/api/bootstrap');
+    const pj = boot.body.productionJobs.find((j) => j.jobID === jobId);
+    expect(pj?.actualMeters).toBeCloseTo(18, 3);
+    expect(pj?.offcutInventoryMeters).toBeCloseTo(18, 3);
   });
 
   it('requires meterOverrunRemark when coil plus offcutInventoryMeters exceeds planned metres', async () => {

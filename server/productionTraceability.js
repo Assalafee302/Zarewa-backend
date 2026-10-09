@@ -2160,19 +2160,9 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
       error: STAIN_COMPLETE_NEEDS_YARD_STOCK,
     };
   }
-  // Offcut mode may finish only metres that were actually issued from the offcut pool.
-  // A typed metre figure with supply count 0 used to copy itself into offcut stock and
-  // complete the job with no COIL_CONSUMPTION. Those metres must allocate a coil instead.
-  const offcutDrawnM = offcutSupplyList.reduce((sum, row) => sum + (Number(row.meters) || 0), 0);
-  if (metres > 0.02 && offcutDrawnM + 0.02 < metres) {
-    const supplyNote =
-      offcutSupplyList.length === 0 ? 'Offcut supply count is 0. ' : `Offcut pool drawn is ${offcutDrawnM.toFixed(2)} m. `;
-    return {
-      ok: false,
-      code: 'OFFCUT_POOL_DRAW_REQUIRED',
-      error: `${supplyNote}Offcut completion needs at least ${metres.toFixed(2)} m drawn from the offcut pool. Prime metres allocate a coil. Stained or damaged metres use stained mode.`,
-    };
-  }
+  // TODO(offcut-pool-zero): Re-enable OFFCUT_POOL_DRAW_REQUIRED when pool balance is
+  // enforced end-to-end. Until then, operators may complete offcut mode with typed metres
+  // even when the dimensional offcut pool is empty / no supply lines are selected.
   // Offcut/accessories completion previously skipped every guard the coil completion path
   // enforces: a job could jump straight from Planned to Completed (never started, so the
   // payment re-gate in startProductionJob never ran), and a

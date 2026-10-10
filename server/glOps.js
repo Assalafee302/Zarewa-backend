@@ -1025,11 +1025,9 @@ export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
 }
 
 /**
- * Recognize withheld refund retention as income. The cash already stayed in the
- * company bank when the customer was paid net, so this does not touch cash (1000)
- * and does not post a treasury payout.
- * Dr customer advances (2500) — the cut was never paid out, so it is still in that liability.
- * Cr other income (4050) — refund handling charge.
+ * Company-cut withdrawal paid out of a company bank: booked as part of refund payouts.
+ * Dr customer advances (2500) — the withheld cut was still sitting in that liability.
+ * Cr cash (1000) — matches the REFUND_COMPANY_CUT_PAYOUT treasury movement.
  * Idempotent per withdrawal id.
  */
 export function tryPostCompanyCutWithdrawalGlTx(db, payload) {
@@ -1043,14 +1041,14 @@ export function tryPostCompanyCutWithdrawalGlTx(db, payload) {
   try {
     return postBalancedJournalTx(db, {
       entryDateISO: date,
-      memo: `Refund handling charge ${withdrawalId} — retention recognized as income, no cash out`,
+      memo: `Company cut payout ${withdrawalId} — refund expense`,
       sourceKind: 'COMPANY_CUT_WITHDRAWAL_GL',
       sourceId: withdrawalId,
       branchId: payload.branchId ?? null,
       createdByUserId: payload.createdByUserId ?? null,
       lines: [
         { accountCode: '2500', debitNgn: amt, memo: withdrawalId },
-        { accountCode: '4050', creditNgn: amt, memo: withdrawalId },
+        { accountCode: '1000', creditNgn: amt, memo: withdrawalId },
       ],
     });
   } catch (e) {

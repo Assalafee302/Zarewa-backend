@@ -157,4 +157,76 @@ describe.skipIf(!mysqlOk)('refund create / payout-bank guards', () => {
     expect(r.ok).toBe(true);
     expect(r.code).not.toBe('REFUND_EXCEEDS_OPEN_CREDIT');
   });
+
+  it('allows overpay + unproduced above open credit without MD (BM screens; cash hard-cap holds)', () => {
+    // Abdullahi / QT-KD-26-1753 shape: cash 147k, quote 127.75k → open credit 19.25k; refund 37.5k.
+    const lines = JSON.stringify({
+      products: [{ name: 'Flat sheet', qty: 35, unitPrice: 3650 }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO customers (customer_id, name, branch_id, status)
+       VALUES ('CUS-OP-UNPR', 'Abdullahi Shape', 'BR-KD', 'Active')`
+    ).run();
+    ensureRefundTestCustomerBanks(db, ['CUS-OP-UNPR']);
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (
+         id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, branch_id, date_iso
+       ) VALUES (
+         'QT-OP-UNPR', 'CUS-OP-UNPR', 'Abdullahi Shape', 127750, 147000, 'Paid', 'Finished', ?, 'BR-KD', '2026-10-07'
+       )`
+    ).run(lines);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (
+         id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso,
+         ledger_entry_id, branch_id, bank_received_amount_ngn, finance_reconciliation_saved_at_iso
+       ) VALUES (
+         'LE-OP-UNPR', 'CUS-OP-UNPR', 'Abdullahi Shape', 'QT-OP-UNPR', 147000, '₦147,000', 'Cleared',
+         '2026-10-07', 'LE-OP-UNPR', 'BR-KD', 147000, '2026-10-07T12:00:00.000Z'
+       )`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO ledger_entries (
+         id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, branch_id
+       ) VALUES (
+         'LE-OP-UNPR', 'RECEIPT', 'CUS-OP-UNPR', 'Abdullahi Shape', 'QT-OP-UNPR', 147000,
+         '2026-10-07T12:00:00.000Z', 'BR-KD'
+       )`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (
+         job_id, quotation_ref, customer_id, customer_name, planned_meters, actual_meters, status,
+         completed_at_iso, branch_id, production_date_iso
+       ) VALUES (
+         'PRO-OP-UNPR', 'QT-OP-UNPR', 'CUS-OP-UNPR', 'Abdullahi Shape', 30, 30, 'Completed',
+         '2026-10-07T12:00:00.000Z', 'BR-KD', '2026-10-07'
+       )`
+    ).run();
+
+    const r = insertRefundRequest(
+      db,
+      {
+        customerID: 'CUS-OP-UNPR',
+        quotationRef: 'QT-OP-UNPR',
+        reasonCategory: ['Overpayment', 'Unproduced meterage'],
+        reason: 'Overpay + unproduced metres',
+        amountNgn: 37_500,
+        calculationLines: [
+          { label: 'Overpayment', amountNgn: 19_250, category: 'Overpayment', include: true },
+          {
+            label: 'Unproduced metres (5.00m @ ₦3,650)',
+            amountNgn: 18_250,
+            category: 'Unproduced meterage',
+            include: true,
+          },
+        ],
+        ...REFUND_TEST_PAYEE,
+      },
+      salesActor,
+      'BR-KD'
+    );
+    expect(r.code).not.toBe('REFUND_EXCEEDS_OPEN_CREDIT');
+    expect(r.ok).toBe(true);
+  });
 });

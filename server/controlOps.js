@@ -4,7 +4,6 @@ import {
   customerOpenCreditNgn,
   effectiveRefundOpenCreditNgn,
   payeeAccountRejection,
-  refundExceedsOpenCredit,
 } from './sales/refundPayeeControl.js';
 import { accessoryFulfillmentSummaryForQuotation, normAccessoryNameKey } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
@@ -3858,20 +3857,18 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       const rejection = payeeAccountRejection(account);
       if (rejection) return { ok: false, code: 'REFUND_PAYEE_ACCOUNT', error: rejection };
     }
+    // Open-credit MD gate retired: overpay + unproduced (etc.) can exceed ledger/overpay
+    // "open credit" while remaining inside quotation cash. BM approval screens the request;
+    // hard-cap above already enforces cash received after prior refunds.
     const ledgerOpenCreditNgn = customerOpenCreditNgn(db, customerID, refundBranchId);
     const openCreditNgn = effectiveRefundOpenCreditNgn({
       ledgerOpenCreditNgn,
       quotationOverpayResidualNgn: quotationOverpayResidualForOpenCredit,
     });
     const openCreditNote = String(payload.openCreditOverrideNote ?? '').trim();
-    const mdApprovedOpenCredit = actorMayBypassIncompleteRefundFloor(actor) && openCreditNote.length >= 10;
-    const openCreditError = refundExceedsOpenCredit({ amountNgn, openCreditNgn, mdApproved: mdApprovedOpenCredit });
-    if (openCreditError) {
-      return { ok: false, code: 'REFUND_EXCEEDS_OPEN_CREDIT', error: openCreditError, openCreditNgn };
-    }
     const openCreditManagerNote =
-      mdApprovedOpenCredit && amountNgn > openCreditNgn
-        ? `MD approved refund above open credit of ₦${openCreditNgn.toLocaleString('en-NG')}: ${openCreditNote}`
+      openCreditNote.length >= 10 && amountNgn > openCreditNgn
+        ? `Refund above open credit of ₦${openCreditNgn.toLocaleString('en-NG')} (BM-screened): ${openCreditNote}`
         : '';
 
     let previewSnapshotJson = null;

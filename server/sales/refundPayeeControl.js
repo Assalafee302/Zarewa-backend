@@ -1,6 +1,6 @@
 /**
  * Forward refund controls: a usable payee account, a bank-line match to that account,
- * and a cap at open credit (ledger advances + quotation overpay residual) unless MD approves.
+ * Payee account checks. Open-credit MD cap retired — BM approval + quotation cash hard-cap.
  */
 import {
   effectiveRefundOpenCreditNgn,

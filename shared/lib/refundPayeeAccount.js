@@ -76,11 +76,14 @@ export function effectiveRefundOpenCreditNgn({ ledgerOpenCreditNgn = 0, quotatio
 }
 
 /**
- * @returns {string} empty when the refund is within open credit or MD has approved it
+ * Open-credit MD gate removed for quotation-style refunds.
+ * Overpayment + unproduced (and other cash-covered reasons) often exceed ledger/overpay
+ * "open credit" while still sitting inside cash received on the quotation. Branch managers
+ * screen those requests at approval; create-time hard-cap remains cash on the quote.
+ *
+ * Kept as a pure helper for older UI builds that still call it — always allows.
+ * @returns {string} always empty
  */
-export function refundExceedsOpenCredit({ amountNgn, openCreditNgn, mdApproved }) {
-  const amount = Math.round(Number(amountNgn) || 0);
-  const credit = Math.round(Number(openCreditNgn) || 0);
-  if (mdApproved || amount <= credit) return '';
-  return `Refund of ₦${amount.toLocaleString('en-NG')} is larger than the customer's open credit of ₦${credit.toLocaleString('en-NG')}. MD approval is required.`;
+export function refundExceedsOpenCredit(_args = {}) {
+  return '';
 }

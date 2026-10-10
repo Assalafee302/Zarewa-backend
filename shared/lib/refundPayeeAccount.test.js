@@ -40,9 +40,9 @@ describe('refund payee account', () => {
     expect(refundIdFromSystemMatch('LE-KD-26-1836')).toBe('');
   });
 
-  it('blocks a refund above open credit unless MD approved', () => {
-    expect(refundExceedsOpenCredit({ amountNgn: 5000, openCreditNgn: 1000, mdApproved: false })).toMatch(/MD approval/);
-    expect(refundExceedsOpenCredit({ amountNgn: 5000, openCreditNgn: 1000, mdApproved: true })).toBe('');
+  it('does not require MD when refund exceeds open credit (BM screens; cash hard-cap elsewhere)', () => {
+    expect(refundExceedsOpenCredit({ amountNgn: 37_500, openCreditNgn: 19_250, mdApproved: false })).toBe('');
+    expect(refundExceedsOpenCredit({ amountNgn: 5000, openCreditNgn: 1000, mdApproved: false })).toBe('');
     expect(refundExceedsOpenCredit({ amountNgn: 1000, openCreditNgn: 1000, mdApproved: false })).toBe('');
   });
 

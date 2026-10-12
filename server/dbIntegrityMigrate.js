@@ -40,9 +40,9 @@ function backfillBranchIds(db) {
     if (!hasTable(db, t)) continue;
     const cols = tableCols(db, t);
     if (!cols.has('branch_id')) continue;
-    db.prepare(
-      `UPDATE ${t} SET branch_id = ? WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`
-    ).run(DEFAULT_BRANCH_ID);
+    const blank = `branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`;
+    if (!db.prepare(`SELECT 1 FROM ${t} WHERE ${blank} LIMIT 1`).get()) continue;
+    db.prepare(`UPDATE ${t} SET branch_id = ? WHERE ${blank}`).run(DEFAULT_BRANCH_ID);
   }
 }
 

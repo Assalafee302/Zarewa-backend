@@ -6543,9 +6543,15 @@ function migrateBranches(db) {
     if (!cols.has('branch_id')) {
       db.exec(`ALTER TABLE ${table} ADD COLUMN branch_id TEXT`);
     }
-    db.prepare(
-      `UPDATE ${table} SET branch_id = ? WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`
-    ).run(defaultBranch);
+    // A bare UPDATE locks every row on MySQL (no usable index), so a lock held elsewhere stalls boot.
+    const blank = `branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`;
+    if (!db.prepare(`SELECT 1 FROM ${table} WHERE ${blank} LIMIT 1`).get()) return;
+    try {
+      db.prepare(`UPDATE ${table} SET branch_id = ? WHERE ${blank}`).run(defaultBranch);
+    } catch (e) {
+      if (!/lock wait timeout|deadlock/i.test(String(e?.message || e))) throw e;
+      console.warn(`[zarewa] branch backfill skipped for ${table} (row lock held elsewhere); retries next boot.`);
+    }
   };
 
   addBranch('quotations');

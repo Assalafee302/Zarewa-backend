@@ -24,6 +24,7 @@ import {
   ensureTreasuryBalanceIntegritySchema,
 } from './finance/treasuryBalanceIntegrityOps.js';
 import { ensureInvestigationSchema } from './office/investigationOps.js';
+import { ensureExplainedItemsSchema } from './finance/explainedItemsOps.js';
 import { seedTreasuryPostingPolicyIfAbsent } from './finance/treasuryPostingPolicy.js';
 import {
   SCHEMA_MIGRATION_FTS,
@@ -7755,6 +7756,11 @@ function migrateHrRoleComplianceLifecycle2026(db) {
   }
   try {
     ensureInvestigationSchema(db);
+  } catch {
+    /* host dialect */
+  }
+  try {
+    ensureExplainedItemsSchema(db);
   } catch {
     /* host dialect */
   }

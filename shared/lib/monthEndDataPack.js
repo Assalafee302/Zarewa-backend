@@ -728,6 +728,14 @@ export function buildMonthEndDataPack(input = {}) {
     note: 'Items that block a clean pack. This is a list, not a book total.',
     lines: notReady,
   });
+  const explainedSchedule = makeSchedule({
+    id: 'explained-locked',
+    title: 'Explained (locked)',
+    note: 'Bank activity explained and approved in the explained-items register. Not posted in the ERP and not an exception.',
+    lines: (input.explainedLocked || []).map((row) =>
+      lineOf({ date: period.endDate, ref: row.itemId, name: row.label, amountNgn: row.amountInNgn })
+    ),
+  });
 
   const schedules = [
     openingStock,
@@ -759,6 +767,7 @@ export function buildMonthEndDataPack(input = {}) {
     suppliersOwe,
     suppliersAdvance,
     assets,
+    explainedSchedule,
     notReadySchedule,
   ];
 

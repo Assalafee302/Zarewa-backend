@@ -7,6 +7,7 @@ import { hasColumn, tableExists } from '../ap2ReceivedBasisOps.js';
 import { buildSalesPhase1ReportFromDb } from '../sales/salesPhase1ReportOps.js';
 import { buildMonthEndDataPack, coilMaterialFamily, resolveMonthEndPeriod } from '../../shared/lib/monthEndDataPack.js';
 import { daysOutstanding } from '../procurement/supplierAdvanceAge.js';
+import { listLockedExplainedSummaries, loadExplainedIndex, partitionExplained } from './explainedItemsOps.js';
 
 function nextDay(iso) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -541,6 +542,19 @@ function loadUnmatchedReceipts(db, branchId, startDate, endDate) {
   }));
 }
 
+/** Receipts covered by a Locked explained-items record are listed once under "Explained (locked)". */
+function unmatchedReceiptsAfterRegister(db, branchId, period) {
+  const index = loadExplainedIndex(db, branchId);
+  const { kept } = partitionExplained(loadUnmatchedReceipts(db, branchId, period.startDate, period.endDate), index, {
+    entityType: 'sales_receipt',
+    idOf: (row) => row.ref,
+  });
+  const explainedLocked = listLockedExplainedSummaries(db, branchId).filter(
+    (row) => !row.periodKey || row.periodKey === period.month
+  );
+  return { unmatchedReceipts: kept, explainedLocked };
+}
+
 function fromPhase1(pack, endDate) {
   if (!pack?.ok) return { phase1Error: pack?.error || 'Phase 1 sales report did not load.' };
   const sales = [];
@@ -923,7 +937,7 @@ export function buildMonthEndDataPackFromDb(db, opts = {}) {
     bankStatements: acceptedStatements(branchId, period.month, opts.bankStatements),
     periodLocked,
     deferredReclasses,
-    unmatchedReceipts: loadUnmatchedReceipts(db, branchId, period.startDate, period.endDate),
+    ...unmatchedReceiptsAfterRegister(db, branchId, period),
     phase1Error: phase1Slice.phase1Error || '',
     loaderErrors: loaderWarnings,
   });

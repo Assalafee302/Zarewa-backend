@@ -59,6 +59,7 @@ import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 import { resolveListLimit, sqlLimitClause, sqlLimitOffsetClause } from './listQueryOpts.js';
 import { resolveCreditTargets as liveRefundCreditTargets } from './finance/partnerWalletCredit.js';
 import { buildHrStaffBankAccountKeySet } from './sales/refundPayoutStaffBankMatch.js';
+import { bankLineFingerprint, explainedLabel, loadExplainedIndex, lockedItemFor } from './finance/explainedItemsOps.js';
 
 /**
  * Presence only — never LENGTH(attachment_data_b64); that forces MySQL to read the full blob.
@@ -4249,15 +4250,29 @@ export function mergeSettledAccountsPayableWithPurchaseOrders(apFromRegister, pa
   return [...register, ...synthesized];
 }
 
+function explainedFieldsForBankLine(index, row) {
+  const item = lockedItemFor(
+    index,
+    'bank_recon_line',
+    row.id,
+    bankLineFingerprint(row.bank_date_iso, row.amount_ngn, row.description)
+  );
+  return item
+    ? { explainedItemId: item.id, explainedLabel: explainedLabel(item), displayStatus: 'Explained – excluded' }
+    : {};
+}
+
 export function listBankReconciliation(db, branchScope = 'ALL', opts) {
   const limit = opts == null ? 0 : resolveListLimit(opts);
   const b = branchWhere(db, 'bank_reconciliation_lines', branchScope);
   const sql = `SELECT * FROM bank_reconciliation_lines WHERE 1=1${b.sql} ORDER BY bank_date_iso DESC${sqlLimitClause(limit)}`;
   const args = limit > 0 ? [...b.args, limit] : b.args;
+  const explained = loadExplainedIndex(db);
   return db
     .prepare(sql)
     .all(...args)
     .map((row) => ({
+      ...explainedFieldsForBankLine(explained, row),
       id: row.id,
       bankDateISO: row.bank_date_iso,
       description: row.description,

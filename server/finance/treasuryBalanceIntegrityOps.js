@@ -17,6 +17,7 @@ import { isPrivilegedTreasuryActor, lagosCalendarDay } from '../../shared/lib/is
 import { branchDisplaysComputedBalance, getTreasuryPostingPolicy } from './treasuryPostingPolicy.js';
 import { resetTreasuryColumnCache, tableColumnSet } from './treasuryMovementWrite.js';
 import { investigationSuspenseTieOut } from '../office/investigationOps.js';
+import { listLockedExplainedSummaries } from './explainedItemsOps.js';
 
 const MOVEMENT_COLUMNS = [
   ['created_at_iso', 'TEXT'],
@@ -324,6 +325,8 @@ export function computeTreasuryBalanceIntegrity(db, branchId = 'ALL') {
         }
       : null,
     investigationSuspense: investigationSuspenseTieOut(db),
+    // Balances above still count every movement; register items are listed once, not raised.
+    explainedLocked: listLockedExplainedSummaries(db, branchId === 'ALL' ? null : branchId),
   };
 }
 

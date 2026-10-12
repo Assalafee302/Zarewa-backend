@@ -8,6 +8,7 @@ import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingToleranc
 import { poTransportQuotedFeeNgn } from '../shared/lib/poTransportFee.js';
 import { sumTransportPaymentsForPo } from './writeOps.js';
 import { findPersistedWorkItemBySource, upsertWorkItemBySource, workRegistryTablesReady, createWorkItem } from './workItems.js';
+import { bankLineFingerprint, loadExplainedIndex, partitionExplained } from './finance/explainedItemsOps.js';
 
 /**
  * Upsert one work item per branch summarising bank lines still in Review or PendingManager.
@@ -17,9 +18,16 @@ export function syncFinanceBankReconExceptionWorkItem(db, branchId, actor) {
   const bid = String(branchId || '').trim() || DEFAULT_BRANCH_ID;
   const sk = FINANCE_WORK_ITEM_SOURCE_KINDS.BANK_RECON_EXCEPTIONS;
   const sid = bid;
-  const pending = listBankReconciliation(db, bid).filter(
-    (l) => l.status === 'Review' || l.status === 'PendingManager'
+  const { kept: pending, explained } = partitionExplained(
+    listBankReconciliation(db, bid).filter((l) => l.status === 'Review' || l.status === 'PendingManager'),
+    loadExplainedIndex(db, bid),
+    {
+      entityType: 'bank_recon_line',
+      idOf: (l) => l.id,
+      fingerprintOf: (l) => bankLineFingerprint(l.bankDateISO, l.amountNgn, l.description),
+    }
   );
+  const explainedNote = explained.length ? ` ${explained.map((e) => e.label).join('; ')}.` : '';
 
   const uid = String(actor?.id ?? '').trim();
   const disp = String(actor?.displayName ?? actor?.username ?? 'System').trim();
@@ -50,7 +58,7 @@ export function syncFinanceBankReconExceptionWorkItem(db, branchId, actor) {
       ...basePayload,
       status: 'closed',
       title: 'Bank reconciliation — no pending lines',
-      summary: 'All statement lines are matched or excluded.',
+      summary: `All statement lines are matched or excluded.${explainedNote}`,
       requiresResponse: false,
       requiresApproval: false,
       priority: 'normal',
@@ -64,7 +72,7 @@ export function syncFinanceBankReconExceptionWorkItem(db, branchId, actor) {
     status: 'open',
     priority: hasManager ? 'high' : 'normal',
     title: `Bank reconciliation — ${pending.length} line(s) need action`,
-    summary: `${pending.length} statement line(s) in Review or awaiting manager clearance.`,
+    summary: `${pending.length} statement line(s) in Review or awaiting manager clearance.${explainedNote}`,
     requiresResponse: true,
     requiresApproval: false,
     closedAtIso: null,

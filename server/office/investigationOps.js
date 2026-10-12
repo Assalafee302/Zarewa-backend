@@ -12,6 +12,7 @@ import { allocateHumanId } from '../humanId.js';
 import { setRefundPayoutHold } from '../sales/refundPayoutHoldOps.js';
 import { insertTreasuryMovementTx, syncQuotationPaidFromReceipts } from '../writeOps.js';
 import { assertInvestigationAllowsMutation, quotationUnderInvestigation } from './investigationLock.js';
+import { explainedLabel, loadExplainedIndex, lockedItemFor } from '../finance/explainedItemsOps.js';
 import {
   INVESTIGATION_CASE_TYPES,
   INVESTIGATION_ENTITY_TYPES,
@@ -34,6 +35,20 @@ function roundMoney(n) {
   const x = Number(n);
   if (!Number.isFinite(x)) return 0;
   return Math.round(x);
+}
+
+const EXPLAINED_TYPE_FOR_LINK = { treasury_movement: 'treasury_movement', receipt: 'sales_receipt' };
+
+/** Items in the explained-items register (Locked, do-not-raise) cannot be raised again here. */
+function explainedLockedRefusal(db, links) {
+  const index = loadExplainedIndex(db);
+  for (const link of links || []) {
+    const type = EXPLAINED_TYPE_FOR_LINK[String(link?.entityType || link?.entity_type || '').trim()];
+    if (!type) continue;
+    const item = lockedItemFor(index, type, String(link?.entityId || link?.entity_id || '').trim());
+    if (item) return { ok: false, code: 'EXPLAINED_LOCKED', error: explainedLabel(item) };
+  }
+  return null;
 }
 
 function forbid() {
@@ -214,6 +229,8 @@ export function createInvestigationCase(db, payload, actor) {
   const caseType = String(payload?.caseType || payload?.case_type || '').trim();
   if (!title) return { ok: false, error: 'Title is required.' };
   if (!INVESTIGATION_CASE_TYPES.includes(caseType)) return { ok: false, error: 'Unknown case type.' };
+  const refusal = explainedLockedRefusal(db, payload?.links);
+  if (refusal) return refusal;
   const reviewDate = String(payload?.reviewDate || payload?.review_date || '').slice(0, 10);
   if (reviewDate && !/^\d{4}-\d{2}-\d{2}$/.test(reviewDate)) return { ok: false, error: 'Review date is invalid.' };
   const branchId = String(payload?.branchId || payload?.workspaceBranchId || 'BR-KD').trim() || 'BR-KD';
@@ -285,6 +302,8 @@ export function addInvestigationLink(db, caseId, link, actor) {
   if (!userMayManageInvestigations(actor)) return forbid();
   const row = db.prepare(`SELECT id, status FROM investigation_cases WHERE id = ?`).get(String(caseId || '').trim());
   if (!row) return { ok: false, error: 'Investigation not found.' };
+  const refusal = explainedLockedRefusal(db, [link]);
+  if (refusal) return refusal;
   try {
     const run = () => {
       addInvestigationLinkTx(db, row.id, link);

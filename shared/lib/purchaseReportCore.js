@@ -6,6 +6,7 @@
 
 import { displayDocNumber, displayLast4, displayTxnDateShort } from './reportDisplayFormat.js';
 import { purchasesPaidRows } from './standardReportsPurchases.js';
+import { PAYMENT_OUTSTANDING_TOLERANCE_NGN } from './paymentOutstandingTolerance.js';
 
 function coilMaterialFamily(materialTypeName) {
   const k = normKey(materialTypeName);
@@ -435,6 +436,8 @@ export function buildPurchaseReportSummary(report) {
 }
 
 /**
+ * Pre-Phase-1 purchase register (reachable via `?legacy=1` until the new numbers are approved).
+ * Line total = remaining landed cost; paid-in-period keyed by full source id.
  * @param {object} input
  * @param {object[]} input.purchaseOrders
  * @param {object[]} input.coilLots
@@ -445,7 +448,7 @@ export function buildPurchaseReportSummary(report) {
  * @param {string} [input.startDate]
  * @param {string} [input.endDate]
  */
-export function buildPurchaseReport(input = {}) {
+export function buildPurchaseReportLegacy(input = {}) {
   const {
     purchaseOrders = [],
     coilLots = [],
@@ -588,5 +591,460 @@ export function buildPurchaseReport(input = {}) {
   };
 
   body.summary = buildPurchaseReportSummary(body);
+  return body;
+}
+
+// ---------------------------------------------------------------------------
+// Purchase register v2 (Phase 1): values at receipt, as-at supplier positions.
+// ---------------------------------------------------------------------------
+
+/** Treasury types the v2 register reads as supplier payments (loader filter). */
+export const PURCHASE_REGISTER_SUPPLIER_PAYMENT_TYPES = [
+  'SUPPLIER_PAYMENT',
+  'PO_SUPPLIER_PAYMENT',
+  'SUPPLIER_OVERPAYMENT',
+  'AP_PAYMENT',
+  'SUPPLIER_OVERPAYMENT_REVERSAL',
+];
+
+const PO_ID_IN_TEXT = /PO-[A-Z]{2,4}-\d{2}-\d{3,6}/i;
+
+/**
+ * PO id behind a supplier-payment treasury row. AP rows carry `AP-PO-<poId>`.
+ * @param {string} sourceId
+ * @param {Map<string, object>} [poById]
+ */
+export function poIdFromSupplierPaymentSource(sourceId, poById) {
+  const raw = String(sourceId || '').trim();
+  if (!raw || raw === '—') return '';
+  if (poById?.has(raw)) return raw;
+  const stripped = raw.replace(/^AP-PO-/i, '');
+  if (poById?.has(stripped)) return stripped;
+  const m = raw.match(PO_ID_IN_TEXT);
+  return m ? m[0].toUpperCase() : '';
+}
+
+/** Flat-sheet GRN qty held m² before Oct 2026; the detail always carries "N sheets". */
+export function flatsheetPiecesFromMovement(m) {
+  const hit = String(m?.detail || '').match(/(\d+(?:\.\d+)?)\s*sheets?\b/i);
+  if (hit) return Number(hit[1]);
+  return Math.abs(Number(m?.qty) || 0);
+}
+
+function isServiceLine(line) {
+  return /^SVC-/i.test(String(line?.productID || '').trim());
+}
+
+function poLineUnitPriceNgn(line) {
+  return Number(line?.unitPricePerKgNgn) || Number(line?.unitPriceNgn) || 0;
+}
+
+/** Ordered value of a PO: Σ qty ordered × unit price (coil ₦/kg, others ₦/unit). */
+export function purchaseOrderValueNgn(po) {
+  return (po?.lines || []).reduce(
+    (s, line) => s + Math.round((Number(line.qtyOrdered) || 0) * poLineUnitPriceNgn(line)),
+    0
+  );
+}
+
+function grnMovementQty(m) {
+  return m.type === 'STORE_GRN_STONE_FLATSHEET' ? flatsheetPiecesFromMovement(m) : Math.abs(Number(m.qty) || 0);
+}
+
+/**
+ * Quantities received after `endDate`, so PO line `qtyReceived` (current) can be rolled back to the period end.
+ * Coil products come from coil lots (by line); stone / accessory from GRN movements (by product).
+ */
+function receiptsAfterEnd(coilLots, grnMovements, endDate) {
+  const byLine = new Map();
+  const byProduct = new Map();
+  if (!endDate) return { byLine, byProduct };
+  for (const lot of coilLots || []) {
+    const iso = toIsoDate(lot.receivedAtISO);
+    if (!iso || iso <= endDate) continue;
+    const poId = String(lot.poID || '').trim();
+    if (!poId) continue;
+    const k = `${poId}|${lot.lineKey}`;
+    byLine.set(k, (byLine.get(k) || 0) + (Number(lot.weightKg ?? lot.qtyReceived) || 0));
+  }
+  for (const m of grnMovements || []) {
+    const iso = toIsoDate(m.dateISO || m.atISO);
+    if (!iso || iso <= endDate) continue;
+    const poId = String(m.ref || '').trim();
+    if (!poId) continue;
+    const k = `${poId}|${String(m.productID || '').trim()}`;
+    byProduct.set(k, (byProduct.get(k) || 0) + grnMovementQty(m));
+  }
+  return { byLine, byProduct };
+}
+
+function lineQtyReceivedAsOf(poId, line, after) {
+  const pid = String(line.productID || '').trim();
+  const current = Number(line.qtyReceived) || 0;
+  const later =
+    lineKindFromProduct(pid) === 'coil'
+      ? after.byLine.get(`${poId}|${line.lineKey}`) || 0
+      : after.byProduct.get(`${poId}|${pid}`) || 0;
+  return Math.max(0, current - later);
+}
+
+/**
+ * Goods received value of a PO as at period end. Service lines (SVC-) count once any goods line has arrived.
+ */
+function poReceiptPositionAsOf(po, after) {
+  const poId = String(po.poID || '').trim();
+  let goodsValue = 0;
+  let serviceValue = 0;
+  let anyGoodsReceived = false;
+  let anyGoodsShort = false;
+  let goodsLines = 0;
+  for (const line of po.lines || []) {
+    const price = poLineUnitPriceNgn(line);
+    const ordered = Number(line.qtyOrdered) || 0;
+    if (isServiceLine(line)) {
+      serviceValue += Math.round(ordered * price);
+      continue;
+    }
+    goodsLines += 1;
+    const recv = lineQtyReceivedAsOf(poId, line, after);
+    if (recv > 0) anyGoodsReceived = true;
+    if (recv < ordered - Math.max(0.01, ordered * 0.005)) anyGoodsShort = true;
+    goodsValue += Math.round(recv * price);
+  }
+  const receivedValueNgn = goodsValue + (anyGoodsReceived || goodsLines === 0 ? serviceValue : 0);
+  return { receivedValueNgn, anyGoodsShort };
+}
+
+function buildCoilReceiptRowV2(lot, po, line, masterData) {
+  const receivedKg = round2(Number(lot.weightKg ?? lot.qtyReceived) || 0);
+  const orderKg = line ? round2(Number(line.qtyOrdered) || 0) : null;
+  const unitKg = Math.round(Number(lot.unitCostNgnPerKg) || 0) || Math.round(Number(line?.unitPricePerKgNgn) || 0);
+  const landedNgn = lot.landedCostNgn != null ? Math.round(Number(lot.landedCostNgn)) : null;
+  const totalNgn = unitKg > 0 && receivedKg > 0 ? Math.round(unitKg * receivedKg) : 0;
+  const poId = String(lot.poID || '').trim();
+  const remarks = [];
+  if (line && orderKg > 0 && receivedKg > orderKg * 1.1) {
+    remarks.push(`Received ${receivedKg} kg is more than 10% above ordered ${orderKg} kg`);
+  }
+  if (line && orderKg > 0 && receivedKg + 0.01 < orderKg) {
+    const lineRecv = round2(Number(line.qtyReceived) || 0);
+    if (lineRecv < orderKg) remarks.push(`PO line recv ${lineRecv} / ${orderKg} kg`);
+  }
+  if (!unitKg) remarks.push('No unit cost on GRN');
+  if (String(lot.currentStatus || '').toLowerCase() === 'consumed') remarks.push('Coil consumed');
+  const basis = String(po?.billingBasis || po?.supplierBillingBasis || '').trim();
+  if (basis) remarks.push(basis === 'ordered_kg' ? 'Bills on ordered kg' : basis === 'received_kg' ? 'Bills on received kg' : `Bills on ${basis}`);
+  return {
+    ...rowDateFields(lot.receivedAtISO),
+    supplier: String(lot.supplierName || po?.supplierName || '').trim() || '—',
+    coilNo: String(lot.coilNo || '').trim(),
+    coilNoDisplay: displayLast4(lot.coilNo) || displayReceiptRef(lot.coilNo),
+    colour: colourAbbrevForReport(masterData, lot.colour),
+    gauge: String(lot.gaugeLabel || line?.gauge || '').trim() || '—',
+    receivedKg,
+    orderKg,
+    kgAmountNgn: unitKg || null,
+    totalNgn,
+    remainingValueTodayNgn: landedNgn,
+    billingBasis: basis || 'Not set',
+    poIdDisplay: displayLast4(poId) || displayDocNumber(poId) || '—',
+    poId: poId || '—',
+    productName: String(line?.productName || lot.productID || '').trim() || '—',
+    remark: remarks.length ? remarks.join(' · ') : '—',
+  };
+}
+
+function buildMovementReceiptRowV2(m, po, line, product, masterData, kind) {
+  const isFs = m.type === 'STORE_GRN_STONE_FLATSHEET';
+  const qty = round2(isFs ? flatsheetPiecesFromMovement(m) : Math.abs(Number(m.qty) || 0));
+  const row = buildMovementReceiptRow(m, po, line, product, masterData, kind);
+  if (!isFs) return { ...row, remainingValueTodayNgn: null };
+  const orderQty = row.orderQty;
+  const remarks = [];
+  if (line && orderQty > 0 && qty > orderQty * 1.1) {
+    remarks.push(`Received ${qty} pieces is more than 10% above ordered ${orderQty} pieces`);
+  }
+  if (line && orderQty > 0 && qty + 0.01 < orderQty) {
+    const lineRecv = round2(Number(line.qtyReceived) || 0);
+    if (lineRecv < orderQty) remarks.push(`PO line recv ${lineRecv} / ${orderQty} pieces`);
+  }
+  return {
+    ...row,
+    receivedQty: qty,
+    unitLabel: 'pieces',
+    kgAmountNgn: qty > 0 && row.totalNgn > 0 ? Math.round(row.totalNgn / qty) : row.kgAmountNgn,
+    remainingValueTodayNgn: null,
+    remark: remarks.length ? remarks.join(' · ') : '—',
+  };
+}
+
+function sumBy(rows, key) {
+  return Math.round(rows.reduce((s, r) => s + (Number(r[key]) || 0), 0));
+}
+
+function buildSummaryV2(body) {
+  const base = buildPurchaseReportSummary({ ...body, payments: { supplierPayments: [], poBalances: [] } });
+  const p = body.payments.totals;
+  const remainingValueTodayNgn = [body.aluminium, body.aluzinc, body.unclassifiedCoil].reduce(
+    (s, sec) => s + sec.groups.reduce((gs, g) => gs + sumBy(g.rows, 'remainingValueTodayNgn'), 0),
+    0
+  );
+  const observations = [];
+  const recommendations = [];
+  const receivedValue = base.payments.receivedValueNgn;
+  if (receivedValue > 0) {
+    observations.push(
+      `Goods received in period at GRN value: ₦${receivedValue.toLocaleString('en-NG')} across ${base.byMaterial.reduce((s, m) => s + m.lineCount, 0)} receipt line(s).`
+    );
+  }
+  if (p.paymentsMadeInPeriodNgn) {
+    observations.push(
+      `Payments made this period: ₦${p.paymentsMadeInPeriodNgn.toLocaleString('en-NG')} (₦${p.paidAgainstEarlierPosNgn.toLocaleString('en-NG')} against POs ordered before the period).`
+    );
+  }
+  const open = body.supplierPositions.rows.filter((r) => r.outstandingNgn > 0);
+  if (open.length) {
+    observations.push(
+      `${open.length} PO(s) owe suppliers ₦${p.supplierOutstandingAtEndNgn.toLocaleString('en-NG')} at ${body.period.endDate || 'period end'}.`
+    );
+    recommendations.push('Clear supplier payables on outstanding POs or confirm accrual with Finance.');
+  }
+  const over = body.supplierPositions.rows.filter((r) => r.overpaidNgn > 0);
+  if (over.length) {
+    observations.push(`${over.length} PO(s) paid above PO value (₦${p.overpaidAtEndNgn.toLocaleString('en-NG')}).`);
+    recommendations.push('Confirm overpaid POs: missing PO lines, price change, or supplier credit to recover.');
+  }
+  if (body.paidNotReceived.rows.length) {
+    observations.push(
+      `${body.paidNotReceived.rows.length} PO(s) paid but not fully received at period end (₦${body.paidNotReceived.totalGapNgn.toLocaleString('en-NG')}).`
+    );
+  }
+  if (!observations.length) observations.push('No GRN receipts or supplier payments recorded in this period.');
+  return {
+    byMaterial: base.byMaterial,
+    byGauge: base.byGauge,
+    payments: {
+      receivedValueNgn: receivedValue,
+      remainingValueTodayNgn,
+      paymentsMadeInPeriodNgn: p.paymentsMadeInPeriodNgn,
+      paidAgainstPeriodPosNgn: p.paidAgainstPeriodPosNgn,
+      paidAgainstEarlierPosNgn: p.paidAgainstEarlierPosNgn,
+      unlinkedPaymentsNgn: p.unlinkedPaymentsNgn,
+      supplierOutstandingAtEndNgn: p.supplierOutstandingAtEndNgn,
+      overpaidAtEndNgn: p.overpaidAtEndNgn,
+      paidNotReceivedNgn: body.paidNotReceived.totalGapNgn,
+      paidInPeriodNgn: p.paymentsMadeInPeriodNgn,
+      poOutstandingNgn: p.supplierOutstandingAtEndNgn,
+    },
+    observations,
+    recommendations,
+  };
+}
+
+/**
+ * Purchase register (Phase 1). Pure: data in → sections / totals out.
+ *
+ * - Line "Total ₦" = received qty × unit cost at receipt; today's landed value is a separate column.
+ * - Supplier position is AS AT `endDate` for every PO ordered on or before it:
+ *   outstanding = PO value − supplier payments posted on or before `endDate`.
+ * - Flat sheets are counted in pieces (parsed from the GRN detail).
+ *
+ * @param {object} input
+ * @param {object[]} input.purchaseOrders all branch POs
+ * @param {object[]} input.coilLots all branch coil lots (receipts after `endDate` roll back PO received qty)
+ * @param {object[]} input.stockMovements branch movements in the period
+ * @param {object[]} [input.grnMovements] all branch GRN movements (any date)
+ * @param {object[]} input.supplierPaymentMovements supplier-payment treasury rows posted on or before `endDate`
+ * @param {object[]} [input.products]
+ * @param {object} [input.masterData]
+ * @param {{ id: string, name: string }} [input.branch]
+ * @param {string} input.startDate
+ * @param {string} input.endDate
+ */
+export function buildPurchaseReport(input = {}) {
+  const {
+    purchaseOrders = [],
+    coilLots = [],
+    stockMovements = [],
+    grnMovements = null,
+    products = [],
+    masterData = null,
+    branch = null,
+    startDate,
+    endDate,
+  } = input;
+  const supplierPaymentMovements = input.supplierPaymentMovements || input.treasuryMovements || [];
+
+  const { poById, lineByPoLine } = buildPoMaps(purchaseOrders);
+  const productById = buildProductMap(products);
+
+  const aluRows = [];
+  const aluzRows = [];
+  const unclRows = [];
+  const stoneRows = [];
+  const flatsheetRows = [];
+  const accRows = [];
+
+  for (const lot of coilLots || []) {
+    if (!dateInPeriod(lot.receivedAtISO, startDate, endDate)) continue;
+    const pid = String(lot.productID || '').trim();
+    if (/^ACC-/i.test(pid) || /^STONE-/i.test(pid)) continue;
+    const poId = String(lot.poID || '').trim();
+    const line = poId ? lineByPoLine.get(`${poId}|${lot.lineKey}`) : null;
+    const po = poId ? poById.get(poId) : null;
+    const row = buildCoilReceiptRowV2(lot, po, line, masterData);
+    const fam = familyFromLot(lot);
+    if (fam === 'aluzinc') aluzRows.push(row);
+    else if (fam === 'aluminium') aluRows.push(row);
+    else unclRows.push(row);
+  }
+
+  for (const m of stockMovements || []) {
+    if (!dateInPeriod(m.dateISO || m.atISO, startDate, endDate)) continue;
+    const poId = String(m.ref || '').trim();
+    const po = poId ? poById.get(poId) : null;
+    const line =
+      po && m.productID ? (po.lines || []).find((l) => String(l.productID) === String(m.productID)) || null : null;
+    const product = m.productID ? productById.get(String(m.productID)) : null;
+    if (m.type === 'STORE_GRN_STONE_FLATSHEET') {
+      flatsheetRows.push(buildMovementReceiptRowV2(m, po, line, product, masterData, 'stone'));
+    } else if (m.type === 'STORE_GRN_STONE') {
+      stoneRows.push(buildMovementReceiptRowV2(m, po, line, product, masterData, 'stone'));
+    } else if (m.type === GRN_ACCESSORY) {
+      accRows.push(buildMovementReceiptRowV2(m, po, line, product, masterData, 'accessory'));
+    }
+  }
+
+  const wrap = (rows, receivedUnit, grouper = groupCoilReceiptsByGauge) => ({
+    receivedUnit,
+    groups: grouper(rows),
+    totals: summarizeReceiptRows(rows),
+  });
+
+  const body = {
+    reportVersion: 2,
+    branch: branch ? { id: String(branch.id || ''), name: String(branch.name || '') } : null,
+    period: { startDate: startDate || '', endDate: endDate || '' },
+    aluminium: wrap(aluRows, 'kg'),
+    aluzinc: wrap(aluzRows, 'kg'),
+    unclassifiedCoil: wrap(unclRows, 'kg'),
+    stoneCoated: wrap(stoneRows, 'm'),
+    stoneFlatsheets: wrap(flatsheetRows, 'pieces'),
+    accessories: wrap(accRows, 'units', groupAccessoryReceipts),
+  };
+  const sections = [
+    body.aluminium,
+    body.aluzinc,
+    body.unclassifiedCoil,
+    body.stoneCoated,
+    body.stoneFlatsheets,
+    body.accessories,
+  ];
+  const poIdsWithGrnInPeriod = collectPoIdsFromReport(sections);
+
+  // Supplier payments posted on or before period end, linked to their PO.
+  const paymentsToEnd = purchasesPaidRows(supplierPaymentMovements, '', endDate).map((p) => {
+    const poId = poIdFromSupplierPaymentSource(p.sourceIdFull, poById);
+    const po = poId ? poById.get(poId) : null;
+    const poOrderDateISO = po ? toIsoDate(po.orderDateISO) : '';
+    return {
+      ...p,
+      poId: poId || '',
+      poIdDisplay: poId ? displayLast4(poId) || displayDocNumber(poId) : '—',
+      poOrderDateISO,
+      poOrderedInPeriod: Boolean(poOrderDateISO && dateInPeriod(poOrderDateISO, startDate, endDate)),
+      poOrderedBeforePeriod: Boolean(poOrderDateISO && startDate && poOrderDateISO < startDate),
+    };
+  });
+  const supplierPayments = paymentsToEnd.filter((p) => dateInPeriod(p.paidDateISO, startDate, endDate));
+
+  const paidToEndByPo = new Map();
+  const paidInPeriodByPo = new Map();
+  for (const p of paymentsToEnd) {
+    if (!p.poId) continue;
+    paidToEndByPo.set(p.poId, (paidToEndByPo.get(p.poId) || 0) + p.amountNgn);
+  }
+  for (const p of supplierPayments) {
+    if (!p.poId) continue;
+    paidInPeriodByPo.set(p.poId, (paidInPeriodByPo.get(p.poId) || 0) + p.amountNgn);
+  }
+
+  const tol = PAYMENT_OUTSTANDING_TOLERANCE_NGN;
+  const after = receiptsAfterEnd(coilLots, grnMovements || stockMovements, endDate);
+  const positionRows = [];
+  const paidNotReceivedRows = [];
+  for (const po of purchaseOrders || []) {
+    const poId = String(po.poID || '').trim();
+    const orderIso = toIsoDate(po.orderDateISO);
+    if (!poId || !orderIso || (endDate && orderIso > endDate)) continue;
+    const poValueNgn = purchaseOrderValueNgn(po);
+    const paidToEndNgn = Math.round(paidToEndByPo.get(poId) || 0);
+    const status = String(po.status || '').trim();
+    if (/^(cancel|reject)/i.test(status) && paidToEndNgn <= 0) continue;
+    const diff = poValueNgn - paidToEndNgn;
+    const outstandingNgn = diff > tol ? diff : 0;
+    const overpaidNgn = -diff > tol ? -diff : 0;
+    const common = {
+      poId,
+      poIdDisplay: displayLast4(poId) || displayDocNumber(poId) || '—',
+      supplier: String(po.supplierName || '').trim() || '—',
+      orderDateISO: orderIso,
+      status: status || '—',
+      poValueNgn,
+      paidToEndNgn,
+    };
+    if (outstandingNgn > 0 || overpaidNgn > 0) {
+      positionRows.push({
+        ...common,
+        paidInPeriodNgn: Math.round(paidInPeriodByPo.get(poId) || 0),
+        outstandingNgn,
+        overpaidNgn,
+        grnInPeriod: poIdsWithGrnInPeriod.has(poId),
+      });
+    }
+    if (paidToEndNgn > 0) {
+      const pos = poReceiptPositionAsOf(po, after);
+      const gapNgn = paidToEndNgn - pos.receivedValueNgn;
+      if (pos.anyGoodsShort && gapNgn > tol) {
+        paidNotReceivedRows.push({ ...common, receivedValueAtEndNgn: pos.receivedValueNgn, gapNgn });
+      }
+    }
+  }
+  positionRows.sort((a, b) => a.poId.localeCompare(b.poId));
+  paidNotReceivedRows.sort((a, b) => a.poId.localeCompare(b.poId));
+
+  const positionByPo = new Map(positionRows.map((r) => [r.poId, r]));
+  const seenPo = new Set();
+  for (const sec of sections) {
+    for (const g of sec.groups) {
+      for (const row of g.rows) {
+        const poId = String(row.poId || '').trim();
+        const first = poId && poId !== '—' && !seenPo.has(poId);
+        if (first) seenPo.add(poId);
+        row.poPaidNgn = first ? Math.round(paidToEndByPo.get(poId) || 0) : null;
+        row.paidInPeriodNgn = first ? Math.round(paidInPeriodByPo.get(poId) || 0) : null;
+        row.poOutstandingNgn = first ? positionByPo.get(poId)?.outstandingNgn || 0 : null;
+        row.poOverpaidNgn = first ? positionByPo.get(poId)?.overpaidNgn || 0 : null;
+      }
+    }
+  }
+
+  const paymentsMadeInPeriodNgn = sumBy(supplierPayments, 'amountNgn');
+  const paidAgainstPeriodPosNgn = sumBy(supplierPayments.filter((p) => p.poOrderedInPeriod), 'amountNgn');
+  const paidAgainstEarlierPosNgn = sumBy(supplierPayments.filter((p) => p.poOrderedBeforePeriod), 'amountNgn');
+  body.payments = {
+    supplierPayments,
+    totals: {
+      paymentsMadeInPeriodNgn,
+      paidAgainstPeriodPosNgn,
+      paidAgainstEarlierPosNgn,
+      unlinkedPaymentsNgn: paymentsMadeInPeriodNgn - paidAgainstPeriodPosNgn - paidAgainstEarlierPosNgn,
+      supplierOutstandingAtEndNgn: sumBy(positionRows, 'outstandingNgn'),
+      overpaidAtEndNgn: sumBy(positionRows, 'overpaidNgn'),
+    },
+  };
+  body.supplierPositions = { asAtDate: endDate || '', rows: positionRows };
+  body.paidNotReceived = { asAtDate: endDate || '', rows: paidNotReceivedRows, totalGapNgn: sumBy(paidNotReceivedRows, 'gapNgn') };
+  body.summary = buildSummaryV2(body);
   return body;
 }

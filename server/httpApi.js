@@ -31,7 +31,7 @@ import { evaluateDeliveryPaymentRelease } from './deliveryReleaseGate.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { buildMaterialTransactionReport } from '../shared/lib/materialTransactionReportCore.js';
 import { buildConversionSummaryReport } from './conversionSummaryReport.js';
-import { buildPurchaseReport } from '../shared/lib/purchaseReportCore.js';
+import { buildPurchaseRegisterReport } from './procurement/purchaseRegisterSourceOps.js';
 import {
   arAsAtReportRows,
   receiptsRegisterReportRows,
@@ -5204,17 +5204,9 @@ export function registerHttpApi(app, db) {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const report = buildPurchaseReport({
-        purchaseOrders: listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts()),
-        coilLots: listCoilLots(db, branchScope),
-        stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
-        treasuryMovements: listTreasuryMovements(db, branchScope, reportTreasuryListOpts(startDate)),
-        products: listProducts(db, branchScope, reportListOpts()),
-        masterData: listMasterData(db),
-        startDate,
-        endDate,
-      });
-      res.json({ ok: true, startDate, endDate, branchScope, report });
+      const legacy = String(req.query.legacy || '') === '1';
+      const report = buildPurchaseRegisterReport(db, { branchScope, startDate, endDate, legacy });
+      res.json({ ok: true, startDate, endDate, branchScope, legacy, report });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build purchase register report.' });

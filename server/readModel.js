@@ -2426,6 +2426,28 @@ export function listStockMovementsForBranchPeriod(db, branchScope = 'ALL', start
     .map(mapStockMovementRow);
 }
 
+const GRN_STOCK_MOVEMENT_TYPES = ['STORE_GRN_STONE', 'STORE_GRN_STONE_FLATSHEET', 'STORE_GRN_ACCESSORY'];
+
+/** All branch GRN receipt movements (any date) — purchase register as-at received quantities. */
+export function listGrnStockMovementsForBranch(db, branchScope = 'ALL') {
+  const typeIn = GRN_STOCK_MOVEMENT_TYPES.map(() => '?').join(',');
+  if (branchScope === 'ALL' || !branchScope) {
+    return db
+      .prepare(`SELECT * FROM stock_movements WHERE type IN (${typeIn}) ORDER BY date_iso ASC, id ASC`)
+      .all(...GRN_STOCK_MOVEMENT_TYPES)
+      .map(mapStockMovementRow);
+  }
+  const bf = stockMovementsBranchFilter(db, branchScope);
+  return db
+    .prepare(
+      `SELECT sm.* FROM stock_movements sm
+       WHERE sm.type IN (${typeIn})${bf.sql}
+       ORDER BY sm.date_iso ASC, sm.id ASC`
+    )
+    .all(...GRN_STOCK_MOVEMENT_TYPES, ...bf.args)
+    .map(mapStockMovementRow);
+}
+
 /** Branch-scoped movements with date_iso <= endDate (for opening balances). */
 export function listStockMovementsForBranchThrough(db, branchScope = 'ALL', endDate) {
   const end = String(endDate || '').slice(0, 10);
@@ -3522,15 +3544,23 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
   const fromSql = /^\d{4}-\d{2}-\d{2}$/.test(fromISO)
     ? { sql: ` AND SUBSTR(tm.posted_at_iso, 1, 10) >= ?`, args: [fromISO] }
     : { sql: '', args: [] };
+  const toISO = String(opts.toISO || '').trim().slice(0, 10);
+  const toSql = /^\d{4}-\d{2}-\d{2}$/.test(toISO)
+    ? { sql: ` AND SUBSTR(tm.posted_at_iso, 1, 10) <= ?`, args: [toISO] }
+    : { sql: '', args: [] };
+  const types = Array.isArray(opts.types) ? opts.types.map((t) => String(t || '').trim()).filter(Boolean) : [];
+  const typeSql = types.length
+    ? { sql: ` AND tm.type IN (${types.map(() => '?').join(',')})`, args: types }
+    : { sql: '', args: [] };
   const sql = `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.acc_no AS account_no,
             ta.bank_name AS bank_name
        FROM treasury_movements tm
        LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
-       WHERE 1=1${scopeSql.sql}${fromSql.sql}
+       WHERE 1=1${scopeSql.sql}${fromSql.sql}${toSql.sql}${typeSql.sql}
        ORDER BY tm.posted_at_iso DESC, tm.id DESC${lo.sql}`;
   return db
     .prepare(sql)
-    .all(...scopeSql.args, ...fromSql.args, ...lo.args)
+    .all(...scopeSql.args, ...fromSql.args, ...toSql.args, ...typeSql.args, ...lo.args)
     .map((row) => ({
       id: row.id,
       postedAtISO: row.posted_at_iso,

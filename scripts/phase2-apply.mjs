@@ -41,7 +41,7 @@ if (!database || !planPath || !approver) {
 if (live) {
   const { loadLiveMysqlEnv } = await import(pathToFileURL(path.join(BE, 'scripts/lib/phase2LiveEnv.mjs')).href);
   try {
-    loadLiveMysqlEnv(BE, database);
+    loadLiveMysqlEnv(process.env.ZAREWA_PHASE2_ENV_ROOT || BE, database);
   } catch (e) {
     console.error(`Refused: ${e.message}`);
     process.exit(3);
@@ -67,6 +67,11 @@ const { appendAuditLog } = await imp('server/controlOps.js');
 const { postBalancedJournalTx } = await imp('server/glOps.js');
 const { capexExpenseAssetMeta } = await imp('shared/expenseCategories.js');
 const { insertTreasuryMovementTx } = await imp('server/writeOps.js');
+const { nextExpenseHumanId } = await imp('server/humanId.js');
+const { tryPostExpensePaymentGlTx } = await imp('server/accountingPostingOps.js');
+const { assertPeriodOpen } = await imp('server/controlOps.js');
+const { getExpenseCategoryLane } = await imp('shared/expenseCategoryLanes.js');
+const { reclassifyPaidPaymentRequestCategory } = await imp('server/expenseCategoryReclassOps.js');
 const { createInvestigationCase, ensureInvestigationSchema } = await imp('server/office/investigationOps.js');
 const { syncFixedAssetFromCapexExpense } = await imp('server/fixedAssetAutomationOps.js');
 const { ensureAccountingPhase2Schema } = await imp('server/accountingPhase2Ops.js');
@@ -269,6 +274,121 @@ function runOp(item, op) {
     const caseId = r?.case?.id || r?.id || r?.investigation?.id || '';
     audit(item, op, { table: 'investigation_cases', caseId, links: op.links });
     return { outcome: 'applied', caseId };
+  }
+  if (op.kind === 'postExpense') {
+    // A paid expense on its real date, the way the ERP posts one (insertExpenseEntry): expense row, treasury EXPENSE
+    // line, expense-payment GL journal, `expense.create` audit — plus the Phase 2 audit. Never posted twice: an expense
+    // with the same date, amount, category and description means it is already there.
+    const existing = db
+      .prepare(
+        `SELECT expense_id FROM expenses WHERE date = ? AND amount_ngn = ? AND category = ? AND expense_type = ? AND branch_id = ?`
+      )
+      .get(op.date, op.amountNgn, op.category, op.expenseType, op.branchId);
+    if (existing) return { outcome: 'skipped', why: `already posted as ${existing.expense_id}` };
+    const account = db.prepare(`SELECT id, name, bank_name, branch_id FROM treasury_accounts WHERE id = ?`).get(op.treasuryAccountId);
+    if (!account || account.branch_id !== op.branchId) return { outcome: 'skipped', why: `treasury account ${op.treasuryAccountId} not found on ${op.branchId}` };
+    assertPeriodOpen(db, op.date, 'Expense date');
+    if (!doApply) return { outcome: 'would apply', account: `${account.name} (${account.bank_name})` };
+    const expenseID = nextExpenseHumanId(db, op.branchId);
+    db.prepare(
+      `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id, category_lane)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    ).run(expenseID, op.expenseType, op.amountNgn, op.date, op.category, op.paymentMethod, op.reference, op.branchId, getExpenseCategoryLane(op.category));
+    const movement = insertTreasuryMovementTx(db, {
+      type: 'EXPENSE',
+      treasuryAccountId: op.treasuryAccountId,
+      amountNgn: -op.amountNgn,
+      postedAtISO: `${op.date}T12:00:00.000Z`,
+      reference: op.reference,
+      counterpartyKind: 'EXPENSE',
+      counterpartyId: expenseID,
+      counterpartyName: op.category,
+      sourceKind: 'EXPENSE',
+      sourceId: expenseID,
+      note: op.expenseType,
+      createdBy: approver,
+      branchId: op.branchId,
+      allowNegativeBalance: true,
+    });
+    const gl = tryPostExpensePaymentGlTx(db, {
+      treasuryAccountId: op.treasuryAccountId,
+      amountNgn: op.amountNgn,
+      entryDateISO: op.date,
+      sourceId: movement.id,
+      expenseCategory: op.category,
+      branchId: op.branchId,
+      createdByUserId: null,
+      memo: op.expenseType,
+    });
+    if (!gl.ok && !gl.skipped && !gl.duplicate) throw new Error(`${item.id}: GL — ${gl.error}`);
+    appendAuditLog(db, {
+      actor,
+      action: 'expense.create',
+      entityKind: 'expense',
+      entityId: expenseID,
+      note: op.expenseType,
+      details: { amountNgn: op.amountNgn, treasuryAccountId: op.treasuryAccountId },
+    });
+    audit(item, { ...op, table: 'expenses', key: expenseID }, {
+      table: 'expenses', key: expenseID, treasuryMovementId: movement.id, glJournal: gl.id || gl.journalId || null,
+      date: op.date, amountNgn: op.amountNgn, account: `${account.name} (${account.bank_name})`,
+    });
+    return { outcome: 'applied', expenseID, treasuryMovementId: movement.id };
+  }
+  if (op.kind === 'recodePaidRequest') {
+    // Category of a paid payment request via the ERP's post-pay reclass (category, GL reclass journal per payout
+    // line, audit); the payer note goes into the request description. Only when the category still equals "before".
+    const pr = db
+      .prepare(
+        `SELECT pr.request_id, pr.description, pr.paid_amount_ngn, e.expense_id, e.category, e.amount_ngn, e.date
+         FROM payment_requests pr JOIN expenses e ON e.expense_id = pr.expense_id WHERE pr.request_id = ?`
+      )
+      .get(op.requestId);
+    if (!pr) return { outcome: 'skipped', why: 'payment request not found' };
+    if (pr.expense_id !== op.expenseId) return { outcome: 'skipped', why: `request is on ${pr.expense_id}, not ${op.expenseId}` };
+    if (pr.category === op.after && String(pr.description || '') === op.note) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (pr.category !== op.before && pr.category !== op.after) return { outcome: 'skipped', why: `current category ${pr.category} ≠ planned before ${op.before}` };
+    assertPeriodOpen(db, op.reclassDateISO, 'Category reclass date');
+    const current = { category: pr.category, description: pr.description, paidNgn: pr.paid_amount_ngn, date: pr.date };
+    if (!doApply) return { outcome: 'would apply', current };
+    if (pr.category !== op.after) {
+      const r = reclassifyPaidPaymentRequestCategory(
+        db,
+        op.requestId,
+        { expenseCategory: op.after, categoryJustification: op.note, reclassDateISO: op.reclassDateISO },
+        { ...actor, permissions: ['*'] }
+      );
+      if (!r?.ok) throw new Error(`${item.id}: ${r?.error || 'reclass failed'}`);
+    }
+    db.prepare(`UPDATE payment_requests SET description = ? WHERE request_id = ?`).run(op.note, op.requestId);
+    audit(item, { ...op, table: 'payment_requests', key: op.requestId }, {
+      table: 'payment_requests', key: op.requestId, expenseId: op.expenseId,
+      before: { category: pr.category, description: pr.description }, after: { category: op.after, description: op.note },
+      reclassDateISO: op.reclassDateISO,
+    });
+    return { outcome: 'applied', current };
+  }
+  if (op.kind === 'redateTreasury') {
+    // Treasury posting date only, when it still equals the planned "before"; linked receipt / ledger / GL untouched.
+    const tm = db.prepare(`SELECT id, posted_at_iso, amount_ngn, treasury_account_id FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm) return { outcome: 'skipped', why: 'treasury line not found' };
+    const cur = String(tm.posted_at_iso || '').slice(0, 10);
+    if (cur === op.after) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (cur !== op.before) return { outcome: 'skipped', why: `current date ${cur} ≠ planned before ${op.before}` };
+    assertPeriodOpen(db, op.before, 'Current treasury date');
+    assertPeriodOpen(db, op.after, 'New treasury date');
+    if (!doApply) return { outcome: 'would apply' };
+    const after = `${op.after}${String(tm.posted_at_iso).slice(10) || 'T12:00:00.000Z'}`;
+    const hasReason = db.prepare(`SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'treasury_movements' AND column_name = 'date_override_reason'`).get();
+    if (hasReason) {
+      db.prepare(`UPDATE treasury_movements SET posted_at_iso = ?, date_override_reason = ? WHERE id = ?`).run(after, op.note, tm.id);
+    } else {
+      db.prepare(`UPDATE treasury_movements SET posted_at_iso = ? WHERE id = ?`).run(after, tm.id);
+    }
+    audit(item, { ...op, table: 'treasury_movements', key: tm.id }, {
+      table: 'treasury_movements', key: tm.id, column: 'posted_at_iso', before: tm.posted_at_iso, after, note: op.note,
+    });
+    return { outcome: 'applied' };
   }
   throw new Error(`${item.id}: unknown operation ${op.kind}`);
 }

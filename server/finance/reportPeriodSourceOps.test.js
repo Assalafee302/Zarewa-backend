@@ -3,7 +3,7 @@ import { createDatabase } from '../db.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { listSalesReceipts } from '../readModel.js';
 import { receiptsRegisterReportRows } from '../../shared/lib/standardReportsSales.js';
-import { loadReportPeriodSource } from './reportPeriodSourceOps.js';
+import { loadReportPeriodSource, splitQuotationLines } from './reportPeriodSourceOps.js';
 
 function mysqlAvailable() {
   try {
@@ -68,6 +68,18 @@ describe.skipIf(!mysqlAvailable())('report period source', () => {
     expect(rows.length).toBe(1);
   });
 
+  it('sends quotation lines flat and full treasury history for the accrual section', () => {
+    const source = loadReportPeriodSource(db, {
+      startDate: '2026-09-01',
+      endDate: '2026-09-30',
+      branchScope: DEFAULT_BRANCH_ID,
+    });
+    expect(source.ok).toBe(true);
+    expect(Array.isArray(source.quotationLines)).toBe(true);
+    expect(Array.isArray(source.accrualTreasuryMovements)).toBe(true);
+    expect(source.quotations.every((q) => q.quotationLines === undefined)).toBe(true);
+  });
+
   it('rejects an inverted period', () => {
     const source = loadReportPeriodSource(db, {
       startDate: '2026-02-01',
@@ -75,5 +87,30 @@ describe.skipIf(!mysqlAvailable())('report period source', () => {
       branchScope: DEFAULT_BRANCH_ID,
     });
     expect(source.ok).toBe(false);
+  });
+});
+
+describe('splitQuotationLines', () => {
+  it('flattens grouped lines and strips them from the quotation rows', () => {
+    const out = splitQuotationLines([
+      {
+        id: 'QT-1',
+        totalNgn: 5,
+        quotationLines: {
+          products: [{ name: 'Roofing Sheet', qty: 300 }],
+          accessories: [{ name: 'Drive screw nail', qty: 15 }],
+          services: [],
+        },
+      },
+      { id: 'QT-2', totalNgn: 7 },
+    ]);
+    expect(out.quotations).toEqual([
+      { id: 'QT-1', totalNgn: 5 },
+      { id: 'QT-2', totalNgn: 7 },
+    ]);
+    expect(out.quotationLines).toEqual([
+      { quotationId: 'QT-1', category: 'products', name: 'Roofing Sheet', qty: 300 },
+      { quotationId: 'QT-1', category: 'accessories', name: 'Drive screw nail', qty: 15 },
+    ]);
   });
 });

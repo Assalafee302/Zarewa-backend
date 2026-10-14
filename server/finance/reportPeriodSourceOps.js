@@ -36,6 +36,36 @@ function isoDay(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
 }
 
+/** Treasury types the sales report Accrual section reads over the full history (customer balances). */
+export const ACCRUAL_TREASURY_TYPES = [
+  'RECEIPT_IN',
+  'ADVANCE_IN',
+  'RECEIPT_REVERSAL_OUT',
+  'ADVANCE_REVERSAL_OUT',
+  'REFUND_PAYOUT',
+];
+
+/**
+ * Split quotation lines off the quotation rows into a light flat list
+ * ({ quotationId, category, name, qty }) so the quotations payload stays the same size.
+ * @param {object[]} quotations
+ */
+export function splitQuotationLines(quotations) {
+  const quotationLines = [];
+  const rows = (quotations || []).map((q) => {
+    const { quotationLines: groups, ...rest } = q || {};
+    if (groups && typeof groups === 'object' && !Array.isArray(groups)) {
+      for (const category of ['products', 'accessories', 'services']) {
+        for (const line of groups[category] || []) {
+          quotationLines.push({ quotationId: q.id, category, name: line?.name ?? '', qty: line?.qty ?? '' });
+        }
+      }
+    }
+    return rest;
+  });
+  return { quotations: rows, quotationLines };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {{ startDate?: string, endDate?: string, branchScope?: string }} [opts]
@@ -49,6 +79,9 @@ export function loadReportPeriodSource(db, opts = {}) {
   const branchScope = opts.branchScope || 'ALL';
   const lists = reportListOpts();
   const ledgerEntries = listLedgerEntries(db, branchScope, lists);
+  const { quotations, quotationLines } = splitQuotationLines(
+    listQuotations(db, branchScope, { ...reportQuotationListOpts(), includeLines: true })
+  );
   const receipts = enrichSalesReceiptRowsWithCashFromLedger(
     listSalesReceipts(db, branchScope, lists),
     ledgerEntries
@@ -65,12 +98,19 @@ export function loadReportPeriodSource(db, opts = {}) {
       branchScope === 'ALL' ? 'ALL' : branchScope,
       lists
     ),
-    quotations: listQuotations(db, branchScope, reportQuotationListOpts()),
+    quotations,
+    quotationLines,
     productionJobs: listProductionJobs(db, branchScope, lists),
     refunds: listRefunds(db, branchScope, lists),
     expenses: listExpenses(db, branchScope, lists),
     paymentRequests: listPaymentRequests(db, branchScope, lists),
     treasuryMovements: listTreasuryMovements(db, branchScope, reportTreasuryListOpts(startDate)),
+    // Sales report Accrual: customer balances need cash/refund lines from the start, up to period end.
+    accrualTreasuryMovements: listTreasuryMovements(db, branchScope, {
+      unlimited: true,
+      toISO: endDate,
+      types: ACCRUAL_TREASURY_TYPES,
+    }),
     ledgerEntries,
     purchaseOrders: listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts()),
     bankReconciliation: listBankReconciliation(db, branchScope, lists),

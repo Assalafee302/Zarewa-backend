@@ -1,6 +1,6 @@
 {
  "_meta": {
-  "source": "Read-only snapshot of production via loadPurchaseRegisterSource(BR-KD, 2026-09-01..2026-09-30), taken 2026-10-13. Fields trimmed; supplier names retained."
+  "source": "Read-only snapshot of production via loadPurchaseRegisterSource(BR-KD, 2026-09-01..2026-09-30), taken 2026-10-13. Fields trimmed; supplier names retained. PO lines: lineType and metersOffered added 2026-10-14 from ERP export zarewa-entered-data (8).xlsx (generated 2026-10-13 14:27 UTC), matched by PO + line key."
  },
  "branch": {
   "id": "BR-KD",
@@ -25,7 +25,9 @@
      "qtyOrdered": 2890,
      "qtyReceived": 2960,
      "unitPricePerKgNgn": 1700,
-     "unitPriceNgn": 1700
+     "unitPriceNgn": 1700,
+     "lineType": "coil_kg",
+     "metersOffered": 1112
     }
    ]
   },
@@ -45,7 +47,9 @@
      "qtyOrdered": 67.8,
      "qtyReceived": 67.8,
      "unitPricePerKgNgn": 6500,
-     "unitPriceNgn": 6500
+     "unitPriceNgn": 6500,
+     "lineType": "coil_meter",
+     "metersOffered": 67.8
     }
    ]
   },
@@ -65,7 +69,9 @@
      "qtyOrdered": 197.8,
      "qtyReceived": 390,
      "unitPricePerKgNgn": 14800,
-     "unitPriceNgn": 14800
+     "unitPriceNgn": 14800,
+     "lineType": "coil_meter",
+     "metersOffered": 197.8
     },
     {
      "lineKey": "L1791212692949-1-t9d7",
@@ -76,7 +82,9 @@
      "qtyOrdered": 135,
      "qtyReceived": 206,
      "unitPricePerKgNgn": 11100,
-     "unitPriceNgn": 11100
+     "unitPriceNgn": 11100,
+     "lineType": "coil_meter",
+     "metersOffered": 135
     },
     {
      "lineKey": "L1791212692949-2-zrz7",
@@ -87,7 +95,9 @@
      "qtyOrdered": 3480,
      "qtyReceived": 3534,
      "unitPricePerKgNgn": 1700,
-     "unitPriceNgn": 1700
+     "unitPriceNgn": 1700,
+     "lineType": "coil_kg",
+     "metersOffered": 1541
     }
    ]
   },
@@ -107,7 +117,9 @@
      "qtyOrdered": 180,
      "qtyReceived": 180,
      "unitPricePerKgNgn": 6700,
-     "unitPriceNgn": 6700
+     "unitPriceNgn": 6700,
+     "lineType": "stone_meter",
+     "metersOffered": 180
     },
     {
      "lineKey": "L1789654268362-1-24gq",
@@ -118,7 +130,9 @@
      "qtyOrdered": 40,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 8500,
-     "unitPriceNgn": 8500
+     "unitPriceNgn": 8500,
+     "lineType": "accessory",
+     "metersOffered": null
     }
    ]
   },
@@ -138,7 +152,9 @@
      "qtyOrdered": 423,
      "qtyReceived": 423,
      "unitPricePerKgNgn": 6700,
-     "unitPriceNgn": 6700
+     "unitPriceNgn": 6700,
+     "lineType": "stone_meter",
+     "metersOffered": 423
     }
    ]
   },
@@ -158,7 +174,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 1000,
      "unitPricePerKgNgn": 4200,
-     "unitPriceNgn": 4200
+     "unitPriceNgn": 4200,
+     "lineType": "stone_meter",
+     "metersOffered": 1000
     },
     {
      "lineKey": "L1790888078654-1-nkuj",
@@ -169,7 +187,9 @@
      "qtyOrdered": 500,
      "qtyReceived": 500,
      "unitPricePerKgNgn": 4200,
-     "unitPriceNgn": 4200
+     "unitPriceNgn": 4200,
+     "lineType": "stone_meter",
+     "metersOffered": 500
     },
     {
      "lineKey": "L1790888078966-2-xewq",
@@ -180,7 +200,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 1000,
      "unitPricePerKgNgn": 4200,
-     "unitPriceNgn": 4200
+     "unitPriceNgn": 4200,
+     "lineType": "stone_meter",
+     "metersOffered": 1000
     },
     {
      "lineKey": "L1790888079210-3-5yr2",
@@ -191,7 +213,9 @@
      "qtyOrdered": 500,
      "qtyReceived": 500,
      "unitPricePerKgNgn": 4200,
-     "unitPriceNgn": 4200
+     "unitPriceNgn": 4200,
+     "lineType": "stone_meter",
+     "metersOffered": 500
     },
     {
      "lineKey": "L1790888079506-4-stzq",
@@ -202,7 +226,9 @@
      "qtyOrdered": 50,
      "qtyReceived": 50,
      "unitPricePerKgNgn": 4200,
-     "unitPriceNgn": 4200
+     "unitPriceNgn": 4200,
+     "lineType": "stone_flatsheet",
+     "metersOffered": 2
     },
     {
      "lineKey": "L1790888080394-5-0my2",
@@ -213,7 +239,9 @@
      "qtyOrdered": 50,
      "qtyReceived": 50,
      "unitPricePerKgNgn": 4200,
-     "unitPriceNgn": 4200
+     "unitPriceNgn": 4200,
+     "lineType": "stone_flatsheet",
+     "metersOffered": 2
     },
     {
      "lineKey": "L1790888080699-6-az1r",
@@ -224,7 +252,9 @@
      "qtyOrdered": 300,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 100,
-     "unitPriceNgn": 100
+     "unitPriceNgn": 100,
+     "lineType": "service",
+     "metersOffered": null
     }
    ]
   },
@@ -244,7 +274,9 @@
      "qtyOrdered": 26,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 11700,
-     "unitPriceNgn": 11700
+     "unitPriceNgn": 11700,
+     "lineType": "coil_meter",
+     "metersOffered": 26
     }
    ]
   },
@@ -264,7 +296,9 @@
      "qtyOrdered": 2625,
      "qtyReceived": 2662,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1612
     },
     {
      "lineKey": "L1789399310035-1-1rmb",
@@ -275,7 +309,9 @@
      "qtyOrdered": 3280,
      "qtyReceived": 3348,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1167
     },
     {
      "lineKey": "L1789399310035-2-h5zm",
@@ -286,7 +322,9 @@
      "qtyOrdered": 1830,
      "qtyReceived": 1849,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 961
     }
    ]
   },
@@ -306,7 +344,9 @@
      "qtyOrdered": 2608,
      "qtyReceived": 2648,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1244
     }
    ]
   },
@@ -326,7 +366,9 @@
      "qtyOrdered": 2572,
      "qtyReceived": 2661,
      "unitPricePerKgNgn": 6720,
-     "unitPriceNgn": 6720
+     "unitPriceNgn": 6720,
+     "lineType": "coil_kg",
+     "metersOffered": 1555
     },
     {
      "lineKey": "L1789397026144-1-35g0",
@@ -337,7 +379,9 @@
      "qtyOrdered": 85.4,
      "qtyReceived": 85.4,
      "unitPricePerKgNgn": 6500,
-     "unitPriceNgn": 6500
+     "unitPriceNgn": 6500,
+     "lineType": "coil_meter",
+     "metersOffered": 85.4
     }
    ]
   },
@@ -357,7 +401,9 @@
      "qtyOrdered": 2750,
      "qtyReceived": 2782,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1218
     },
     {
      "lineKey": "L1789397359497-1-wtoi",
@@ -368,7 +414,9 @@
      "qtyOrdered": 2734,
      "qtyReceived": 2803,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1221
     },
     {
      "lineKey": "L1789397359497-2-ubt0",
@@ -379,7 +427,9 @@
      "qtyOrdered": 3310,
      "qtyReceived": 3362,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1471
     }
    ]
   },
@@ -399,7 +449,9 @@
      "qtyOrdered": 3314,
      "qtyReceived": 3314,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1761
     }
    ]
   },
@@ -419,7 +471,9 @@
      "qtyOrdered": 3346,
      "qtyReceived": 3400,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1487
     }
    ]
   },
@@ -439,7 +493,9 @@
      "qtyOrdered": 3286,
      "qtyReceived": 3338,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1446
     }
    ]
   },
@@ -459,7 +515,9 @@
      "qtyOrdered": 1973,
      "qtyReceived": 2041,
      "unitPricePerKgNgn": 6720,
-     "unitPriceNgn": 6720
+     "unitPriceNgn": 6720,
+     "lineType": "coil_kg",
+     "metersOffered": 1200
     }
    ]
   },
@@ -479,7 +537,9 @@
      "qtyOrdered": 3226,
      "qtyReceived": 3226,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1630
     }
    ]
   },
@@ -499,7 +559,9 @@
      "qtyOrdered": 3280,
      "qtyReceived": 3319,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1443
     },
     {
      "lineKey": "L1788533030593-1-3qga",
@@ -510,7 +572,9 @@
      "qtyOrdered": 3202,
      "qtyReceived": 3271,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1445
     },
     {
      "lineKey": "L1788533030593-2-i8im",
@@ -521,7 +585,9 @@
      "qtyOrdered": 3266,
      "qtyReceived": 3332,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 1230
     },
     {
      "lineKey": "L1788533030593-3-raj5",
@@ -532,7 +598,9 @@
      "qtyOrdered": 3400,
      "qtyReceived": 3458,
      "unitPricePerKgNgn": 1720,
-     "unitPriceNgn": 1720
+     "unitPriceNgn": 1720,
+     "lineType": "coil_kg",
+     "metersOffered": 2027
     }
    ]
   },
@@ -552,7 +620,9 @@
      "qtyOrdered": 1968,
      "qtyReceived": 2041,
      "unitPricePerKgNgn": 6720,
-     "unitPriceNgn": 6720
+     "unitPriceNgn": 6720,
+     "lineType": "coil_kg",
+     "metersOffered": 1285
     },
     {
      "lineKey": "L1788533206898-1-3maw",
@@ -563,7 +633,9 @@
      "qtyOrdered": 156.6,
      "qtyReceived": 156.6,
      "unitPricePerKgNgn": 7000,
-     "unitPriceNgn": 7000
+     "unitPriceNgn": 7000,
+     "lineType": "coil_meter",
+     "metersOffered": 156.6
     }
    ]
   },
@@ -583,7 +655,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 1000,
      "unitPricePerKgNgn": 4300,
-     "unitPriceNgn": 4300
+     "unitPriceNgn": 4300,
+     "lineType": "stone_meter",
+     "metersOffered": 1000
     },
     {
      "lineKey": "L1788357537764-1-uzhe",
@@ -594,7 +668,9 @@
      "qtyOrdered": 60,
      "qtyReceived": 60,
      "unitPricePerKgNgn": 4250,
-     "unitPriceNgn": 4250
+     "unitPriceNgn": 4250,
+     "lineType": "stone_flatsheet",
+     "metersOffered": 2
     },
     {
      "lineKey": "L1788357538156-2-zxme",
@@ -605,7 +681,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 10,
-     "unitPriceNgn": 10
+     "unitPriceNgn": 10,
+     "lineType": "service",
+     "metersOffered": null
     }
    ]
   },
@@ -625,7 +703,9 @@
      "qtyOrdered": 2146,
      "qtyReceived": 2222,
      "unitPricePerKgNgn": 6700,
-     "unitPriceNgn": 6700
+     "unitPriceNgn": 6700,
+     "lineType": "coil_kg",
+     "metersOffered": 1390
     },
     {
      "lineKey": "L1788184555706-1-litz",
@@ -636,7 +716,9 @@
      "qtyOrdered": 2006,
      "qtyReceived": 2081,
      "unitPricePerKgNgn": 6700,
-     "unitPriceNgn": 6700
+     "unitPriceNgn": 6700,
+     "lineType": "coil_kg",
+     "metersOffered": 1634
     }
    ]
   },
@@ -656,7 +738,9 @@
      "qtyOrdered": 385.4,
      "qtyReceived": 483,
      "unitPricePerKgNgn": 9500,
-     "unitPriceNgn": 9500
+     "unitPriceNgn": 9500,
+     "lineType": "coil_meter",
+     "metersOffered": 385.4
     }
    ]
   },
@@ -676,7 +760,9 @@
      "qtyOrdered": 250,
      "qtyReceived": 250,
      "unitPricePerKgNgn": 5400,
-     "unitPriceNgn": 5400
+     "unitPriceNgn": 5400,
+     "lineType": "stone_meter",
+     "metersOffered": 250
     },
     {
      "lineKey": "L1787928894300-1-m4qu",
@@ -687,7 +773,9 @@
      "qtyOrdered": 240,
      "qtyReceived": 240,
      "unitPricePerKgNgn": 5500,
-     "unitPriceNgn": 5500
+     "unitPriceNgn": 5500,
+     "lineType": "stone_meter",
+     "metersOffered": 240
     }
    ]
   },
@@ -707,7 +795,9 @@
      "qtyOrdered": 12,
      "qtyReceived": 12,
      "unitPricePerKgNgn": 4500,
-     "unitPriceNgn": 4500
+     "unitPriceNgn": 4500,
+     "lineType": "stone_meter",
+     "metersOffered": 12
     }
    ]
   },
@@ -727,7 +817,9 @@
      "qtyOrdered": 55000,
      "qtyReceived": 55000,
      "unitPricePerKgNgn": 60,
-     "unitPriceNgn": 60
+     "unitPriceNgn": 60,
+     "lineType": "accessory",
+     "metersOffered": null
     }
    ]
   },
@@ -747,7 +839,9 @@
      "qtyOrdered": 369.7,
      "qtyReceived": 569,
      "unitPricePerKgNgn": 11600,
-     "unitPriceNgn": 11600
+     "unitPriceNgn": 11600,
+     "lineType": "coil_meter",
+     "metersOffered": 369.7
     }
    ]
   },
@@ -767,7 +861,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 1000,
      "unitPricePerKgNgn": 4250,
-     "unitPriceNgn": 4250
+     "unitPriceNgn": 4250,
+     "lineType": "stone_meter",
+     "metersOffered": 1000
     },
     {
      "lineKey": "L1786789767979-1-tj56",
@@ -778,7 +874,9 @@
      "qtyOrdered": 500,
      "qtyReceived": 500,
      "unitPricePerKgNgn": 4250,
-     "unitPriceNgn": 4250
+     "unitPriceNgn": 4250,
+     "lineType": "stone_meter",
+     "metersOffered": 500
     },
     {
      "lineKey": "L1786789768342-2-ettw",
@@ -789,7 +887,9 @@
      "qtyOrdered": 30,
      "qtyReceived": 30,
      "unitPricePerKgNgn": 9000,
-     "unitPriceNgn": 9000
+     "unitPriceNgn": 9000,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1786789768342-3-ae7j",
@@ -800,7 +900,9 @@
      "qtyOrdered": 40,
      "qtyReceived": 40,
      "unitPricePerKgNgn": 3500,
-     "unitPriceNgn": 3500
+     "unitPriceNgn": 3500,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1786789768342-4-tfsn",
@@ -811,7 +913,9 @@
      "qtyOrdered": 1,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 15000,
-     "unitPriceNgn": 15000
+     "unitPriceNgn": 15000,
+     "lineType": "service",
+     "metersOffered": null
     }
    ]
   },
@@ -831,7 +935,9 @@
      "qtyOrdered": 2118,
      "qtyReceived": 2118,
      "unitPricePerKgNgn": 6720,
-     "unitPriceNgn": 6720
+     "unitPriceNgn": 6720,
+     "lineType": "coil_kg",
+     "metersOffered": 1205
     },
     {
      "lineKey": "L1786097100994-1-utzn",
@@ -842,7 +948,9 @@
      "qtyOrdered": 1941,
      "qtyReceived": 1941,
      "unitPricePerKgNgn": 6720,
-     "unitPriceNgn": 6720
+     "unitPriceNgn": 6720,
+     "lineType": "coil_kg",
+     "metersOffered": 1435
     }
    ]
   },
@@ -862,7 +970,9 @@
      "qtyOrdered": 3324,
      "qtyReceived": 3404,
      "unitPricePerKgNgn": 1730,
-     "unitPriceNgn": 1730
+     "unitPriceNgn": 1730,
+     "lineType": "coil_kg",
+     "metersOffered": 1462
     },
     {
      "lineKey": "L1786115971251-1-utme",
@@ -873,7 +983,9 @@
      "qtyOrdered": 3306,
      "qtyReceived": 3366,
      "unitPricePerKgNgn": 1730,
-     "unitPriceNgn": 1730
+     "unitPriceNgn": 1730,
+     "lineType": "coil_kg",
+     "metersOffered": 1456
     },
     {
      "lineKey": "L1786115971251-2-h7p8",
@@ -884,7 +996,9 @@
      "qtyOrdered": 3282,
      "qtyReceived": 3362,
      "unitPricePerKgNgn": 1730,
-     "unitPriceNgn": 1730
+     "unitPriceNgn": 1730,
+     "lineType": "coil_kg",
+     "metersOffered": 1446
     },
     {
      "lineKey": "L1786115971251-3-kixk",
@@ -895,7 +1009,9 @@
      "qtyOrdered": 3438,
      "qtyReceived": 3445,
      "unitPricePerKgNgn": 1730,
-     "unitPriceNgn": 1730
+     "unitPriceNgn": 1730,
+     "lineType": "coil_kg",
+     "metersOffered": 1300
     },
     {
      "lineKey": "L1786115971251-4-2trg",
@@ -906,7 +1022,9 @@
      "qtyOrdered": 3264,
      "qtyReceived": 3337,
      "unitPricePerKgNgn": 1730,
-     "unitPriceNgn": 1730
+     "unitPriceNgn": 1730,
+     "lineType": "coil_kg",
+     "metersOffered": 1437
     }
    ]
   },
@@ -926,7 +1044,9 @@
      "qtyOrdered": 3540,
      "qtyReceived": 3620,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1355
     },
     {
      "lineKey": "L1785247604910-1-8vuy",
@@ -937,7 +1057,9 @@
      "qtyOrdered": 3228,
      "qtyReceived": 3307,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1240
     },
     {
      "lineKey": "L1785247604910-2-d2mq",
@@ -948,7 +1070,9 @@
      "qtyOrdered": 3272,
      "qtyReceived": 3343,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1575
     }
    ]
   },
@@ -968,7 +1092,9 @@
      "qtyOrdered": 2240,
      "qtyReceived": 2295,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1086
     }
    ]
   },
@@ -988,7 +1114,9 @@
      "qtyOrdered": 53.2,
      "qtyReceived": 53.2,
      "unitPricePerKgNgn": 7000,
-     "unitPriceNgn": 7000
+     "unitPriceNgn": 7000,
+     "lineType": "coil_meter",
+     "metersOffered": 53.2
     }
    ]
   },
@@ -1008,7 +1136,9 @@
      "qtyOrdered": 27.6,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 11600,
-     "unitPriceNgn": 11600
+     "unitPriceNgn": 11600,
+     "lineType": "coil_meter",
+     "metersOffered": 27.6
     }
    ]
   },
@@ -1028,7 +1158,9 @@
      "qtyOrdered": 2865,
      "qtyReceived": 2921,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1375
     }
    ]
   },
@@ -1048,7 +1180,9 @@
      "qtyOrdered": 3356,
      "qtyReceived": 3374,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1510
     },
     {
      "lineKey": "L1784125846607-1-9upb",
@@ -1059,7 +1193,9 @@
      "qtyOrdered": 3306,
      "qtyReceived": 3428,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1465
     },
     {
      "lineKey": "L1784125846607-2-5zl2",
@@ -1070,7 +1206,9 @@
      "qtyOrdered": 3262,
      "qtyReceived": 3333,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1249
     }
    ]
   },
@@ -1090,7 +1228,9 @@
      "qtyOrdered": 440,
      "qtyReceived": 440,
      "unitPricePerKgNgn": 4370,
-     "unitPriceNgn": 4370
+     "unitPriceNgn": 4370,
+     "lineType": "stone_meter",
+     "metersOffered": 440
     }
    ]
   },
@@ -1110,7 +1250,9 @@
      "qtyOrdered": 3484,
      "qtyReceived": 3570,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1333
     }
    ]
   },
@@ -1130,7 +1272,9 @@
      "qtyOrdered": 3370,
      "qtyReceived": 3449,
      "unitPricePerKgNgn": 1760,
-     "unitPriceNgn": 1760
+     "unitPriceNgn": 1760,
+     "lineType": "coil_kg",
+     "metersOffered": 1785
     }
    ]
   },
@@ -1150,7 +1294,9 @@
      "qtyOrdered": 3298,
      "qtyReceived": 3375,
      "unitPricePerKgNgn": 1750,
-     "unitPriceNgn": 1750
+     "unitPriceNgn": 1750,
+     "lineType": "coil_kg",
+     "metersOffered": 1480
     }
    ]
   },
@@ -1170,7 +1316,9 @@
      "qtyOrdered": 2600,
      "qtyReceived": 2767,
      "unitPricePerKgNgn": 6700,
-     "unitPriceNgn": 6700
+     "unitPriceNgn": 6700,
+     "lineType": "coil_kg",
+     "metersOffered": 1575
     }
    ]
   },
@@ -1190,7 +1338,9 @@
      "qtyOrdered": 3442,
      "qtyReceived": 3527,
      "unitPricePerKgNgn": 1700,
-     "unitPriceNgn": 1700
+     "unitPriceNgn": 1700,
+     "lineType": "coil_kg",
+     "metersOffered": 1363
     }
    ]
   },
@@ -1210,7 +1360,9 @@
      "qtyOrdered": 75.4,
      "qtyReceived": 75.4,
      "unitPricePerKgNgn": 11500,
-     "unitPriceNgn": 11500
+     "unitPriceNgn": 11500,
+     "lineType": "coil_meter",
+     "metersOffered": 75.4
     }
    ]
   },
@@ -1230,7 +1382,9 @@
      "qtyOrdered": 500,
      "qtyReceived": 500,
      "unitPricePerKgNgn": 29500,
-     "unitPriceNgn": 29500
+     "unitPriceNgn": 29500,
+     "lineType": "accessory",
+     "metersOffered": null
     }
    ]
   },
@@ -1250,7 +1404,9 @@
      "qtyOrdered": 3474,
      "qtyReceived": 3553,
      "unitPricePerKgNgn": 1760,
-     "unitPriceNgn": 1760
+     "unitPriceNgn": 1760,
+     "lineType": "coil_kg",
+     "metersOffered": 1549
     },
     {
      "lineKey": "L1783001421485-1-o8yv",
@@ -1261,7 +1417,9 @@
      "qtyOrdered": 2896,
      "qtyReceived": 2978,
      "unitPricePerKgNgn": 1760,
-     "unitPriceNgn": 1760
+     "unitPriceNgn": 1760,
+     "lineType": "coil_kg",
+     "metersOffered": 1068
     }
    ]
   },
@@ -1281,7 +1439,9 @@
      "qtyOrdered": 1956,
      "qtyReceived": 2046,
      "unitPricePerKgNgn": 6700,
-     "unitPriceNgn": 6700
+     "unitPriceNgn": 6700,
+     "lineType": "coil_kg",
+     "metersOffered": 1140
     }
    ]
   },
@@ -1301,7 +1461,9 @@
      "qtyOrdered": 2000,
      "qtyReceived": 2000,
      "unitPricePerKgNgn": 250,
-     "unitPriceNgn": 250
+     "unitPriceNgn": 250,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1782133303042-1-ezdv",
@@ -1312,7 +1474,9 @@
      "qtyOrdered": 18,
      "qtyReceived": 18,
      "unitPricePerKgNgn": 37055,
-     "unitPriceNgn": 37055
+     "unitPriceNgn": 37055,
+     "lineType": "accessory",
+     "metersOffered": null
     }
    ]
   },
@@ -1332,7 +1496,9 @@
      "qtyOrdered": 3412,
      "qtyReceived": 3500,
      "unitPricePerKgNgn": 1770,
-     "unitPriceNgn": 1770
+     "unitPriceNgn": 1770,
+     "lineType": "",
+     "metersOffered": 1301
     },
     {
      "lineKey": "L1782314760238-1-t6t6",
@@ -1343,7 +1509,9 @@
      "qtyOrdered": 3454,
      "qtyReceived": 3539,
      "unitPricePerKgNgn": 1770,
-     "unitPriceNgn": 1770
+     "unitPriceNgn": 1770,
+     "lineType": "",
+     "metersOffered": 1335
     }
    ]
   },
@@ -1363,7 +1531,9 @@
      "qtyOrdered": 149,
      "qtyReceived": 244,
      "unitPricePerKgNgn": 11500,
-     "unitPriceNgn": 11500
+     "unitPriceNgn": 11500,
+     "lineType": "",
+     "metersOffered": 149
     }
    ]
   },
@@ -1383,7 +1553,9 @@
      "qtyOrdered": 61,
      "qtyReceived": 95,
      "unitPricePerKgNgn": 11500,
-     "unitPriceNgn": 11500
+     "unitPriceNgn": 11500,
+     "lineType": "",
+     "metersOffered": 61
     }
    ]
   },
@@ -1403,7 +1575,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 1000,
      "unitPricePerKgNgn": 4370,
-     "unitPriceNgn": 4370
+     "unitPriceNgn": 4370,
+     "lineType": "stone_meter",
+     "metersOffered": 1000
     },
     {
      "lineKey": "L1781708872778-1-utez",
@@ -1414,7 +1588,9 @@
      "qtyOrdered": 500,
      "qtyReceived": 500,
      "unitPricePerKgNgn": 4370,
-     "unitPriceNgn": 4370
+     "unitPriceNgn": 4370,
+     "lineType": "stone_meter",
+     "metersOffered": 500
     },
     {
      "lineKey": "L1781708873085-2-zudl",
@@ -1425,7 +1601,9 @@
      "qtyOrdered": 200,
      "qtyReceived": 200,
      "unitPricePerKgNgn": 4200,
-     "unitPriceNgn": 4200
+     "unitPriceNgn": 4200,
+     "lineType": "stone_flatsheet",
+     "metersOffered": 2
     },
     {
      "lineKey": "L1781708873601-3-09br",
@@ -1436,7 +1614,9 @@
      "qtyOrdered": 200,
      "qtyReceived": 200,
      "unitPricePerKgNgn": 4200,
-     "unitPriceNgn": 4200
+     "unitPriceNgn": 4200,
+     "lineType": "stone_flatsheet",
+     "metersOffered": 2
     }
    ]
   },
@@ -1456,7 +1636,9 @@
      "qtyOrdered": 2944,
      "qtyReceived": 3007,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1420
     },
     {
      "lineKey": "L1781709439181-1-7khf",
@@ -1467,7 +1649,9 @@
      "qtyOrdered": 3342,
      "qtyReceived": 3342,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1717
     },
     {
      "lineKey": "L1781709439181-2-9901",
@@ -1478,7 +1662,9 @@
      "qtyOrdered": 3306,
      "qtyReceived": 3386,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1455
     }
    ]
   },
@@ -1498,7 +1684,9 @@
      "qtyOrdered": 92,
      "qtyReceived": 160,
      "unitPricePerKgNgn": 12000,
-     "unitPriceNgn": 12000
+     "unitPriceNgn": 12000,
+     "lineType": "coil_kg",
+     "metersOffered": 92
     }
    ]
   },
@@ -1518,7 +1706,9 @@
      "qtyOrdered": 3306,
      "qtyReceived": 3315,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1471
     },
     {
      "lineKey": "L1781018852190-1-5a7q",
@@ -1529,7 +1719,9 @@
      "qtyOrdered": 3272,
      "qtyReceived": 3341,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1460
     }
    ]
   },
@@ -1549,7 +1741,9 @@
      "qtyOrdered": 23,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 14600,
-     "unitPriceNgn": 14600
+     "unitPriceNgn": 14600,
+     "lineType": "coil_kg",
+     "metersOffered": 23
     }
    ]
   },
@@ -1569,7 +1763,9 @@
      "qtyOrdered": 72,
      "qtyReceived": 93,
      "unitPricePerKgNgn": 10900,
-     "unitPriceNgn": 10900
+     "unitPriceNgn": 10900,
+     "lineType": "coil_kg",
+     "metersOffered": 72
     },
     {
      "lineKey": "L1781089068633-1-83ft",
@@ -1580,7 +1776,9 @@
      "qtyOrdered": 2900,
      "qtyReceived": 2943,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1390
     }
    ]
   },
@@ -1600,7 +1798,9 @@
      "qtyOrdered": 2964,
      "qtyReceived": 3016,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1436
     },
     {
      "lineKey": "L1781017885134-1-vmy2",
@@ -1611,7 +1811,9 @@
      "qtyOrdered": 3178,
      "qtyReceived": 3248,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1430
     },
     {
      "lineKey": "L1781017885134-2-x363",
@@ -1622,7 +1824,9 @@
      "qtyOrdered": 3476,
      "qtyReceived": 3476,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1551
     },
     {
      "lineKey": "L1781017885134-3-ci4h",
@@ -1633,7 +1837,9 @@
      "qtyOrdered": 3060,
      "qtyReceived": 3115,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1601
     }
    ]
   },
@@ -1653,7 +1859,9 @@
      "qtyOrdered": 10,
      "qtyReceived": 10,
      "unitPricePerKgNgn": 35000,
-     "unitPriceNgn": 35000
+     "unitPriceNgn": 35000,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1780501982221-1-qt4s",
@@ -1664,7 +1872,9 @@
      "qtyOrdered": 60,
      "qtyReceived": 60,
      "unitPricePerKgNgn": 8500,
-     "unitPriceNgn": 8500
+     "unitPriceNgn": 8500,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1780501982221-2-8drr",
@@ -1675,7 +1885,9 @@
      "qtyOrdered": 24,
      "qtyReceived": 24,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1780501982221-3-c6px",
@@ -1686,7 +1898,9 @@
      "qtyOrdered": 450,
      "qtyReceived": 450,
      "unitPricePerKgNgn": 300,
-     "unitPriceNgn": 300
+     "unitPriceNgn": 300,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1780501982221-4-tdmp",
@@ -1697,7 +1911,9 @@
      "qtyOrdered": 1,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 5000,
-     "unitPriceNgn": 5000
+     "unitPriceNgn": 5000,
+     "lineType": "service",
+     "metersOffered": null
     }
    ]
   },
@@ -1717,7 +1933,9 @@
      "qtyOrdered": 25,
      "qtyReceived": 25,
      "unitPricePerKgNgn": 4800,
-     "unitPriceNgn": 4800
+     "unitPriceNgn": 4800,
+     "lineType": "stone_meter",
+     "metersOffered": 25
     }
    ]
   },
@@ -1737,7 +1955,9 @@
      "qtyOrdered": 2093,
      "qtyReceived": 2158,
      "unitPricePerKgNgn": 6800,
-     "unitPriceNgn": 6800
+     "unitPriceNgn": 6800,
+     "lineType": "coil_kg",
+     "metersOffered": 1300
     }
    ]
   },
@@ -1757,7 +1977,9 @@
      "qtyOrdered": 700,
      "qtyReceived": 700,
      "unitPricePerKgNgn": 4420,
-     "unitPriceNgn": 4420
+     "unitPriceNgn": 4420,
+     "lineType": "stone_meter",
+     "metersOffered": 700
     },
     {
      "lineKey": "L1781008723723-1-i1as",
@@ -1768,7 +1990,9 @@
      "qtyOrdered": 300,
      "qtyReceived": 300,
      "unitPricePerKgNgn": 4420,
-     "unitPriceNgn": 4420
+     "unitPriceNgn": 4420,
+     "lineType": "stone_meter",
+     "metersOffered": 300
     },
     {
      "lineKey": "L1781008769905-2-c53g",
@@ -1779,7 +2003,9 @@
      "qtyOrdered": 500,
      "qtyReceived": 500,
      "unitPricePerKgNgn": 4420,
-     "unitPriceNgn": 4420
+     "unitPriceNgn": 4420,
+     "lineType": "stone_meter",
+     "metersOffered": 500
     },
     {
      "lineKey": "L1781008805746-3-xue2",
@@ -1790,7 +2016,9 @@
      "qtyOrdered": 500,
      "qtyReceived": 500,
      "unitPricePerKgNgn": 4420,
-     "unitPriceNgn": 4420
+     "unitPriceNgn": 4420,
+     "lineType": "stone_meter",
+     "metersOffered": 500
     }
    ]
   },
@@ -1810,7 +2038,9 @@
      "qtyOrdered": 2666,
      "qtyReceived": 2701,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1013
     },
     {
      "lineKey": "L1779462867117-1-ibdi",
@@ -1821,7 +2051,9 @@
      "qtyOrdered": 2648,
      "qtyReceived": 2701,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1027
     }
    ]
   },
@@ -1841,7 +2073,9 @@
      "qtyOrdered": 2984,
      "qtyReceived": 3039,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1155
     }
    ]
   },
@@ -1861,7 +2095,9 @@
      "qtyOrdered": 1800,
      "qtyReceived": 1800,
      "unitPricePerKgNgn": 50,
-     "unitPriceNgn": 50
+     "unitPriceNgn": 50,
+     "lineType": "accessory",
+     "metersOffered": null
     }
    ]
   },
@@ -1881,7 +2117,9 @@
      "qtyOrdered": 3192,
      "qtyReceived": 3260,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1404
     },
     {
      "lineKey": "L1779277778918-1-pm8s",
@@ -1892,7 +2130,9 @@
      "qtyOrdered": 3518,
      "qtyReceived": 3590,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1314
     }
    ]
   },
@@ -1912,7 +2152,9 @@
      "qtyOrdered": 21,
      "qtyReceived": 35,
      "unitPricePerKgNgn": 11700,
-     "unitPriceNgn": 11700
+     "unitPriceNgn": 11700,
+     "lineType": "coil_kg",
+     "metersOffered": 21
     }
    ]
   },
@@ -1932,7 +2174,9 @@
      "qtyOrdered": 3050,
      "qtyReceived": 3115,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1125
     },
     {
      "lineKey": "L1779190812516-1-9fmy",
@@ -1943,7 +2187,9 @@
      "qtyOrdered": 3334,
      "qtyReceived": 3401,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1472
     },
     {
      "lineKey": "L1779190812516-2-9gii",
@@ -1954,7 +2200,9 @@
      "qtyOrdered": 3284,
      "qtyReceived": 3355,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1467
     },
     {
      "lineKey": "L1779190812516-3-31bl",
@@ -1965,7 +2213,9 @@
      "qtyOrdered": 3140,
      "qtyReceived": 3140,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1602
     }
    ]
   },
@@ -1985,7 +2235,9 @@
      "qtyOrdered": 50,
      "qtyReceived": 50,
      "unitPricePerKgNgn": 4500,
-     "unitPriceNgn": 4500
+     "unitPriceNgn": 4500,
+     "lineType": "stone_flatsheet",
+     "metersOffered": 2
     },
     {
      "lineKey": "L1779622889974-1-0e1t",
@@ -1996,7 +2248,9 @@
      "qtyOrdered": 100,
      "qtyReceived": 100,
      "unitPricePerKgNgn": 4500,
-     "unitPriceNgn": 4500
+     "unitPriceNgn": 4500,
+     "lineType": "stone_flatsheet",
+     "metersOffered": 2
     },
     {
      "lineKey": "L1779622890207-2-3mbw",
@@ -2007,7 +2261,9 @@
      "qtyOrdered": 30,
      "qtyReceived": 30,
      "unitPricePerKgNgn": 9000,
-     "unitPriceNgn": 9000
+     "unitPriceNgn": 9000,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1779622890207-3-ju2t",
@@ -2018,7 +2274,9 @@
      "qtyOrdered": 10,
      "qtyReceived": 10,
      "unitPricePerKgNgn": 4000,
-     "unitPriceNgn": 4000
+     "unitPriceNgn": 4000,
+     "lineType": "accessory",
+     "metersOffered": null
     }
    ]
   },
@@ -2038,7 +2296,9 @@
      "qtyOrdered": 278.9,
      "qtyReceived": 426,
      "unitPricePerKgNgn": 10700,
-     "unitPriceNgn": 10700
+     "unitPriceNgn": 10700,
+     "lineType": "coil_kg",
+     "metersOffered": 278.9
     }
    ]
   },
@@ -2058,7 +2318,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 1000,
      "unitPricePerKgNgn": 4450,
-     "unitPriceNgn": 4450
+     "unitPriceNgn": 4450,
+     "lineType": "stone_meter",
+     "metersOffered": 1000
     }
    ]
   },
@@ -2078,7 +2340,9 @@
      "qtyOrdered": 300,
      "qtyReceived": 300,
      "unitPricePerKgNgn": 1240,
-     "unitPriceNgn": 1240
+     "unitPriceNgn": 1240,
+     "lineType": "accessory",
+     "metersOffered": null
     }
    ]
   },
@@ -2098,7 +2362,9 @@
      "qtyOrdered": 3187,
      "qtyReceived": 3228,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1550
     }
    ]
   },
@@ -2118,7 +2384,9 @@
      "qtyOrdered": 43.4,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 11300,
-     "unitPriceNgn": 11300
+     "unitPriceNgn": 11300,
+     "lineType": "coil_kg",
+     "metersOffered": 43.4
     }
    ]
   },
@@ -2138,7 +2406,9 @@
      "qtyOrdered": 3722,
      "qtyReceived": 3776,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 2012
     }
    ]
   },
@@ -2158,7 +2428,9 @@
      "qtyOrdered": 3240,
      "qtyReceived": 3291,
      "unitPricePerKgNgn": 1780,
-     "unitPriceNgn": 1780
+     "unitPriceNgn": 1780,
+     "lineType": "coil_kg",
+     "metersOffered": null
     },
     {
      "lineKey": "L1778163862107-1-9z0w",
@@ -2169,7 +2441,9 @@
      "qtyOrdered": 2822,
      "qtyReceived": 2877,
      "unitPricePerKgNgn": 1780,
-     "unitPriceNgn": 1780
+     "unitPriceNgn": 1780,
+     "lineType": "coil_kg",
+     "metersOffered": null
     }
    ]
   },
@@ -2189,7 +2463,9 @@
      "qtyOrdered": 3164,
      "qtyReceived": 3235,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1201
     },
     {
      "lineKey": "L1778171202683-1-58nt",
@@ -2200,7 +2476,9 @@
      "qtyOrdered": 3250,
      "qtyReceived": 3319,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1447
     },
     {
      "lineKey": "L1778171202683-2-uxh2",
@@ -2211,7 +2489,9 @@
      "qtyOrdered": 2854,
      "qtyReceived": 2919,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1365
     }
    ]
   },
@@ -2231,7 +2511,9 @@
      "qtyOrdered": 3642,
      "qtyReceived": 3723,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1440
     }
    ]
   },
@@ -2251,7 +2533,9 @@
      "qtyOrdered": 3642,
      "qtyReceived": 0,
      "unitPricePerKgNgn": 1800,
-     "unitPriceNgn": 1800
+     "unitPriceNgn": 1800,
+     "lineType": "coil_kg",
+     "metersOffered": 1440
     }
    ]
   },
@@ -2271,7 +2555,9 @@
      "qtyOrdered": 15.6,
      "qtyReceived": 24,
      "unitPricePerKgNgn": 11500,
-     "unitPriceNgn": 11500
+     "unitPriceNgn": 11500,
+     "lineType": "coil_kg",
+     "metersOffered": 15.6
     }
    ]
   },
@@ -2291,7 +2577,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 1000,
      "unitPricePerKgNgn": 4460,
-     "unitPriceNgn": 4460
+     "unitPriceNgn": 4460,
+     "lineType": "stone_meter",
+     "metersOffered": 1000
     }
    ]
   },
@@ -2311,7 +2599,9 @@
      "qtyOrdered": 1000,
      "qtyReceived": 1000,
      "unitPricePerKgNgn": 4450,
-     "unitPriceNgn": 4450
+     "unitPriceNgn": 4450,
+     "lineType": "stone_meter",
+     "metersOffered": 1000
     },
     {
      "lineKey": "L1780408900465-1-w8f3",
@@ -2322,7 +2612,9 @@
      "qtyOrdered": 15,
      "qtyReceived": 15,
      "unitPricePerKgNgn": 8500,
-     "unitPriceNgn": 8500
+     "unitPriceNgn": 8500,
+     "lineType": "accessory",
+     "metersOffered": null
     },
     {
      "lineKey": "L1780408900465-2-mazv",
@@ -2333,7 +2625,9 @@
      "qtyOrdered": 100,
      "qtyReceived": 100,
      "unitPricePerKgNgn": 100,
-     "unitPriceNgn": 100
+     "unitPriceNgn": 100,
+     "lineType": "accessory",
+     "metersOffered": null
     }
    ]
   }

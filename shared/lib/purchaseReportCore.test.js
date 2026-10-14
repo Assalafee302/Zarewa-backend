@@ -17,9 +17,16 @@ const outstandingByPo = (report) =>
   Object.fromEntries(report.supplierPositions.rows.filter((r) => r.outstandingNgn > 0).map((r) => [r.poId, r.outstandingNgn]));
 
 describe('purchase register v2 — Kaduna Sep 2026 fixture', () => {
-  it('values coil GRN at received kg × unit cost', () => {
-    expect(sep.aluminium.totals.totalValueNgn + sep.aluzinc.totals.totalValueNgn).toBe(121_443_840);
+  it('values coil GRN at received kg × unit cost, metre-bought aluminium at amount paid', () => {
+    // ₦121,443,840 at kg × ERP price + ₦97,800: CL-26-2205 and CL-26-2089 were bought by the metre.
+    expect(sep.aluminium.totals.totalValueNgn + sep.aluzinc.totals.totalValueNgn).toBe(121_541_640);
     expect(sep.unclassifiedCoil.totals.lineCount).toBe(0);
+  });
+
+  it('values a metre-bought coil at the line amount paid (CL-26-2205: 85.4 m × ₦6,500 = ₦555,100 for 71 kg)', () => {
+    const row = sep.aluminium.groups.flatMap((g) => g.rows).find((r) => r.coilNo === 'CL-26-2205');
+    expect(row).toMatchObject({ boughtBy: 'metre', receivedKg: 71, totalNgn: 555_100 });
+    expect(row.remark).toMatch(/Bought by metre/);
   });
 
   it('counts aluminium 6,970 kg (coil 2082, GRN 31 Aug, stays out) and aluzinc 43,304 kg', () => {

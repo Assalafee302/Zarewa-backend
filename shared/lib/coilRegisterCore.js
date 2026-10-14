@@ -13,6 +13,10 @@
  *   a second "with received-date corrections" figure when a correction applies.
  */
 
+import { METRE_PRICE_THRESHOLD_NGN, purchaseUnitForLine } from './coilPurchaseUnit.js';
+
+export { METRE_PRICE_THRESHOLD_NGN, purchaseUnitForLine };
+
 /** Spool weight per coil. Aluminium bought by the metre arrives without a spool (owner, 2026-10-14). */
 export const SPOOL_KG = { aluminium: 45, aluzinc: 65, aluminiumByMetre: 0 };
 
@@ -22,8 +26,6 @@ export const SPOOL_KG = { aluminium: 45, aluzinc: 65, aluminiumByMetre: 0 };
  */
 export const OPENING_ALUMINIUM_BOUGHT_BY_KG = ['CL-KD-APR-1918'];
 
-/** Aluminium priced at or above this per "kg" on a PO line is really a per-metre price. */
-export const METRE_PRICE_THRESHOLD_NGN = 9000;
 
 /** Oct 2026 stock-check corrections (owner, 2026-10-14): true at every earlier date. */
 export const STOCK_CHECK_CORRECTIONS_FROM_ISO = '2026-10-01';
@@ -101,23 +103,6 @@ export function spoolKgForCoil(coil, boughtBy = 'kg') {
   return fam ? SPOOL_KG[fam] : 0;
 }
 
-/**
- * How a PO coil line was bought. Aluminium is "metre" when any of: lineType coil_meter; metersOffered equals
- * qtyOrdered (kg lines never match); unit price ≥ METRE_PRICE_THRESHOLD_NGN. Everything else is "kg".
- * @returns {{ unit: 'kg' | 'metre', rule: string }}
- */
-export function purchaseUnitForLine(line) {
-  const aluminium = coilFamily(line?.productName, line?.productID) === 'aluminium';
-  if (!aluminium) return { unit: 'kg', rule: 'Aluzinc is bought by kg' };
-  if (String(line?.lineType || '') === 'coil_meter') return { unit: 'metre', rule: 'PO line type coil_meter' };
-  const metres = num(line?.metersOffered);
-  if (metres > 0 && Math.abs(metres - num(line?.qtyOrdered)) < 1e-6) {
-    return { unit: 'metre', rule: 'metres offered = quantity ordered' };
-  }
-  const price = num(line?.unitPricePerKgNgn) || num(line?.unitPriceNgn);
-  if (price >= METRE_PRICE_THRESHOLD_NGN) return { unit: 'metre', rule: `price ≥ ₦${METRE_PRICE_THRESHOLD_NGN.toLocaleString('en-NG')}` };
-  return { unit: 'kg', rule: 'aluminium priced per kg' };
-}
 
 /** Gross kg → { spoolKg, netKg }: a coil lighter than its spool is nil net. */
 export function splitSpool(grossKg, spoolKg) {

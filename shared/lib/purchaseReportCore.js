@@ -7,6 +7,7 @@
 import { displayDocNumber, displayLast4, displayTxnDateShort } from './reportDisplayFormat.js';
 import { purchasesPaidRows } from './standardReportsPurchases.js';
 import { PAYMENT_OUTSTANDING_TOLERANCE_NGN } from './paymentOutstandingTolerance.js';
+import { poLineAmountNgn, purchaseUnitForLine } from './coilPurchaseUnit.js';
 
 function coilMaterialFamily(materialTypeName) {
   const k = normKey(materialTypeName);
@@ -715,10 +716,18 @@ function poReceiptPositionAsOf(po, after) {
   return { receivedValueNgn, anyGoodsShort };
 }
 
-function buildCoilReceiptRowV2(lot, po, line, masterData) {
+/**
+ * @param {number} [lineCoilKg] — kg of all coils received on this PO line (metre lines: amount is shared by kg)
+ */
+function buildCoilReceiptRowV2(lot, po, line, masterData, lineCoilKg = 0) {
   const receivedKg = round2(Number(lot.weightKg ?? lot.qtyReceived) || 0);
   const orderKg = line ? round2(Number(line.qtyOrdered) || 0) : null;
-  const unitKg = Math.round(Number(lot.unitCostNgnPerKg) || 0) || Math.round(Number(line?.unitPricePerKgNgn) || 0);
+  /* Metre-bought aluminium: value at amount paid (line amount ÷ kg received), not kg × price-per-metre. */
+  const boughtBy = line ? purchaseUnitForLine(line) : null;
+  const byMetre = boughtBy?.unit === 'metre' && lineCoilKg > 0 && poLineAmountNgn(line) > 0;
+  const unitKg = byMetre
+    ? round2(poLineAmountNgn(line) / lineCoilKg)
+    : Math.round(Number(lot.unitCostNgnPerKg) || 0) || Math.round(Number(line?.unitPricePerKgNgn) || 0);
   const landedNgn = lot.landedCostNgn != null ? Math.round(Number(lot.landedCostNgn)) : null;
   const totalNgn = unitKg > 0 && receivedKg > 0 ? Math.round(unitKg * receivedKg) : 0;
   const poId = String(lot.poID || '').trim();
@@ -731,6 +740,9 @@ function buildCoilReceiptRowV2(lot, po, line, masterData) {
     if (lineRecv < orderKg) remarks.push(`PO line recv ${lineRecv} / ${orderKg} kg`);
   }
   if (!unitKg) remarks.push('No unit cost on GRN');
+  if (byMetre) {
+    remarks.push(`Bought by metre (${boughtBy.rule}): valued at amount paid, ERP ₦${Math.round(Number(lot.unitCostNgnPerKg) || 0).toLocaleString('en-NG')}/kg`);
+  }
   if (String(lot.currentStatus || '').toLowerCase() === 'consumed') remarks.push('Coil consumed');
   const basis = String(po?.billingBasis || po?.supplierBillingBasis || '').trim();
   if (basis) remarks.push(basis === 'ordered_kg' ? 'Bills on ordered kg' : basis === 'received_kg' ? 'Bills on received kg' : `Bills on ${basis}`);
@@ -743,6 +755,7 @@ function buildCoilReceiptRowV2(lot, po, line, masterData) {
     gauge: String(lot.gaugeLabel || line?.gauge || '').trim() || '—',
     receivedKg,
     orderKg,
+    boughtBy: boughtBy?.unit || '',
     kgAmountNgn: unitKg || null,
     totalNgn,
     remainingValueTodayNgn: landedNgn,
@@ -885,6 +898,13 @@ export function buildPurchaseReport(input = {}) {
   const flatsheetRows = [];
   const accRows = [];
 
+  /** kg of all coils received per PO line (any date): a metre line's amount is shared over its coils by kg. */
+  const coilKgByLine = new Map();
+  for (const lot of coilLots || []) {
+    const key = `${String(lot.poID || '').trim()}|${lot.lineKey}`;
+    coilKgByLine.set(key, (coilKgByLine.get(key) || 0) + (Number(lot.weightKg ?? lot.qtyReceived) || 0));
+  }
+
   for (const lot of coilLots || []) {
     if (!dateInPeriod(lot.receivedAtISO, startDate, endDate)) continue;
     const pid = String(lot.productID || '').trim();
@@ -892,7 +912,7 @@ export function buildPurchaseReport(input = {}) {
     const poId = String(lot.poID || '').trim();
     const line = poId ? lineByPoLine.get(`${poId}|${lot.lineKey}`) : null;
     const po = poId ? poById.get(poId) : null;
-    const row = buildCoilReceiptRowV2(lot, po, line, masterData);
+    const row = buildCoilReceiptRowV2(lot, po, line, masterData, coilKgByLine.get(`${poId}|${lot.lineKey}`) || 0);
     const fam = familyFromLot(lot);
     if (fam === 'aluzinc') aluzRows.push(row);
     else if (fam === 'aluminium') aluRows.push(row);

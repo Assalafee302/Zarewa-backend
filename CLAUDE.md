@@ -39,7 +39,7 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - Opening coils with no unit cost are valued at the price recorded on the other coils of the same material in the same opening batch (Aluzinc ₦1,738/kg on 30 Apr 2026) and listed as an exception. This reproduces the owner's 31 Aug / 30 Sep figures.
 - Per PO: kg ordered vs received per line; difference per coil should look like the spool. Lines where received = ordered exactly are listed as "not weighed?".
 - "Paid (net)" per quotation, as at period end = cash that stayed (treasury receipts net of reversals) + credit applied (OVERPAY_APPLIED / ADVANCE_APPLIED) − refunds paid (treasury), three parts in separate columns, counted once per quotation. Flag "Produced before fully covered" (first job completed while coverage < quotation value) measures the Phase 3 control. Quotations covered above value + own overpayment (credit on top of cash) are exceptions (Kaduna Sep: QT-1522, 1544, 1668, 1681).
-- Follow-up for the owner: the approved purchase register still values metre-bought coils at kg × ERP price; applying the metre rule there moves Sep coil GRN value ₦121,443,840 → ₦121,541,640.
+- Purchase register uses the same metre rule (owner, 2026-10-14; `shared/lib/coilPurchaseUnit.js`): metre-bought coils valued at amount paid. Kaduna Sep coil GRN value ₦121,541,640 (was ₦121,443,840). Opening per-kg aluminium list confirmed: only CL-KD-APR-1918 (old DB ₦6,050/kg). QT-1522/1544/1668/1681 over-coverage → Phase 2 list.
 
 ## Tech debt
 

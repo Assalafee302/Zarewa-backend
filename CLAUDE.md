@@ -18,3 +18,21 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 
 - Purchase register approved 2026-10-13. Supplier balances are exact (no rounding tolerance — PO-0070's ₦400 stays). PO value = ordered qty × unit price (not received qty).
 - Recognised sales = sales report rows (receipts on quotations whose first completed production falls in the period, incl. money received earlier) EXCLUDING receipts whose treasury receipt was fully reversed. Suspended receipts that reached the bank and were never reversed stay in, marked suspended.
+- Sales report v2 approved 2026-10-14 (frontend `69b6b47`). Fixture source: ERP export `zarewa-entered-data (8).xlsx`, Kaduna, generated 2026-10-13 14:27 UTC.
+
+## Accounting basis (owner decision 2026-10-14)
+
+- Zarewa uses the **accrual basis**. A sale is recognised when production is complete (job `completedAt`): goods are made to the customer's spec and become theirs on completion.
+- Value of a completed quotation = quotation total − refunds whose reason is unproduced meterage, additional services or another value-reducing reason (not pure "Overpayment"). For mixed-reason refunds, only the part above the quote's overpayment counts as value-reducing.
+- A job marked Completed with 0 actual metres and 0 kg is NOT a sale; it is listed as an exception (e.g. QT-1643, PRO-KD-26-1349).
+- Customer balance = cash received − refunds paid − value produced. > 0 is an advance, < 0 is a debt.
+- Sales bridge (must tie to ₦0): cash received − refunds paid + increase in debts − increase in advances = goods produced (net).
+
+## Material register (next step) — owner notes
+
+- Coil quantities shown gross AND net of spool (Aluzinc 65 kg, Aluminium 45 kg per coil; a coil lighter than its spool = nil).
+- Per PO: kg ordered vs kg received.
+
+## Tech debt
+
+- `salesPaymentsReceivedRows` (frontend `src/lib/liveAnalytics.js`) is slow on full branch history (7–24 s on the Kaduna fixture): `quotationPaidNgnAsOf` rescans all receipts and rebuilds the companion-overpay map per quotation. Leave until reports Phase 1 is done.

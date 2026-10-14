@@ -224,6 +224,7 @@ import {
   voidPartnerWalletCreditsForRefundTx,
 } from './finance/partnerWalletCredit.js';
 import { voidCompanyRetentionForRefundTx } from './finance/refundCompanyRetentionLedger.js';
+import { lockedPeriodChange } from '../shared/lib/controlsPhase3.js';
 import { savedCustomerPayoutAccount } from './sales/customerPayoutAccount.js';
 import {
   applyQuoteCustomerSplitRemainder,
@@ -1995,7 +1996,48 @@ function computeAuditRowHash(fields, prevHash) {
     .digest('hex');
 }
 
+/** Business date column per audited entity kind (Phase 3 locked-period flag). */
+const AUDIT_ENTITY_DATE_SQL = {
+  quotation: `SELECT date_iso AS d FROM quotations WHERE id = ?`,
+  production_job: `SELECT COALESCE(NULLIF(completed_at_iso, ''), NULLIF(start_date_iso, ''), created_at_iso) AS d FROM production_jobs WHERE job_id = ?`,
+  coil_lot: `SELECT received_at_iso AS d FROM coil_lots WHERE coil_no = ?`,
+  sales_receipt: `SELECT date_iso AS d FROM sales_receipts WHERE id = ?`,
+  ledger_entry: `SELECT at_iso AS d FROM ledger_entries WHERE id = ?`,
+  treasury_movement: `SELECT posted_at_iso AS d FROM treasury_movements WHERE id = ?`,
+  expense: `SELECT date AS d FROM expenses WHERE expense_id = ?`,
+  purchase_order: `SELECT order_date_iso AS d FROM purchase_orders WHERE po_id = ?`,
+  payment_request: `SELECT request_date AS d FROM payment_requests WHERE request_id = ?`,
+  refund: `SELECT requested_at_iso AS d FROM customer_refunds WHERE refund_id = ?`,
+};
+
+/**
+ * "Locked-period change" flag for an audit row: the edited record is dated in a locked month. Callers may pass
+ * `recordDateISO`; otherwise the date is read from the entity. Best-effort — never blocks the write.
+ */
+function auditLockedPeriodChange(db, payload) {
+  try {
+    const locked = db.prepare(`SELECT period_key FROM accounting_period_locks`).all().map((r) => r.period_key);
+    if (!locked.length) return null;
+    let recordDateISO = String(payload.recordDateISO || '').trim();
+    const explicit = Boolean(recordDateISO);
+    if (!recordDateISO && payload.entityId && AUDIT_ENTITY_DATE_SQL[payload.entityKind]) {
+      recordDateISO = String(db.prepare(AUDIT_ENTITY_DATE_SQL[payload.entityKind]).get(String(payload.entityId))?.d || '');
+    }
+    return lockedPeriodChange({ action: payload.action, recordDateISO, lockedPeriodKeys: locked, explicit });
+  } catch {
+    return null;
+  }
+}
+
 export function appendAuditLog(db, payload) {
+  const lockedChange = auditLockedPeriodChange(db, payload);
+  if (lockedChange) {
+    payload = {
+      ...payload,
+      note: `[${lockedChange.flag}] ${payload.note ?? ''}`.trim(),
+      details: { ...(payload.details || {}), lockedPeriodChange: lockedChange },
+    };
+  }
   const id = nextAuditLogHumanId(db);
   const occurredAtISO = payload.occurredAtISO || nowIso();
   const fields = [

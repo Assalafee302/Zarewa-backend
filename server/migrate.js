@@ -1612,6 +1612,52 @@ function runMigrationsUnlocked(db) {
   } catch (e) {
     console.warn('[migrate] accessory/stone phase1 skipped:', e?.message || e);
   }
+  migrateControlsPhase3(db);
+}
+
+/** Phase 3 controls (2026-10-14): receipt payer, PO line unit, coil spool. */
+function migrateControlsPhase3(db) {
+  const colsOf = (table) => {
+    try {
+      const rows = db
+        .prepare(
+          `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`
+        )
+        .all(table);
+      if (rows.length) return new Set(rows.map((c) => String(c.column_name ?? c.COLUMN_NAME ?? '').toLowerCase()));
+    } catch {
+      /* sqlite */
+    }
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const add = {
+    sales_receipts: [['paid_by_name', 'TEXT']],
+    purchase_order_lines: [
+      ['purchase_unit', 'TEXT'],
+      ['meters_ordered', 'REAL'],
+      ['unit_price_per_meter_ngn', 'INTEGER'],
+    ],
+    coil_lots: [
+      ['purchase_unit', 'TEXT'],
+      ['spool_kg', 'REAL'],
+    ],
+  };
+  for (const [table, cols] of Object.entries(add)) {
+    const have = colsOf(table);
+    if (!have.size) continue;
+    for (const [name, typ] of cols) {
+      if (have.has(name)) continue;
+      try {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${typ}`);
+      } catch {
+        /* already present */
+      }
+    }
+  }
 }
 
 /** Partner payable wallets — BM-approved refund credits; cashier withdrawals. */

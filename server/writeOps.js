@@ -88,6 +88,15 @@ import {
   paymentGateBasisAfterQuotationTotalIncrease,
 } from '../shared/lib/cuttingListPaymentGate.js';
 import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
+import {
+  coilReceiptCost,
+  grnWeightVariance,
+  OVERRIDE_REASON_MIN_LEN,
+  poLinePricePerMetreNgn,
+  poLinePurchaseUnit,
+  productionGatePaid,
+  spoolKgAtReceipt,
+} from '../shared/lib/controlsPhase3.js';
 import { quotationOperationsBlockedReason } from './quotationLifecycleOps.js';
 import { stainedOnHandKg } from './operations/stainedLotBalance.js';
 import {
@@ -210,7 +219,6 @@ import {
 } from './supplierDedupe.js';
 import {
   branchWhere,
-  enrichSalesReceiptRowsWithCashFromLedger,
   getQuotation,
   listLedgerEntries,
   listLedgerEntriesForAdvanceBalance,
@@ -1563,6 +1571,22 @@ export function updateCustomer(db, customerID, row, branchId = DEFAULT_BRANCH_ID
   return { ok: true };
 }
 
+/**
+ * Phase 3: store how a coil PO line is bought (kg | metre). Metre lines keep metres and the price per metre in their own
+ * columns; qty_ordered / unit_price_per_kg_ngn still carry them for the existing receiving and AP code.
+ */
+function setPoLinePurchaseUnit(db, poID, lineKey, l) {
+  const pid = String(l?.productID || '').trim();
+  if (/^(STONE-|ACC-)/i.test(pid)) return;
+  const unit = poLinePurchaseUnit(l);
+  const metres = unit === 'metre' ? Number(l.metersOrdered ?? l.metersOffered ?? l.qtyOrdered) || null : null;
+  const perMetre = unit === 'metre' ? poLinePricePerMetreNgn(l) || null : null;
+  db.prepare(
+    `UPDATE purchase_order_lines SET purchase_unit = ?, meters_ordered = ?, unit_price_per_meter_ngn = ?
+     WHERE po_id = ? AND line_key = ?`
+  ).run(unit, metres, perMetre, poID, lineKey);
+}
+
 /** @param {import('better-sqlite3').Database} db */
 export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const {
@@ -1633,6 +1657,7 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
         l.qtyReceived ?? 0,
         l.lineType ?? null
       );
+      setPoLinePurchaseUnit(db, poID, l.lineKey, l);
     }
     appendMovementTx(db, {
       type: 'PO_CREATED',
@@ -1819,6 +1844,7 @@ export function updatePurchaseOrderCoilDraft(db, poID, payload, branchId = DEFAU
         qtyRec,
         l.lineType ?? null
       );
+      setPoLinePurchaseUnit(db, id, lk, l);
     }
     appendMovementTx(db, {
       type: 'PO_UPDATED',
@@ -2693,6 +2719,97 @@ export function confirmGrn(
     /* Allow qty above open PO balance (over-delivery / weighbridge vs paperwork). */
   }
 
+  // Phase 3: every coil is weighed at receipt; metre-bought coils also need their metres (cost = metres × price ÷ kg).
+  const coilPlans = new Map();
+  for (const e of entries) {
+    const line = findPoLine(lines, e);
+    const pid = String(line?.product_id || e.productID || '').trim();
+    if (grnEntryIsNonCoil(getProductRowForWorkspace(db, e.productID, coilBranch), pid)) continue;
+    const w = Number(e.weightKg);
+    if (!(Number.isFinite(w) && w > 0)) {
+      return {
+        ok: false,
+        code: 'GRN_WEIGHT_REQUIRED',
+        error: `Enter the actual weighed kg for every coil (${line.product_name || pid}, line ${line.line_key}).`,
+      };
+    }
+    const unit = poLinePurchaseUnit(line);
+    let metres = null;
+    if (unit === 'metre') {
+      const typed = Number(e.supplierExpectedMeters);
+      const soleCoilOnLine =
+        entries.filter((x) => findPoLine(lines, x) === line).length === 1 && !(Number(line.qty_received) > 0);
+      metres =
+        Number.isFinite(typed) && typed > 0
+          ? typed
+          : isMeterBasisCoilPoLine(line)
+            ? Number(e.qtyReceived)
+            : soleCoilOnLine
+              ? Number(line.meters_ordered ?? line.meters_offered ?? line.qty_ordered) || null
+              : null;
+      if (!(metres > 0)) {
+        return {
+          ok: false,
+          code: 'GRN_METRES_REQUIRED',
+          error: `Line ${line.line_key} is bought by the metre: enter the metres on this coil (supplier's metres).`,
+        };
+      }
+    }
+    coilPlans.set(e, { unit, metres, weighedKg: w });
+  }
+
+  // Phase 3: the GRN date is today; an earlier receival date needs a reason (audit-logged).
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const backdatedDays = [
+    ...new Set(
+      entries
+        .map((e) => String(e?.receivedAtISO ?? e?.received_at_iso ?? e?.dateISO ?? e?.date_iso ?? '').trim().slice(0, 10))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d < todayISO)
+    ),
+  ].sort();
+  const backdateReason = String(opts.backdateReason || '').trim();
+  if (backdatedDays.length && backdateReason.length < OVERRIDE_REASON_MIN_LEN) {
+    return {
+      ok: false,
+      code: 'GRN_BACKDATE_REASON_REQUIRED',
+      error: `Receival date ${backdatedDays[0]} is before today. Give the reason for the earlier date (at least ${OVERRIDE_REASON_MIN_LEN} characters).`,
+      backdatedDays,
+    };
+  }
+
+  // Phase 3: weighed kg vs PO, per line in this receipt — warn above 2% (does not block).
+  const weightWarnings = [];
+  const kgByLine = new Map();
+  for (const [e, plan] of coilPlans) {
+    const line = findPoLine(lines, e);
+    const agg = kgByLine.get(line) || { weighedKg: 0, metres: 0, coils: 0 };
+    agg.weighedKg += plan.weighedKg;
+    agg.metres += plan.metres || 0;
+    agg.coils += 1;
+    kgByLine.set(line, agg);
+  }
+  for (const [line, agg] of kgByLine) {
+    const unit = poLinePurchaseUnit(line);
+    const conv = Number(line.conversion_kg_per_m) || 0;
+    const expectedKg =
+      unit === 'metre'
+        ? conv > 0
+          ? agg.metres * conv
+          : 0
+        : Math.max(0, (Number(line.qty_ordered) || 0) - (Number(line.qty_received) || 0));
+    const v = grnWeightVariance({ weighedKg: agg.weighedKg, expectedKg });
+    if (v.warn) {
+      weightWarnings.push({
+        lineKey: line.line_key,
+        productName: line.product_name,
+        weighedKg: Math.round(agg.weighedKg * 100) / 100,
+        expectedKg: Math.round(expectedKg * 100) / 100,
+        variancePct: v.variancePct,
+        basis: unit === 'metre' ? 'metres × kg/m on the PO' : 'kg still open on the PO line',
+      });
+    }
+  }
+
   const allowConvSkip = Boolean(opts.allowConversionMismatch);
   if (!allowConvSkip) {
     for (const e of entries) {
@@ -2988,12 +3105,15 @@ export function confirmGrn(
           ? e.supplierConversionKgPerM
           : line.conversion_kg_per_m
       );
-      const econ = coilLineReceiptEconomics(
-        line,
-        qty,
-        effectiveWeightKg,
-        supplierExpectedMeters != null && !Number.isNaN(supplierExpectedMeters) ? supplierExpectedMeters : null
-      );
+      // Phase 3: kg line = weighed kg × price per kg; metre line = metres × price per metre ÷ weighed kg (no 1.6×).
+      const plan = coilPlans.get(e);
+      const econ = coilReceiptCost({
+        unit: plan.unit,
+        weighedKg: plan.weighedKg,
+        metres: plan.metres || 0,
+        pricePerKgNgn: Math.round(Number(line.unit_price_per_kg_ngn) || Number(line.unit_price_ngn) || 0),
+        pricePerMetreNgn: poLinePricePerMetreNgn(line),
+      });
       insLot.run(
         coilNo,
         e.productID,
@@ -3018,8 +3138,17 @@ export function confirmGrn(
         econ.landedCostNgn,
         econ.unitCostNgnPerKg
       );
-      const meterBasisLine = isMeterBasisCoilPoLine(line);
-      const creditQty = !meterBasisLine && w != null ? w : qty;
+      db.prepare(`UPDATE coil_lots SET purchase_unit = ?, spool_kg = ? WHERE coil_no = ?`).run(
+        plan.unit,
+        spoolKgAtReceipt({
+          materialTypeName: String(e.materialTypeName ?? product?.material_type ?? line.product_name ?? ''),
+          productID: e.productID,
+          purchaseUnit: plan.unit,
+        }),
+        coilNo
+      );
+      // Metre lines are ordered in metres: credit the coil's metres, kg lines the weighed kg.
+      const creditQty = plan.unit === 'metre' ? plan.metres : w != null ? w : qty;
       const orderedKg = Number(line.qty_ordered) || 0;
       const priorReceivedKg = Number(line.qty_received) || 0;
       const totalReceivedKg = priorReceivedKg + creditQty;
@@ -3115,6 +3244,26 @@ export function confirmGrn(
         throw new Error(`Could not update stock for ${pid} at branch ${coilBranch}.`);
       }
     }
+    if (backdatedDays.length) {
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'inventory.grn_backdated',
+        entityKind: 'purchase_order',
+        entityId: poID,
+        note: `GRN dated ${backdatedDays.join(', ')} (entered ${todayISO}): ${backdateReason}`,
+        details: { backdatedDays, enteredOnISO: todayISO, reason: backdateReason, coilNos: coilNumbers },
+      });
+    }
+    if (weightWarnings.length) {
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'inventory.grn_weight_variance',
+        entityKind: 'purchase_order',
+        entityId: poID,
+        note: `Weighed kg differs from the PO by more than 2% on ${weightWarnings.length} line(s)`,
+        details: { weightWarnings, coilNos: coilNumbers },
+      });
+    }
   })();
   } catch (e) {
     if (coilNumberConflict(e)) {
@@ -3138,7 +3287,12 @@ export function confirmGrn(
     }
   }
 
-  return { ok: true, coilNos: coilNumbers, mdShortReceiptAlerts };
+  return {
+    ok: true,
+    coilNos: coilNumbers,
+    mdShortReceiptAlerts,
+    ...(weightWarnings.length ? { weightWarnings } : {}),
+  };
 }
 
 /**
@@ -7533,26 +7687,53 @@ export function countCoilLotsForProductInWorkspace(db, productID, workspaceBranc
   return Number(row?.c) || 0;
 }
 
-/** Recorded cash toward a quotation from receipts + applied advances (never trust quotations.paid_ngn alone). */
-function quotationRecordedCashPaidNgn(db, quotationRef, branchId) {
+/**
+ * Paid toward a quotation for the production gate (Phase 3): receipts allocated to the quote + advance/overpay credit
+ * applied − treasury reversals of receipt lines still counted (never trust quotations.paid_ngn alone).
+ */
+export function quotationProductionGatePaid(db, quotationRef, branchId) {
   const qKey = normalizeQuotRefDashKey(quotationRef);
   const bid = String(branchId || '').trim() || DEFAULT_BRANCH_ID;
-  const receiptRows = listSalesReceipts(db, bid).filter(
-    (r) => normalizeQuotRefDashKey(r.quotationRef) === qKey
-  );
-  const ledgerRows = listLedgerEntries(db, bid);
-  const enriched = enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerRows);
-  const cashFromReceipts = enriched.reduce(
-    (sum, r) => sum + Math.round(Number(r.cashReceivedNgn ?? r.amountNgn) || 0),
-    0
-  );
-  const advanceApplied = ledgerRows.reduce((sum, e) => {
-    const t = String(e.type || '');
-    if (t !== 'ADVANCE_APPLIED' && t !== 'OVERPAY_APPLIED') return sum;
-    if (normalizeQuotRefDashKey(e.quotationRef) !== qKey) return sum;
-    return sum + Math.round(Number(e.amountNgn) || 0);
-  }, 0);
-  return cashFromReceipts + advanceApplied;
+  const receipts = listSalesReceipts(db, bid)
+    .filter((r) => normalizeQuotRefDashKey(r.quotationRef) === qKey)
+    .map((r) => ({ ...r, quotationRef: qKey }));
+  const ledgerEntries = listLedgerEntries(db, bid)
+    .filter((e) => normalizeQuotRefDashKey(e.quotationRef) === qKey)
+    .map((e) => ({ type: e.type, quotationRef: qKey, amountNgn: e.amountNgn }));
+  return productionGatePaid({
+    quotationRef: qKey,
+    receipts,
+    ledgerEntries,
+    treasuryMovements: receiptTreasuryMovementsWithReversals(db, receipts),
+  });
+}
+
+/** RECEIPT_IN lines posted for these receipts, plus every treasury line that reverses one of them. */
+function receiptTreasuryMovementsWithReversals(db, receipts) {
+  const sourceIds = [...new Set(receipts.flatMap((r) => [r.id, r.ledgerEntryId]).filter(Boolean).map(String))];
+  if (!sourceIds.length) return [];
+  const cols = `id, type, source_id, amount_ngn, reverses_movement_id`;
+  const ins = db
+    .prepare(
+      `SELECT ${cols} FROM treasury_movements
+       WHERE type = 'RECEIPT_IN' AND source_id IN (${sourceIds.map(() => '?').join(',')})`
+    )
+    .all(...sourceIds);
+  const inIds = ins.map((m) => m.id);
+  const revs = inIds.length
+    ? db
+        .prepare(
+          `SELECT ${cols} FROM treasury_movements WHERE reverses_movement_id IN (${inIds.map(() => '?').join(',')})`
+        )
+        .all(...inIds)
+    : [];
+  return [...ins, ...revs].map((m) => ({
+    id: m.id,
+    type: m.type,
+    sourceId: m.source_id,
+    amountNgn: m.amount_ngn,
+    reversesMovementId: m.reverses_movement_id,
+  }));
 }
 
 function validateQuotationForCuttingList(
@@ -7631,7 +7812,7 @@ function validateQuotationForCuttingList(
   } catch {
     minPaidFrac = 0.7;
   }
-  const cashPaidTotal = quotationRecordedCashPaidNgn(db, qref, bid);
+  const cashPaidTotal = quotationProductionGatePaid(db, qref, bid).paidNgn;
   if (
     !forDraft &&
     Boolean(qrow.manager_production_approved_at_iso) &&
@@ -7648,10 +7829,16 @@ function validateQuotationForCuttingList(
   if (!forDraft && !managerOk) {
     const pct = Math.round(minPaidFrac * 100);
     const hasBelowFloor = hasFloorRows && violations.length > 0;
-    if (!meetsCuttingListPaymentGate(qrow, cashPaidTotal, minPaidFrac, hasBelowFloor)) {
+    // Net paid only: quotations.paid_ngn can still hold a treasury line that was reversed (TM-KD-26-1499).
+    if (!meetsCuttingListPaymentGate({ ...qrow, paid_ngn: cashPaidTotal }, cashPaidTotal, minPaidFrac, hasBelowFloor)) {
+      const total = Math.round(Number(qrow.total_ngn) || 0);
+      const paidPct = total > 0 ? Math.floor((cashPaidTotal / total) * 100) : 0;
       return {
         ok: false,
-        error: `At least ${pct}% of the quotation must be paid (recorded receipts / applied advances on file) before creating a cutting list.`,
+        code: 'PRODUCTION_GATE_BELOW_MIN_PAID',
+        paidNgn: cashPaidTotal,
+        paidPct,
+        error: `At least ${pct}% of the quotation must be paid before production (paid ₦${cashPaidTotal.toLocaleString('en-NG')} = ${paidPct}%: receipts + advance applied − reversals). A Branch Manager or above can override with a reason.`,
       };
     }
   }

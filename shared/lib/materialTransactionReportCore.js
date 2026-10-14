@@ -12,6 +12,7 @@ import {
 } from './liveAnalytics.js';
 import { quotationHasFlatSheetLine } from './stoneCoatedQuotationPolicy.js';
 import { jobStoneRoofingMetres, jobTotalOutputMetres } from './jobOutputMetres.js';
+import { buildCoilRegister } from './coilRegisterCore.js';
 const ACCESSORY_REGISTER_TYPES = [
   { key: 'nails_fasteners', label: 'Nails & fasteners', patterns: [/nail/i, /fastener/i, /tapping screw/i] },
   { key: 'screws_clips', label: 'Screws & clips', patterns: [/screw/i, /clip/i, /washer/i] },
@@ -583,6 +584,24 @@ function amountPaidNetForJob(quote, refunds, qref) {
   return Math.max(0, paid - refund);
 }
 
+/** v2: Paid (net) once per quotation across the whole register; later rows of the same quote show null. */
+function paidNetOncePerQuotation() {
+  const counted = new Set();
+  return (quote, refunds, qref) => {
+    const key = String(qref || '').trim();
+    if (!key || counted.has(key)) return null;
+    counted.add(key);
+    return amountPaidNetForJob(quote, refunds, qref);
+  };
+}
+
+/** v2: stone-coated by the quotation's material type, not by which metre field is filled. */
+export function quotationIsStoneCoated(quote) {
+  if (!quote) return false;
+  if (quote.stoneMeterQuote === true || quote.stoneMeterQuote === 1) return true;
+  return /stone/i.test(`${quote.materialTypeName || ''} ${quote.materialType || ''}`);
+}
+
 const PRODUCTION_MOVEMENT_TYPES = new Set([
   'COIL_CONSUMPTION',
   'STONE_CONSUMPTION',
@@ -882,12 +901,19 @@ function buildCoilTxnRow({
   refunds,
   cancelled,
   masterData,
+  paidNetFor = amountPaidNetForJob,
+  movementKgByJobCoil = null,
 }) {
   const qref = String(job.quotationRef || '').trim();
   const opening = Number(coilRow?.openingWeightKg) || 0;
   const closing = Number(coilRow?.closingWeightKg) || 0;
-  const consumed = Number(coilRow?.consumedWeightKg) || 0;
+  const jobConsumed = Number(coilRow?.consumedWeightKg) || 0;
   const cNo = String(coilRow?.coilNo || '').trim();
+  /* v2: kg used comes from COIL_CONSUMPTION movements; the job record's consumed kg is shown beside it. */
+  const movementKey = `${String(job.jobID || '').trim()}|${cNo}`;
+  const movementKg =
+    movementKgByJobCoil && movementKey in movementKgByJobCoil ? Number(movementKgByJobCoil[movementKey]) : null;
+  const consumed = movementKgByJobCoil ? (movementKg ?? 0) : jobConsumed;
   const offcut = cNo ? offcutKgFromCoilWeights(opening, consumed, closing) : null;
   const materialType = String(coilLot?.materialTypeName || '').trim() || '—';
   const gaugeLabel = String(coilRow?.gaugeLabel || '').trim() || '—';
@@ -897,7 +923,7 @@ function buildCoilTxnRow({
   const attributed = isFirstCoil
     ? Math.round(allocatedQuotationRevenueForProductionJob(job, quote, metersByRef))
     : null;
-  const paidNet = isFirstCoil ? amountPaidNetForJob(quote, refunds, qref) : null;
+  const paidNet = isFirstCoil ? paidNetFor(quote, refunds, qref) : null;
 
   const colourRaw = String(coilRow?.colour || quotationColourRaw(quote) || '').trim();
   const dates = rowDateFields(jobTxnDateISO(job));
@@ -911,6 +937,13 @@ function buildCoilTxnRow({
     beforeKg: opening,
     afterKg: closing,
     kgUsed: consumed,
+    ...(movementKgByJobCoil
+      ? {
+          kgSource: movementKg == null ? 'No COIL_CONSUMPTION movement' : 'COIL_CONSUMPTION',
+          jobConsumedKg: jobConsumed,
+          kgDifference: round2(consumed - jobConsumed),
+        }
+      : {}),
     design: quotationDesignLabel(quote),
     meters: Number(coilRow?.metersProduced) || 0,
     conversionKgM: convNum,
@@ -926,7 +959,7 @@ function buildCoilTxnRow({
   };
 }
 
-function buildOffcutProductionRow({ job, quote, metersByRef, refunds, cancelled }) {
+function buildOffcutProductionRow({ job, quote, metersByRef, refunds, cancelled, paidNetFor = amountPaidNetForJob }) {
   const qref = String(job.quotationRef || '').trim();
   const dates = rowDateFields(jobTxnDateISO(job));
   return {
@@ -936,7 +969,7 @@ function buildOffcutProductionRow({ job, quote, metersByRef, refunds, cancelled 
     design: quotationDesignLabel(quote),
     metres: round2(jobTotalOutputMetres(job)),
     kgUsed: round2(Number(job.actualWeightKg) || 0),
-    amountNetNgn: amountPaidNetForJob(quote, refunds, qref),
+    amountNetNgn: paidNetFor(quote, refunds, qref),
     attributedNgn: Math.round(allocatedQuotationRevenueForProductionJob(job, quote, metersByRef)),
     jobId: String(job.jobID || '').trim(),
     cancelled: Boolean(cancelled),
@@ -956,7 +989,15 @@ function splitCoilRowsByFamily(coilRows) {
   return { aluminium, aluzinc, unclassified };
 }
 
-function buildStoneMeterRow({ job, quote, refunds, cancelled, masterData, drawSnapshot }) {
+function buildStoneMeterRow({
+  job,
+  quote,
+  refunds,
+  cancelled,
+  masterData,
+  drawSnapshot,
+  paidNetFor = amountPaidNetForJob,
+}) {
   const qref = String(job.quotationRef || '').trim();
   const snap = drawSnapshot || {};
   const snapUsed =
@@ -978,13 +1019,13 @@ function buildStoneMeterRow({ job, quote, refunds, cancelled, masterData, drawSn
     afterM: snap.afterM != null ? round2(snap.afterM) : null,
     stoneProductId: String(snap.productId || job.productID || job.product_id || '').trim(),
     metresUsed,
-    amountNetNgn: amountPaidNetForJob(quote, refunds, qref),
+    amountNetNgn: paidNetFor(quote, refunds, qref),
     jobId: String(job.jobID || '').trim(),
     cancelled: Boolean(cancelled),
   };
 }
 
-function buildAccessoryRow({ usage, job, quote, refunds, productById, cancelled }) {
+function buildAccessoryRow({ usage, job, quote, refunds, productById, cancelled, paidNetFor = amountPaidNetForJob }) {
   const qref = String(usage.quotationRef || job?.quotationRef || '').trim();
   const pid = String(usage.inventoryProductId || '').trim();
   const product = pid ? productById.get(pid) : null;
@@ -1002,7 +1043,7 @@ function buildAccessoryRow({ usage, job, quote, refunds, productById, cancelled 
     qtyUsed: round2(Number(usage.suppliedQty) || 0),
     unit: String(product?.unit || 'ea'),
     amountNetNgn:
-      job && !cancelled ? amountPaidNetForJob(quote, refunds, qref) : null,
+      job && !cancelled ? paidNetFor(quote, refunds, qref) : null,
     jobId: String(usage.jobID || job?.jobID || '').trim(),
     cancelled: Boolean(cancelled),
   };
@@ -1141,7 +1182,12 @@ export function buildMaterialTransactionReport(input = {}) {
     accessoryUsage = [],
     startDate,
     endDate,
+    v2 = null,
   } = input;
+  /* v2 (Phase 1): stone by quotation material, movement kg, Paid (net) once per quotation, gaps listed. */
+  const paidOnce = v2 ? paidNetOncePerQuotation() : null;
+  const paidFor = (cancelled) => (paidOnce && !cancelled ? paidOnce : amountPaidNetForJob);
+  const movementKgByJobCoil = v2?.movementKgByJobCoil || null;
 
   const quoteById = new Map((quotations || []).map((q) => [String(q.id ?? '').trim(), q]));
   const coilByNo = new Map((coilLots || []).map((c) => [String(c.coilNo ?? '').trim(), c]));
@@ -1202,7 +1248,15 @@ export function buildMaterialTransactionReport(input = {}) {
     const coils = coilsByJob.get(jid) || [];
     const accLines = accByJob.get(jid) || [];
 
-    const outputKind = resolveJobOutputKind(job, quote, coils, accLines);
+    let outputKind = resolveJobOutputKind(job, quote, coils, accLines);
+    if (v2 && coils.length === 0) {
+      const stone = quotationIsStoneCoated(quote);
+      if (stone && (outputKind === 'offcut_production' || outputKind === 'none') && jobTotalOutputMetres(job) > 1e-9) {
+        outputKind = 'stone_meter';
+      } else if (!stone && outputKind === 'stone_meter') {
+        outputKind = 'offcut_production';
+      }
+    }
 
     if (coils.length > 0) {
       coils.forEach((coilRow, i) => {
@@ -1217,6 +1271,8 @@ export function buildMaterialTransactionReport(input = {}) {
           refunds,
           cancelled,
           masterData,
+          paidNetFor: paidFor(cancelled),
+          movementKgByJobCoil,
         });
         if (!coilMaterialFamily(row.materialType)) {
           const inferred = inferFamilyFromProductName(job.productName);
@@ -1226,7 +1282,10 @@ export function buildMaterialTransactionReport(input = {}) {
         else completedCoilRows.push(row);
       });
       /* Hybrid stone + coil: also emit stone roofing row (coil branch used to skip it entirely). */
-      if (jobStoneRoofingMetres(job, 0) > 1e-9) {
+      const hybridStone = v2
+        ? quotationIsStoneCoated(quote) && jobStoneRoofingMetres(job, 0) > 1e-9
+        : jobStoneRoofingMetres(job, 0) > 1e-9;
+      if (hybridStone) {
         const stoneRow = buildStoneMeterRow({
           job,
           quote,
@@ -1234,6 +1293,7 @@ export function buildMaterialTransactionReport(input = {}) {
           cancelled,
           masterData,
           drawSnapshot: stoneDrawSnapshots.get(jid),
+          paidNetFor: paidFor(cancelled),
         });
         if (cancelled) cancelledStoneMeter.push(stoneRow);
         else stoneMeterRows.push(stoneRow);
@@ -1246,11 +1306,19 @@ export function buildMaterialTransactionReport(input = {}) {
         cancelled,
         masterData,
         drawSnapshot: stoneDrawSnapshots.get(jid),
+        paidNetFor: paidFor(cancelled),
       });
       if (cancelled) cancelledStoneMeter.push(row);
       else stoneMeterRows.push(row);
     } else if (outputKind === 'offcut_production') {
-      const row = buildOffcutProductionRow({ job, quote, metersByRef, refunds, cancelled });
+      const row = buildOffcutProductionRow({
+        job,
+        quote,
+        metersByRef,
+        refunds,
+        cancelled,
+        paidNetFor: paidFor(cancelled),
+      });
       if (cancelled) cancelledRows.push({ ...row, section: 'offcut' });
       else offcutProductionRows.push(row);
     }
@@ -1263,6 +1331,7 @@ export function buildMaterialTransactionReport(input = {}) {
         refunds,
         productById,
         cancelled,
+        paidNetFor: paidFor(cancelled),
       });
       if (cancelled) cancelledAccessory.push(row);
       else accessoryRows.push(row);
@@ -1310,7 +1379,59 @@ export function buildMaterialTransactionReport(input = {}) {
     cancelled,
   };
   body.summary = buildMaterialTransactionSummary(body);
+  if (v2) body.summary.gapLines = listBalanceGapLines(body);
   return body;
+}
+
+/** v2: every coil / stone line whose before does not chain from the previous line (the summary only counted them). */
+export function listBalanceGapLines(report) {
+  const out = [];
+  for (const [section, label] of [
+    ['aluminium', 'Aluminium'],
+    ['aluzinc', 'Aluzinc'],
+    ['unclassifiedCoil', 'Coil (unclassified)'],
+    ['stoneCoated', 'Stone-coated'],
+  ]) {
+    for (const g of report?.[section]?.groups || []) {
+      for (const r of g.rows || []) {
+        if (!r.balanceBreak) continue;
+        out.push({
+          material: label,
+          gauge: g.gaugeLabel || '',
+          coilNo: r.coilNo || r.stoneProductId || '',
+          jobId: r.jobId || '',
+          txnDate: r.txnDate || '',
+          note: r.balanceNote || '',
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Material register v2 (Reports Phase 1): the per-job register with the v2 fixes, plus the coil register
+ * (stock roll-back gross / net of spool, PO kg ordered vs received, consumption, exceptions).
+ * The pre-Phase-1 register stays reachable via ?legacy=1 ({@link buildMaterialTransactionReport}).
+ * @param {object} input — as {@link buildMaterialTransactionReport}, plus `allStockMovements` (to today),
+ *   `purchaseOrders` (with lines) and optional `receivedDateCorrections`.
+ */
+export function buildMaterialRegisterV2(input = {}) {
+  const coilRegister = buildCoilRegister({
+    coilLots: input.coilLots || [],
+    stockMovements: input.allStockMovements || input.stockMovementsThroughEnd || input.stockMovements || [],
+    purchaseOrders: input.purchaseOrders || [],
+    productionJobs: input.productionJobs || [],
+    quotations: input.quotations || [],
+    startDate: input.startDate,
+    endDate: input.endDate,
+    ...(input.receivedDateCorrections ? { receivedDateCorrections: input.receivedDateCorrections } : {}),
+  });
+  const report = buildMaterialTransactionReport({
+    ...input,
+    v2: { movementKgByJobCoil: coilRegister.consumption.byJobCoilAllDates },
+  });
+  return { ...report, version: 2, coilRegister };
 }
 
 /** @deprecated Use {@link buildMaterialTransactionReport} — flat coil rows for legacy export. */

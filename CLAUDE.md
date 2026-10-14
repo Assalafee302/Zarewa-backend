@@ -28,12 +28,18 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - Customer balance = cash received − refunds paid − value produced. > 0 is an advance, < 0 is a debt.
 - Sales bridge (must tie to ₦0): cash received − refunds paid + increase in debts − increase in advances = goods produced (net).
 
-## Material register (next step) — owner notes
+## Material register — owner rules (2026-10-14)
 
-- Coil quantities shown gross AND net of spool (Aluzinc 65 kg, Aluminium 45 kg per coil; a coil lighter than its spool = nil).
-- Per PO: kg ordered vs kg received.
+- Coil stock at any date = current kg rolled back by movements dated after that date (movement dateISO, not job completion date). Shown gross AND net of spool (Aluzinc incl. PPGI 65 kg, Aluminium 45 kg per coil; a coil lighter than its spool = nil), valued at the coil's unitCostNgnPerKg.
+- Oct 2026 stock-check corrections (ADJUSTMENT / COIL_SCRAP / COIL_RETURN dated from 2026-10-01) are treated as true at earlier dates (not rolled back). Constant `STOCK_CHECK_CORRECTIONS_FROM_ISO` in `shared/lib/coilRegisterCore.js`.
+- Received-date corrections are report notes only, never data changes (`COIL_RECEIVED_DATE_CORRECTIONS`: CL-26-2096 received 12 Sep, booked 12 Oct). The ERP figure is always shown; a "with corrections" figure is added when one applies.
+- Opening coils with no unit cost are valued at the price recorded on the other coils of the same material in the same opening batch (Aluzinc ₦1,738/kg on 30 Apr 2026) and listed as an exception. This reproduces the owner's 31 Aug / 30 Sep figures.
+- Per PO: kg ordered vs received per line; difference per coil should look like the spool. Coil price is compared with its PO line's value per kg received (flag > 10%).
+- OPEN (owner decision): "Paid (net)" on the material register = quotation paidNgn − refunds paid. It includes credits applied (OVERPAY_APPLIED) and payments after period end, so it is not bounded by recognised sales (Kaduna Sep: ₦230.7m vs ₦209.6m). It is now counted once per quotation.
 
 ## Tech debt
+
+- Pre-existing failing tests (not caused by reports Phase 1): `server/materialTransactionReportCore.test.js` "includes cancelled jobs in cancelled section"; `shared/lib/hrEmployeeNumber.test.js`; `shared/lib/helpKnowledge.test.js` "matches overpayment credit"; `shared/lib/salesPhase1Recognition.test.js` "round 6 posted adjustments".
 
 - `salesPaymentsReceivedRows` (frontend `src/lib/liveAnalytics.js`) is slow on full branch history (7–24 s on the Kaduna fixture): `quotationPaidNgnAsOf` rescans all receipts and rebuilds the companion-overpay map per quotation. Leave until reports Phase 1 is done.
 

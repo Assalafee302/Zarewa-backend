@@ -29,7 +29,10 @@ import { refuseIfGlPostingDisabled, requireLocalGlPosting } from './finance/glPo
 import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
 import { evaluateDeliveryPaymentRelease } from './deliveryReleaseGate.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
-import { buildMaterialTransactionReport } from '../shared/lib/materialTransactionReportCore.js';
+import {
+  buildMaterialRegisterV2,
+  buildMaterialTransactionReport,
+} from '../shared/lib/materialTransactionReportCore.js';
 import { buildConversionSummaryReport } from './conversionSummaryReport.js';
 import { buildPurchaseRegisterReport } from './procurement/purchaseRegisterSourceOps.js';
 import {
@@ -4962,7 +4965,17 @@ export function registerHttpApi(app, db) {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const report = buildMaterialTransactionReport({
+      // ?legacy=1 keeps the pre-Phase-1 register until the owner approves v2.
+      const legacy = String(req.query.legacy || '') === '1';
+      const build = legacy ? buildMaterialTransactionReport : buildMaterialRegisterV2;
+      const report = build({
+        ...(legacy
+          ? {}
+          : {
+              // Coil stock roll-back needs every movement after the period, up to today.
+              allStockMovements: listStockMovementsForBranchThrough(db, branchScope, '9999-12-31'),
+              purchaseOrders: listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts()),
+            }),
         productionJobs: listProductionJobs(db, branchScope, reportListOpts()),
         productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
         quotations: listQuotations(db, branchScope, reportQuotationListOpts()),
@@ -4976,7 +4989,7 @@ export function registerHttpApi(app, db) {
         startDate,
         endDate,
       });
-      res.json({ ok: true, startDate, endDate, branchScope, report });
+      res.json({ ok: true, startDate, endDate, branchScope, legacy, report });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build material transaction report.' });

@@ -66,3 +66,10 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - Payroll source (owner, 2026-10-14): today a monthly Excel payroll sheet; it moves into the HR module in the HR phase (with PAYE). Until then the expenses report takes the payroll split as an input and the live report says "not in the data source".
 - R6 imprest (incl. misspellings) → Admin expenses (EXP-0367). Cancelled payment requests are not expenses: left out of the book view, listed as exceptions (EXP-0398). Book Admin expenses ₦33,050.
 - Reports Phase 1 complete and approved 2026-10-14 (frontend `156c472` last). See RELEASE.md; not pushed/deployed until the owner's go-ahead.
+
+## Phase 2 — data corrections (owner, 2026-10-14; fast track)
+
+- Correct, never delete: each fix is a new reversal / reclassification / adjustment linked to the original, with reason + approver + timestamp. Mechanisms: field corrections + `audit_log` (before/after in details_json); treasury `RECEIPT_REVERSAL_OUT` with `reverses_movement_id` (dated in the open period); fraud register = `investigation_cases` + `investigation_links`. No new correction table needed.
+- Nothing that needs a human fact is guessed → WAITING list (with who must confirm), not the run. Time-box: complicated items go to WAITING.
+- Dry run: `node scripts/phase2-dry-run.mjs` (13 Oct export fixtures, no DB, no writes) → `exports/phase2-dry-run-<date>.xlsx`. Reads `exports/phase2_preERP_coil_prices.csv` when present.
+- Apply order A → D → C → B, after backup; live DB only after the Phase 1 release is deployed (until then a local copy). Re-run the four Sep 2026 Kaduna reports after; any figure that moved and was not in the dry run's expected effects → roll that group back.

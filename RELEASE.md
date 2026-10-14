@@ -132,6 +132,17 @@ Frontend (`fix/reports-phase1`, on top of `origin/main` 97d8f64 — fast-forward
 | Expenses | Book: Maintenance / Office / Accessories / Carriage / Admin | ₦919,400 / ₦883,550 / ₦1,027,250 / ₦2,170,410 / ₦33,050 |
 | Expenses | Payment requests paid in Sep | ₦14,957,877 (105), unexplained ₦0 |
 
+## Server steps (generic)
+1. Log in to the server (SSH).
+2. Back up the production database (phpMyAdmin export or `mysqldump --single-transaction`); check the file ends
+   with "Dump completed".
+3. In the backend folder: `git status --short` must be clean.
+4. Run `bash scripts/hostinger-deploy.sh` from the backend folder: stops the API, pulls `main` for backend and
+   frontend, runs the boot check, builds the frontend and copies `dist` to `public_html`.
+5. Hosting panel → Node.js app → **Stop**, wait until stopped, then **Start** (never an overlapping Restart).
+6. `curl -sS https://api.zarewaglobalservices.com/api/health` → `"ok":true`.
+7. Smoke test (table above), then confirm `?legacy=1`.
+
 ## Rollback
 - Report level, no deploy: open the report with `?legacy=1`.
 - Code level: revert the merge on `main` in both repos (or check out 7f6a87a / 97d8f64 on the server) and redeploy.

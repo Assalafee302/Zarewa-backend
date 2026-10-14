@@ -108,6 +108,12 @@ describe('coil register — Kaduna Sep 2026 fixture (owner figures, coils only)'
     });
   });
 
+  it('CHECK: flags coils whose received date and GRN movement fall in different months (CL-26-2082, ₦13,942,700)', () => {
+    const hit = reg.exceptions.grnMonthMismatch.find((e) => e.coilNo === 'CL-26-2082');
+    expect(hit).toMatchObject({ coilReceivedISO: '2026-08-31', grnMovementISO: '2026-09-01', kg: 2_081, valueNgn: 13_942_700 });
+    expect(reg.exceptions.grnMonthMismatch.some((e) => e.coilNo === 'CL-26-2096')).toBe(false);
+  });
+
   it('values opening coils with no unit cost at their opening batch price, and lists them', () => {
     expect(reg.exceptions.noUnitCost.map((e) => e.coilNo).sort()).toEqual([
       'CL-KD-APR-1755',

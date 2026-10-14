@@ -551,6 +551,30 @@ export function buildCoilRegister(input = {}) {
       });
     }
   }
+  /**
+   * CHECK (owner, 2026-10-14): any coil, whatever the period, whose received date and GRN movement date fall in
+   * different months. Month-end stock (movement dates) and purchases (received date) then disagree — this hid
+   * ₦13.6m of cost on CL-26-2082 (received 31 Aug, GRN 1 Sep).
+   */
+  const grnMonthMismatch = [];
+  for (const [coilNo, moves] of movesByCoil) {
+    const c = coilByNo.get(coilNo);
+    if (!c?.receivedISO) continue;
+    for (const m of moves) {
+      if (m.type !== 'STORE_GRN' || !m.date || m.date.slice(0, 7) === c.receivedISO.slice(0, 7)) continue;
+      grnMonthMismatch.push({
+        coilNo,
+        poID: c.poID || String(m.ref || ''),
+        coilReceivedISO: c.receivedISO,
+        grnMovementISO: m.date,
+        kg: round2(m.qty),
+        valueNgn: ngn(m.qty * (unitCost(c).unitCostNgnPerKg || 0)),
+        note: 'Received and GRN in different months: stock and purchases land in different months',
+      });
+    }
+  }
+  grnMonthMismatch.sort((a, b) => a.grnMovementISO.localeCompare(b.grnMovementISO) || a.coilNo.localeCompare(b.coilNo));
+
   const firstReceivedByPo = new Map();
   for (const c of coils) {
     if (!c.poID || !c.receivedISO) continue;
@@ -610,6 +634,7 @@ export function buildCoilRegister(input = {}) {
       bookedLate,
       noUnitCost,
       grnDateMismatch,
+      grnMonthMismatch,
       coilSpecDiffersFromPoLine: poRows.flatMap((p) =>
         p.lines.flatMap((l) => l.coils.filter((c) => c.specNote).map((c) => ({ poID: p.poID, coilNo: c.coilNo, note: c.specNote })))
       ),

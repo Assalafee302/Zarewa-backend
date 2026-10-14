@@ -13,7 +13,17 @@
  *   a second "with received-date corrections" figure when a correction applies.
  */
 
-export const SPOOL_KG = { aluminium: 45, aluzinc: 65 };
+/** Spool weight per coil. Aluminium bought by the metre arrives without a spool (owner, 2026-10-14). */
+export const SPOOL_KG = { aluminium: 45, aluzinc: 65, aluminiumByMetre: 0 };
+
+/**
+ * Opening aluminium coils (no PO) are treated as bought by the metre (no spool) unless listed here as bought by
+ * kg (owner, 2026-10-14). Report rule only; Phase 4 adds an explicit unit to coils and PO lines.
+ */
+export const OPENING_ALUMINIUM_BOUGHT_BY_KG = ['CL-KD-APR-1918'];
+
+/** Aluminium priced at or above this per "kg" on a PO line is really a per-metre price. */
+export const METRE_PRICE_THRESHOLD_NGN = 9000;
 
 /** Oct 2026 stock-check corrections (owner, 2026-10-14): true at every earlier date. */
 export const STOCK_CHECK_CORRECTIONS_FROM_ISO = '2026-10-01';
@@ -84,9 +94,29 @@ export function coilFamily(materialTypeName, productID = '') {
   return '';
 }
 
-export function spoolKgForCoil(coil) {
+/** Aluzinc (incl. PPGI) 65 kg; aluminium bought by kg 45 kg; aluminium bought by metre 0. */
+export function spoolKgForCoil(coil, boughtBy = 'kg') {
   const fam = coilFamily(coil?.materialTypeName, coil?.productID);
+  if (fam === 'aluminium' && boughtBy === 'metre') return SPOOL_KG.aluminiumByMetre;
   return fam ? SPOOL_KG[fam] : 0;
+}
+
+/**
+ * How a PO coil line was bought. Aluminium is "metre" when any of: lineType coil_meter; metersOffered equals
+ * qtyOrdered (kg lines never match); unit price ≥ METRE_PRICE_THRESHOLD_NGN. Everything else is "kg".
+ * @returns {{ unit: 'kg' | 'metre', rule: string }}
+ */
+export function purchaseUnitForLine(line) {
+  const aluminium = coilFamily(line?.productName, line?.productID) === 'aluminium';
+  if (!aluminium) return { unit: 'kg', rule: 'Aluzinc is bought by kg' };
+  if (String(line?.lineType || '') === 'coil_meter') return { unit: 'metre', rule: 'PO line type coil_meter' };
+  const metres = num(line?.metersOffered);
+  if (metres > 0 && Math.abs(metres - num(line?.qtyOrdered)) < 1e-6) {
+    return { unit: 'metre', rule: 'metres offered = quantity ordered' };
+  }
+  const price = num(line?.unitPricePerKgNgn) || num(line?.unitPriceNgn);
+  if (price >= METRE_PRICE_THRESHOLD_NGN) return { unit: 'metre', rule: `price ≥ ₦${METRE_PRICE_THRESHOLD_NGN.toLocaleString('en-NG')}` };
+  return { unit: 'kg', rule: 'aluminium priced per kg' };
 }
 
 /** Gross kg → { spoolKg, netKg }: a coil lighter than its spool is nil net. */
@@ -170,6 +200,10 @@ export function buildCoilRegister(input = {}) {
   const isCorrection = (m) => CORRECTION_TYPES.has(m.type) && Boolean(stockCheckCorrectionsFromISO) && m.date >= stockCheckCorrectionsFromISO;
 
   const unitCost = (c) => {
+    const line = lineOfCoil.get(c.coilNo);
+    if (line && line.unit === 'metre' && line.costPerKg > 0) {
+      return { unitCostNgnPerKg: round2(line.costPerKg), costSource: 'PO line amount ÷ kg received (bought by metre)' };
+    }
     const own = num(c.unitCostNgnPerKg);
     if (own > 0) return { unitCostNgnPerKg: own, costSource: 'coil' };
     const landed = num(c.landedCostNgn);
@@ -178,6 +212,92 @@ export function buildCoilRegister(input = {}) {
     const batch = batchPrice.get(`${c.family}|${c.receivedISO}`);
     if (batch) return { unitCostNgnPerKg: batch, costSource: `opening batch price (${c.receivedISO})` };
     return { unitCostNgnPerKg: 0, costSource: 'none' };
+  };
+
+  const coilsByPo = new Map();
+  for (const c of coils) {
+    if (!c.poID) continue;
+    const list = coilsByPo.get(c.poID) || [];
+    list.push(c);
+    coilsByPo.set(c.poID, list);
+  }
+  const isCoilLine = (l) => /coil/i.test(String(l.productName || '')) || ['COIL-ALU', 'PRD-102'].includes(l.productID) || l.lineType === 'coil_kg';
+  const linePrice = (l) => num(l.unitPricePerKgNgn) || num(l.unitPriceNgn);
+
+  /**
+   * Match each coil of a PO to a PO line: same gauge and colour first (closest kg), then any line still
+   * without a coil, then the closest kg. A coil whose spec differs from its line is noted.
+   */
+  const matchCoilsToLines = (lines, poCoils) => {
+    const coilsOfLine = lines.map(() => []);
+    const kgOf = (c) => num(c.weightKg) || num(c.qtyReceived);
+    const closest = (idxs, c) =>
+      idxs.sort((a, b) => Math.abs(num(lines[a].qtyReceived) - kgOf(c)) - Math.abs(num(lines[b].qtyReceived) - kgOf(c)))[0];
+    const all = lines.map((_, i) => i);
+    for (const c of poCoils) {
+      const same = all.filter((i) => norm(c.gaugeLabel) === norm(lines[i].gauge) && norm(c.colour) === norm(lines[i].color));
+      const sameFree = same.filter((i) => !coilsOfLine[i].length);
+      const free = all.filter((i) => !coilsOfLine[i].length);
+      // A free line whose received kg is exactly this coil's weight wins, even when the coil spec was keyed differently.
+      const exactKg = free.filter((i) => num(lines[i].qtyReceived) > 0 && Math.abs(num(lines[i].qtyReceived) - kgOf(c)) < 0.5);
+      const pick = exactKg.length
+        ? closest(exactKg, c)
+        : sameFree.length
+          ? closest(sameFree, c)
+          : same.length
+            ? closest(same, c)
+            : free.length
+              ? closest(free, c)
+              : closest(all, c);
+      const specMatches = same.includes(pick);
+      coilsOfLine[pick].push({
+        coilNo: c.coilNo,
+        weightKg: round2(kgOf(c)),
+        receivedISO: c.receivedISO,
+        specNote: specMatches ? '' : `Coil is ${c.gaugeLabel} ${c.colour}; PO line is ${lines[pick].gauge} ${lines[pick].color}`,
+      });
+    }
+    return coilsOfLine;
+  };
+  /**
+   * Coil no → its PO line: purchase unit, line amount and cost per kg = line amount ÷ kg actually received on
+   * that line (coil weights; metre lines store metres in the received field).
+   */
+  const lineOfCoil = new Map();
+  const coilsOfLineByPo = new Map();
+  for (const po of purchaseOrders) {
+    const poID = String(po.poID || '').trim();
+    const lines = (po.lines || []).filter(isCoilLine);
+    if (!lines.length) continue;
+    const coilsOfLine = matchCoilsToLines(lines, coilsByPo.get(poID) || []);
+    coilsOfLineByPo.set(poID, coilsOfLine);
+    lines.forEach((l, i) => {
+      const { unit, rule } = purchaseUnitForLine(l);
+      const amountNgn = num(l.qtyOrdered) * linePrice(l);
+      const coilKg = coilsOfLine[i].reduce((sum, c) => sum + num(c.weightKg), 0);
+      const kgReceived = coilKg > 0 ? coilKg : num(l.qtyReceived);
+      for (const c of coilsOfLine[i]) {
+        lineOfCoil.set(c.coilNo, {
+          poID,
+          unit,
+          rule,
+          linePrice: linePrice(l),
+          amountNgn,
+          kgReceived,
+          costPerKg: kgReceived > 0 ? amountNgn / kgReceived : 0,
+        });
+      }
+    });
+  }
+  /** Bought by kg / metre (opening coils with no PO: aluminium recorded at ≥ the metre threshold). */
+  const boughtByOf = (c) => {
+    const line = lineOfCoil.get(c.coilNo);
+    if (line) return { boughtBy: line.unit, boughtByRule: line.rule };
+    if (c.family === 'aluminium') {
+      if (OPENING_ALUMINIUM_BOUGHT_BY_KG.includes(c.coilNo)) return { boughtBy: 'kg', boughtByRule: 'opening coil listed as bought by kg' };
+      return { boughtBy: 'metre', boughtByRule: 'opening aluminium coil (no PO) — treated as bought by metre' };
+    }
+    return { boughtBy: 'kg', boughtByRule: 'no PO line' };
   };
 
   // --- Stock at a date -----------------------------------------------------------------------
@@ -197,12 +317,16 @@ export function buildCoilRegister(input = {}) {
       }
       kg = round2(kg);
       if (!(kg > 0)) continue;
-      const spool = spoolKgForCoil(c);
+      const { boughtBy, boughtByRule } = boughtByOf(c);
+      const spool = spoolKgForCoil(c, boughtBy);
       const { spoolKg, netKg } = splitSpool(kg, spool);
       const { unitCostNgnPerKg, costSource } = unitCost(c);
       rows.push({
         coilNo: c.coilNo,
         family: c.family,
+        boughtBy,
+        boughtByRule,
+        erpUnitCostNgnPerKg: num(c.unitCostNgnPerKg) || null,
         gaugeLabel: c.gaugeLabel || '',
         colour: c.colour || '',
         poID: c.poID || '',
@@ -338,58 +462,13 @@ export function buildCoilRegister(input = {}) {
       grnInPeriodByPo.set(po, list);
     }
   }
-  const coilsByPo = new Map();
-  for (const c of coils) {
-    if (!c.poID) continue;
-    const list = coilsByPo.get(c.poID) || [];
-    list.push(c);
-    coilsByPo.set(c.poID, list);
-  }
-  const isCoilLine = (l) => /coil/i.test(String(l.productName || '')) || ['COIL-ALU', 'PRD-102'].includes(l.productID) || l.lineType === 'coil_kg';
-  const linePrice = (l) => num(l.unitPricePerKgNgn) || num(l.unitPriceNgn);
-
-  /**
-   * Match each coil of a PO to a PO line: same gauge and colour first (closest kg), then any line still
-   * without a coil, then the closest kg. A coil whose spec differs from its line is noted.
-   */
-  const matchCoilsToLines = (lines, poCoils) => {
-    const coilsOfLine = lines.map(() => []);
-    const kgOf = (c) => num(c.weightKg) || num(c.qtyReceived);
-    const closest = (idxs, c) =>
-      idxs.sort((a, b) => Math.abs(num(lines[a].qtyReceived) - kgOf(c)) - Math.abs(num(lines[b].qtyReceived) - kgOf(c)))[0];
-    const all = lines.map((_, i) => i);
-    for (const c of poCoils) {
-      const same = all.filter((i) => norm(c.gaugeLabel) === norm(lines[i].gauge) && norm(c.colour) === norm(lines[i].color));
-      const sameFree = same.filter((i) => !coilsOfLine[i].length);
-      const free = all.filter((i) => !coilsOfLine[i].length);
-      const pick = sameFree.length ? closest(sameFree, c) : same.length ? closest(same, c) : free.length ? closest(free, c) : closest(all, c);
-      const specMatches = same.includes(pick);
-      coilsOfLine[pick].push({
-        coilNo: c.coilNo,
-        weightKg: round2(kgOf(c)),
-        receivedISO: c.receivedISO,
-        specNote: specMatches ? '' : `Coil is ${c.gaugeLabel} ${c.colour}; PO line is ${lines[pick].gauge} ${lines[pick].color}`,
-      });
-    }
-    return coilsOfLine;
-  };
-  /** Coil no → its PO line's price per kg received (line value ÷ kg received on the line). */
-  const linePriceByCoil = new Map();
-
   const poRows = [];
   for (const po of purchaseOrders) {
     const poID = String(po.poID || '').trim();
     const lines = (po.lines || []).filter(isCoilLine);
     if (!lines.length) continue;
     const poCoils = coilsByPo.get(poID) || [];
-    const coilsOfLine = matchCoilsToLines(lines, poCoils);
-    lines.forEach((l, i) => {
-      const value = num(l.qtyOrdered) * linePrice(l);
-      const rec = num(l.qtyReceived);
-      for (const c of coilsOfLine[i]) {
-        linePriceByCoil.set(c.coilNo, { poID, value, kgReceived: rec, price: rec > 0 ? value / rec : 0, linePrice: linePrice(l) });
-      }
-    });
+    const coilsOfLine = coilsOfLineByPo.get(poID) || matchCoilsToLines(lines, poCoils);
     const ordered = normaliseDateISO(po.orderDateISO);
     const grn = grnInPeriodByPo.get(poID) || [];
     if (!inPeriod(ordered) && !grn.length) continue;
@@ -397,7 +476,15 @@ export function buildCoilRegister(input = {}) {
       const kgOrdered = round2(l.qtyOrdered);
       const kgReceived = round2(l.qtyReceived);
       const price = linePrice(l);
+      const { unit, rule } = purchaseUnitForLine(l);
+      const coilKg = coilsOfLine[i].reduce((sum, c) => sum + num(c.weightKg), 0);
+      const kgActual = coilKg > 0 ? coilKg : kgReceived;
       return {
+        boughtBy: unit,
+        boughtByRule: rule,
+        coilKgReceived: round2(coilKg),
+        costPerKgReceivedNgn: kgActual > 0 ? round2((kgOrdered * price) / kgActual) : null,
+        notWeighed: kgReceived > 0 && kgReceived === kgOrdered,
         lineKey: l.lineKey || '',
         gauge: l.gauge || '',
         colour: l.color || '',
@@ -437,24 +524,31 @@ export function buildCoilRegister(input = {}) {
   poRows.sort((a, b) => a.poID.localeCompare(b.poID, undefined, { numeric: true }));
 
   // --- Exceptions -----------------------------------------------------------------------------
-  const priceVsPo = [];
+  /** Every coil whose ERP cost/kg differs from its PO line amount ÷ kg received. */
+  const costVsPurchase = [];
   for (const c of coils) {
-    const line = linePriceByCoil.get(c.coilNo);
-    const own = num(c.unitCostNgnPerKg);
-    if (!line || !(own > 0) || !(line.price > 0)) continue;
-    const diff = own - line.price;
-    if (Math.abs(diff) / line.price <= COIL_PRICE_TOLERANCE) continue;
-    priceVsPo.push({
+    const line = lineOfCoil.get(c.coilNo);
+    const erp = num(c.unitCostNgnPerKg);
+    if (!line || !(line.costPerKg > 0) || !(erp > 0)) continue;
+    const diff = erp - line.costPerKg;
+    if (Math.abs(diff) < 1) continue;
+    const kg = num(c.weightKg) || num(c.qtyReceived);
+    costVsPurchase.push({
       coilNo: c.coilNo,
       poID: line.poID,
-      coilUnitCostNgnPerKg: own,
-      poLinePricePerKgNgn: line.linePrice,
-      poPricePerKgReceivedNgn: round2(line.price),
-      differencePct: round2((diff / line.price) * 100),
-      note: `PO line value ₦${ngn(line.value).toLocaleString('en-NG')} over ${round2(line.kgReceived)} kg received`,
+      boughtBy: line.unit,
+      boughtByRule: line.rule,
+      erpUnitCostNgnPerKg: erp,
+      poLinePriceNgn: line.linePrice,
+      costPerKgReceivedNgn: round2(line.costPerKg),
+      differencePct: round2((diff / line.costPerKg) * 100),
+      kgReceived: round2(kg),
+      erpValueNgn: ngn(kg * erp),
+      valueAtCostPerKgNgn: ngn(kg * line.costPerKg),
+      note: `PO line ₦${ngn(line.amountNgn).toLocaleString('en-NG')} ÷ ${round2(line.kgReceived)} kg received`,
     });
   }
-  priceVsPo.sort((a, b) => a.coilNo.localeCompare(b.coilNo, undefined, { numeric: true }));
+  costVsPurchase.sort((x, y) => Math.abs(y.differencePct) - Math.abs(x.differencePct) || x.coilNo.localeCompare(y.coilNo));
 
   const grnDateMismatch = [];
   for (const [coilNo, moves] of movesByCoil) {
@@ -497,7 +591,7 @@ export function buildCoilRegister(input = {}) {
   const noUnitCost = [];
   const seenNoCost = new Set();
   for (const r of [...opening.rows, ...closing.rows]) {
-    if (r.costSource === 'coil' || seenNoCost.has(r.coilNo)) continue;
+    if (r.erpUnitCostNgnPerKg || seenNoCost.has(r.coilNo)) continue;
     seenNoCost.add(r.coilNo);
     noUnitCost.push({ coilNo: r.coilNo, family: r.family, unitCostNgnPerKg: r.unitCostNgnPerKg, costSource: r.costSource });
   }
@@ -514,7 +608,20 @@ export function buildCoilRegister(input = {}) {
     purchaseOrders: poRows,
     consumption,
     exceptions: {
-      priceVsPo,
+      costVsPurchase,
+      notWeighed: poRows.flatMap((p) =>
+        p.lines
+          .filter((l) => l.notWeighed)
+          .map((l) => ({
+            poID: p.poID,
+            line: `${l.gauge} ${l.colour}`,
+            boughtBy: l.boughtBy,
+            kgOrdered: l.kgOrdered,
+            kgReceived: l.kgReceived,
+            coils: l.coils.map((c) => c.coilNo).join(', '),
+            note: 'Received equals ordered exactly — not weighed?',
+          }))
+      ),
       bookedLate,
       noUnitCost,
       grnDateMismatch,

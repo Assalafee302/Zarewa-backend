@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildMaterialRegisterV2, buildMaterialTransactionReport } from './materialTransactionReportCore.js';
+import { buildQuotationCoverage } from './quotationCoverageCore.js';
 
 const kd = JSON.parse(
   fs.readFileSync(new URL('./__fixtures__/kd-2026-09/materialRegisterSource.json', import.meta.url), 'utf8')
@@ -26,8 +27,32 @@ describe('material register v2 — Kaduna Sep 2026 fixture', () => {
     const quotes = rows.map((r) => r.q);
     expect(rows.length).toBeGreaterThan(0);
     expect(new Set(quotes).size).toBe(quotes.length);
-    // Open (owner decision): Paid (net) = quote paidNgn − refunds, which includes credits applied
-    // (OVERPAY_APPLIED) and payments after period end, so it is not bounded by recognised sales.
+  });
+
+  it('Paid (net) = cash that stayed + credit applied − refunds paid, as at period end, in three parts', () => {
+    const summary = v2.summary.paidByQuotation;
+    expect(summary.length).toBeGreaterThan(0);
+    for (const q of summary) expect(q.paidNetNgn).toBe(q.cashNgn + q.creditNgn - q.refundsNgn);
+    expect(new Set(summary.map((q) => q.quotationRef)).size).toBe(summary.length);
+    // Yusuf: both receipts reversed in treasury → no cash on QT-1594 / QT-1606.
+    const yusuf = summary.filter((q) => ['QT-KD-26-1594', 'QT-KD-26-1606'].includes(q.quotationRef));
+    expect(yusuf.every((q) => q.cashNgn === 0)).toBe(true);
+  });
+
+  it('lists every quotation covered above its value + own overpayment (credit applied on top of cash)', () => {
+    const over = v2.summary.paidByQuotation.filter(
+      (q) => q.paidNetNgn > q.quotationTotalNgn + Math.max(0, q.cashNgn - q.quotationTotalNgn)
+    );
+    expect(v2.summary.coverageAboveValue.map((q) => q.quotationRef).sort()).toEqual(over.map((q) => q.quotationRef).sort());
+    expect(over.map((q) => q.quotationRef).sort()).toEqual(['QT-KD-26-1522', 'QT-KD-26-1544', 'QT-KD-26-1668', 'QT-KD-26-1681']);
+  });
+
+  it('flags quotations first produced in the period before they were fully covered', () => {
+    expect(v2.summary.producedBeforeFullyCovered.length).toBeGreaterThan(0);
+    for (const q of v2.summary.producedBeforeFullyCovered) {
+      expect(q.coverageAtFirstCompletionNgn).toBeLessThan(q.quotationTotalNgn);
+      expect(q.firstCompletedISO >= '2026-09-01' && q.firstCompletedISO <= '2026-09-30').toBe(true);
+    }
   });
 
   it('carries the coil register and keeps ?legacy=1 on the old builder', () => {
@@ -36,6 +61,31 @@ describe('material register v2 — Kaduna Sep 2026 fixture', () => {
     const legacy = buildMaterialTransactionReport({ ...kd });
     expect(legacy.coilRegister).toBeUndefined();
     expect(legacy.version).toBeUndefined();
+  });
+});
+
+describe('quotation coverage (synthetic)', () => {
+  it('adds cash that stayed and credit, takes off refunds paid, and checks coverage at first completion', () => {
+    const cov = buildQuotationCoverage({
+      asAtISO: '2026-09-30',
+      quotations: [{ id: 'Q1', totalNgn: 1000 }],
+      productionJobs: [{ jobID: 'J1', quotationRef: 'Q1', status: 'Completed', completedAtISO: '2026-09-05' }],
+      ledgerEntries: [
+        { id: 'LE1', type: 'RECEIPT', quotationRef: 'Q1' },
+        { id: 'LE2', type: 'RECEIPT', quotationRef: 'Q1' },
+        { id: 'LA', type: 'OVERPAY_APPLIED', quotationRef: 'Q1', amountNgn: 300, atISO: '2026-09-10' },
+      ],
+      treasuryMovements: [
+        { type: 'RECEIPT_IN', sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE1', amountNgn: 600, postedAtISO: '2026-09-01' },
+        { type: 'RECEIPT_IN', sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE2', amountNgn: 200, postedAtISO: '2026-09-02' },
+        { type: 'RECEIPT_REVERSAL_OUT', sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE2', amountNgn: -200, postedAtISO: '2026-09-03' },
+        { type: 'REFUND_PAYOUT', sourceId: 'R1', amountNgn: -50, postedAtISO: '2026-09-20' },
+        { type: 'RECEIPT_IN', sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE1', amountNgn: 999, postedAtISO: '2026-10-02' },
+      ],
+      refunds: [{ refundID: 'R1', quotationRef: 'Q1' }],
+    }).get('Q1');
+    expect(cov).toMatchObject({ cashNgn: 600, creditNgn: 300, refundsNgn: 50, paidNetNgn: 850 });
+    expect(cov).toMatchObject({ coverageAtFirstCompletionNgn: 600, producedBeforeFullyCovered: true, overCoveredNgn: 0 });
   });
 });
 
@@ -95,6 +145,10 @@ describe('material register v2 rules (synthetic)', () => {
       productionJobCoils: [],
       stockMovements: [],
       allStockMovements: [],
+      ledgerEntries: [{ id: 'LE1', type: 'RECEIPT', quotationRef: 'Q1' }],
+      treasuryMovements: [
+        { type: 'RECEIPT_IN', sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE1', amountNgn: 1000, postedAtISO: '2026-09-01' },
+      ],
     });
     expect(report.offcutProduction.rows.map((r) => r.amountNetNgn)).toEqual([1000, null]);
     const legacy = buildMaterialTransactionReport({ ...base, quotations: [{ id: 'Q1', paidNgn: 1000 }], productionJobs: report.offcutProduction.rows.map((r) => ({ jobID: r.jobId, quotationRef: 'Q1', status: 'Completed', actualMeters: 10, actualWeightKg: 20, completedAtISO: '2026-09-05' })) });

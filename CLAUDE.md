@@ -30,12 +30,16 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 
 ## Material register — owner rules (2026-10-14)
 
-- Coil stock at any date = current kg rolled back by movements dated after that date (movement dateISO, not job completion date). Shown gross AND net of spool (Aluzinc incl. PPGI 65 kg, Aluminium 45 kg per coil; a coil lighter than its spool = nil), valued at the coil's unitCostNgnPerKg.
+- Material register v2 approved 2026-10-14 (backend `025917c`, frontend `1c10645`).
+- Coil stock at any date = current kg rolled back by movements dated after that date (movement dateISO, not job completion date). Shown gross AND net of spool; a coil lighter than its spool = nil.
+- Spool: Aluzinc (incl. PPGI) 65 kg; Aluminium bought by kg 45 kg; Aluminium bought by METRE 0 (arrives without a spool).
+- Aluminium is often bought by the metre (≈ ₦9,500–14,800/m); the PO line stores metres in the kg field and the per-metre price as per-kg. Detection (`purchaseUnitForLine`): metre if lineType coil_meter, or metersOffered = qtyOrdered, or price ≥ ₦9,000. Opening aluminium coils with no PO are metre-bought unless listed in `OPENING_ALUMINIUM_BOUGHT_BY_KG` (CL-KD-APR-1918). Metre-bought coils are valued at line amount ÷ kg actually received (coil weights); every coil whose ERP cost/kg differs is listed.
 - Oct 2026 stock-check corrections (ADJUSTMENT / COIL_SCRAP / COIL_RETURN dated from 2026-10-01) are treated as true at earlier dates (not rolled back). Constant `STOCK_CHECK_CORRECTIONS_FROM_ISO` in `shared/lib/coilRegisterCore.js`.
 - Received-date corrections are report notes only, never data changes (`COIL_RECEIVED_DATE_CORRECTIONS`: CL-26-2096 received 12 Sep, booked 12 Oct). The ERP figure is always shown; a "with corrections" figure is added when one applies.
 - Opening coils with no unit cost are valued at the price recorded on the other coils of the same material in the same opening batch (Aluzinc ₦1,738/kg on 30 Apr 2026) and listed as an exception. This reproduces the owner's 31 Aug / 30 Sep figures.
-- Per PO: kg ordered vs received per line; difference per coil should look like the spool. Coil price is compared with its PO line's value per kg received (flag > 10%).
-- OPEN (owner decision): "Paid (net)" on the material register = quotation paidNgn − refunds paid. It includes credits applied (OVERPAY_APPLIED) and payments after period end, so it is not bounded by recognised sales (Kaduna Sep: ₦230.7m vs ₦209.6m). It is now counted once per quotation.
+- Per PO: kg ordered vs received per line; difference per coil should look like the spool. Lines where received = ordered exactly are listed as "not weighed?".
+- "Paid (net)" per quotation, as at period end = cash that stayed (treasury receipts net of reversals) + credit applied (OVERPAY_APPLIED / ADVANCE_APPLIED) − refunds paid (treasury), three parts in separate columns, counted once per quotation. Flag "Produced before fully covered" (first job completed while coverage < quotation value) measures the Phase 3 control. Quotations covered above value + own overpayment (credit on top of cash) are exceptions (Kaduna Sep: QT-1522, 1544, 1668, 1681).
+- Follow-up for the owner: the approved purchase register still values metre-bought coils at kg × ERP price; applying the metre rule there moves Sep coil GRN value ₦121,443,840 → ₦121,541,640.
 
 ## Tech debt
 
@@ -49,5 +53,7 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - Deploy backend `5914833` (period source) together with frontend `ded7185`+ (accrual section); without it the Accrual section prints an "incomplete balances" warning.
 
 ## Phase 4 — data model (recorded, not built)
+
+- PO coil lines need an explicit purchase unit (kg | metre); coils need cost/kg = amount paid ÷ kg received (today a metre price is stored as a kg price, overvaluing metre-bought aluminium ≈ 1.6×).
 
 - Receipts get a **"Paid by (name on bank alert / teller)"** field, entered by the cashier. The sales report's "Paid by" column already reads it first (`paidByName` / `paidBy` / `payerName` on the receipt), then falls back to the matched bank-recon narration, then "not matched". POS card lines carry card/terminal text, not a name, so only this field can fill them.

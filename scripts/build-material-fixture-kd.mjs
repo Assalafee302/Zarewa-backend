@@ -49,7 +49,7 @@ const purchaseOrders = sheet('Purchase_orders').map((po) => ({
   ...pick(po, ['poID', 'supplierName', 'orderDateISO', 'status', 'procurementKind']),
   lines: poLines
     .filter((l) => l.poID === po.poID)
-    .map((l) => pick(l, ['lineKey', 'lineType', 'productID', 'productName', 'color', 'gauge', 'qtyOrdered', 'qtyReceived', 'unitPriceNgn', 'unitPricePerKgNgn'])),
+    .map((l) => pick(l, ['lineKey', 'lineType', 'productID', 'productName', 'color', 'gauge', 'qtyOrdered', 'qtyReceived', 'unitPriceNgn', 'unitPricePerKgNgn', 'metersOffered'])),
 }));
 
 const productionJobs = sheet('Production_jobs').map((j) =>
@@ -64,7 +64,15 @@ const quotations = sheet('Quotations').map((q) => ({
   stoneMeterQuote: /^(yes|true|1)$/i.test(String(q.stoneMeterQuote)),
 }));
 
-const refunds = sheet('Refunds').map((r) => pick(r, ['refundID', 'quotationRef', 'status', 'paidAmountNgn']));
+const refunds = sheet('Refunds').map((r) => pick(r, ['refundID', 'quotationRef', 'status', 'paidAmountNgn', 'paidAtISO']));
+
+// "Paid (net)" per quotation: cash that stayed (treasury receipt lines net of reversals), credit applied, refunds paid.
+const ledgerEntries = sheet('Ledger')
+  .filter((e) => ['RECEIPT', 'OVERPAY_APPLIED', 'ADVANCE_APPLIED'].includes(e.type))
+  .map((e) => pick(e, ['id', 'atISO', 'type', 'customerID', 'quotationRef', 'amountNgn']));
+const treasuryMovements = sheet('Treasury_movements')
+  .filter((t) => ['RECEIPT_IN', 'RECEIPT_REVERSAL_OUT', 'REFUND_PAYOUT'].includes(t.type))
+  .map((t) => pick(t, ['id', 'postedAtISO', 'type', 'amountNgn', 'sourceKind', 'sourceId']));
 
 const products = sheet('Products').map((p) => pick(p, ['productID', 'name', 'unit', 'materialType']));
 
@@ -83,11 +91,14 @@ const fixture = {
   quotations,
   refunds,
   products,
+  ledgerEntries,
+  treasuryMovements,
 };
 
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, JSON.stringify(fixture));
 console.log(
   `Wrote ${out}: coils ${coilLots.length}, movements ${stockMovements.length}, POs ${purchaseOrders.length}, ` +
-    `jobs ${productionJobs.length}, quotations ${quotations.length}, refunds ${refunds.length}`
+    `jobs ${productionJobs.length}, quotations ${quotations.length}, refunds ${refunds.length}, ` +
+    `ledger ${ledgerEntries.length}, treasury ${treasuryMovements.length}`
 );

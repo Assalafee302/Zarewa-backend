@@ -4975,6 +4975,13 @@ export function registerHttpApi(app, db) {
               // Coil stock roll-back needs every movement after the period, up to today.
               allStockMovements: listStockMovementsForBranchThrough(db, branchScope, '9999-12-31'),
               purchaseOrders: listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts()),
+              // Paid (net) as at period end: cash that stayed + credit applied − refunds paid.
+              ledgerEntries: listLedgerEntries(db, branchScope, reportListOpts()),
+              treasuryMovements: listTreasuryMovements(db, branchScope, {
+                unlimited: true,
+                toISO: endDate,
+                types: ['RECEIPT_IN', 'RECEIPT_REVERSAL_OUT', 'REFUND_PAYOUT'],
+              }),
             }),
         productionJobs: listProductionJobs(db, branchScope, reportListOpts()),
         productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),

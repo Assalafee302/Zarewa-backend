@@ -13,6 +13,7 @@ import {
 import { quotationHasFlatSheetLine } from './stoneCoatedQuotationPolicy.js';
 import { jobStoneRoofingMetres, jobTotalOutputMetres } from './jobOutputMetres.js';
 import { buildCoilRegister } from './coilRegisterCore.js';
+import { buildQuotationCoverage } from './quotationCoverageCore.js';
 const ACCESSORY_REGISTER_TYPES = [
   { key: 'nails_fasteners', label: 'Nails & fasteners', patterns: [/nail/i, /fastener/i, /tapping screw/i] },
   { key: 'screws_clips', label: 'Screws & clips', patterns: [/screw/i, /clip/i, /washer/i] },
@@ -584,14 +585,18 @@ function amountPaidNetForJob(quote, refunds, qref) {
   return Math.max(0, paid - refund);
 }
 
-/** v2: Paid (net) once per quotation across the whole register; later rows of the same quote show null. */
-function paidNetOncePerQuotation() {
+/**
+ * v2: Paid (net) once per quotation across the whole register; later rows of the same quote show null.
+ * With a coverage map, Paid (net) = cash that stayed + credit applied − refunds paid, as at period end.
+ */
+function paidNetOncePerQuotation(coverageByQuote = null) {
   const counted = new Set();
   return (quote, refunds, qref) => {
     const key = String(qref || '').trim();
     if (!key || counted.has(key)) return null;
     counted.add(key);
-    return amountPaidNetForJob(quote, refunds, qref);
+    const cov = coverageByQuote?.get(key);
+    return cov ? cov.paidNetNgn : amountPaidNetForJob(quote, refunds, qref);
   };
 }
 
@@ -1185,7 +1190,7 @@ export function buildMaterialTransactionReport(input = {}) {
     v2 = null,
   } = input;
   /* v2 (Phase 1): stone by quotation material, movement kg, Paid (net) once per quotation, gaps listed. */
-  const paidOnce = v2 ? paidNetOncePerQuotation() : null;
+  const paidOnce = v2 ? paidNetOncePerQuotation(v2.coverageByQuote || null) : null;
   const paidFor = (cancelled) => (paidOnce && !cancelled ? paidOnce : amountPaidNetForJob);
   const movementKgByJobCoil = v2?.movementKgByJobCoil || null;
 
@@ -1427,11 +1432,73 @@ export function buildMaterialRegisterV2(input = {}) {
     endDate: input.endDate,
     ...(input.receivedDateCorrections ? { receivedDateCorrections: input.receivedDateCorrections } : {}),
   });
+  const coverageByQuote = buildQuotationCoverage({
+    quotations: input.quotations || [],
+    productionJobs: input.productionJobs || [],
+    ledgerEntries: input.ledgerEntries || [],
+    treasuryMovements: input.treasuryMovements || [],
+    refunds: input.refunds || [],
+    asAtISO: input.endDate,
+  });
   const report = buildMaterialTransactionReport({
     ...input,
-    v2: { movementKgByJobCoil: coilRegister.consumption.byJobCoilAllDates },
+    v2: { movementKgByJobCoil: coilRegister.consumption.byJobCoilAllDates, coverageByQuote },
   });
+  attachPaidBreakdown(report, input.productionJobs || [], coverageByQuote);
   return { ...report, version: 2, coilRegister };
+}
+
+/** Put the three parts of Paid (net) and the coverage flag on the row that carries Paid (net). */
+function attachPaidBreakdown(report, productionJobs, coverageByQuote) {
+  const quoteOfJob = new Map(productionJobs.map((j) => [String(j.jobID ?? j.job_id ?? '').trim(), String(j.quotationRef ?? j.quotation_ref ?? '').trim()]));
+  const decorate = (r) => {
+    if (r.amountNetNgn == null) return;
+    const cov = coverageByQuote.get(quoteOfJob.get(String(r.jobId || '').trim()));
+    if (!cov) return;
+    r.paidCashNgn = cov.cashNgn;
+    r.paidCreditNgn = cov.creditNgn;
+    r.paidRefundsNgn = cov.refundsNgn;
+    r.producedBeforeFullyCovered = cov.producedBeforeFullyCovered;
+    r.coverageAtFirstCompletionNgn = cov.coverageAtFirstCompletionNgn;
+  };
+  for (const key of ['aluminium', 'aluzinc', 'unclassifiedCoil', 'stoneCoated', 'accessories']) {
+    for (const g of report[key]?.groups || []) for (const r of g.rows || []) decorate(r);
+  }
+  for (const r of report.offcutProduction?.rows || []) decorate(r);
+  /* One row per quotation that carries Paid (net) in this register: the three parts, net and the flags. */
+  const listed = [];
+  const seen = new Set();
+  const collect = (section, r) => {
+    if (r.amountNetNgn == null) return;
+    const q = quoteOfJob.get(String(r.jobId || '').trim());
+    const cov = coverageByQuote.get(q);
+    if (!cov || seen.has(q)) return;
+    seen.add(q);
+    listed.push({ section, jobId: r.jobId, customerProject: r.customerProject || '', ...cov });
+  };
+  for (const [key, label] of [
+    ['aluminium', 'Aluminium'],
+    ['aluzinc', 'Aluzinc'],
+    ['unclassifiedCoil', 'Coil (unclassified)'],
+    ['stoneCoated', 'Stone-coated'],
+    ['accessories', 'Accessories'],
+  ]) {
+    for (const g of report[key]?.groups || []) for (const r of g.rows || []) collect(label, r);
+  }
+  for (const r of report.offcutProduction?.rows || []) collect('Offcut / no coil', r);
+  report.summary.paidByQuotation = listed.sort((x, y) => x.quotationRef.localeCompare(y.quotationRef));
+  report.summary.coverageAboveValue = listed.filter((x) => x.overCoveredNgn > 0);
+  const flagged = new Set();
+  for (const [qref, cov] of coverageByQuote) if (cov.producedBeforeFullyCovered) flagged.add(qref);
+  report.summary.producedBeforeFullyCovered = [...quoteOfJob.entries()]
+    .filter(([, q]) => flagged.has(q))
+    .map(([, q]) => q)
+    .filter((q, i, a) => a.indexOf(q) === i)
+    .filter((q) => {
+      const cov = coverageByQuote.get(q);
+      return cov && cov.firstCompletedISO >= (report.period?.startDate || '') && cov.firstCompletedISO <= (report.period?.endDate || '9999');
+    })
+    .map((q) => coverageByQuote.get(q));
 }
 
 /** @deprecated Use {@link buildMaterialTransactionReport} — flat coil rows for legacy export. */

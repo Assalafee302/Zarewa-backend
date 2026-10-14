@@ -18,7 +18,7 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 
 - Purchase register approved 2026-10-13. Supplier balances are exact (no rounding tolerance — PO-0070's ₦400 stays). PO value = ordered qty × unit price (not received qty).
 - Recognised sales = sales report rows (receipts on quotations whose first completed production falls in the period, incl. money received earlier) EXCLUDING receipts whose treasury receipt was fully reversed. Suspended receipts that reached the bank and were never reversed stay in, marked suspended.
-- Sales report v2 approved 2026-10-14 (frontend `69b6b47`). Fixture source: ERP export `zarewa-entered-data (8).xlsx`, Kaduna, generated 2026-10-13 14:27 UTC.
+- Sales report v2 approved 2026-10-14 (frontend `69b6b47`). Accrual section approved 2026-10-14 (frontend `ded7185`, backend `5914833`). Fixture source: ERP export `zarewa-entered-data (8).xlsx`, Kaduna, generated 2026-10-13 14:27 UTC.
 
 ## Accounting basis (owner decision 2026-10-14)
 
@@ -36,3 +36,12 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 ## Tech debt
 
 - `salesPaymentsReceivedRows` (frontend `src/lib/liveAnalytics.js`) is slow on full branch history (7–24 s on the Kaduna fixture): `quotationPaidNgnAsOf` rescans all receipts and rebuilds the companion-overpay map per quotation. Leave until reports Phase 1 is done.
+
+## Release checklist (before shipping reports Phase 1)
+
+- Run the backend DB-backed tests against a real database: `server/finance/reportPeriodSourceOps.test.js` (period source sends `quotationLines` and `accrualTreasuryMovements`). They skip on machines without MySQL, so a green local run is not enough.
+- Deploy backend `5914833` (period source) together with frontend `ded7185`+ (accrual section); without it the Accrual section prints an "incomplete balances" warning.
+
+## Phase 4 — data model (recorded, not built)
+
+- Receipts get a **"Paid by (name on bank alert / teller)"** field, entered by the cashier. The sales report's "Paid by" column already reads it first (`paidByName` / `paidBy` / `payerName` on the receipt), then falls back to the matched bank-recon narration, then "not matched". POS card lines carry card/terminal text, not a name, so only this field can fill them.

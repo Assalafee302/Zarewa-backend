@@ -19,10 +19,21 @@ if (!database) {
   process.exit(2);
 }
 
+// --live: read-only figures from production (SELECT only), with the same confirmation as the apply.
+const live = args.includes('--live');
+if (live) {
+  const { loadLiveMysqlEnv } = await import(pathToFileURL(path.join(BE, 'scripts/lib/phase2LiveEnv.mjs')).href);
+  try {
+    loadLiveMysqlEnv(BE, database);
+  } catch (e) {
+    console.error(`Refused: ${e.message}`);
+    process.exit(3);
+  }
+}
 const { mysqlConfigFromEnv, createMysqlDatabase, databaseLabel } = await imp('server/mysqlDatabase.js');
 const cfg = { ...mysqlConfigFromEnv(), database };
-if (!/^(localhost|127\.0\.0\.1|::1)$/i.test(cfg.host)) {
-  console.error(`Refused: ${databaseLabel(cfg)} is not local.`);
+if (!live && !/^(localhost|127\.0\.0\.1|::1)$/i.test(cfg.host)) {
+  console.error(`Refused: ${databaseLabel(cfg)} is not local (use --live for production, read-only).`);
   process.exit(3);
 }
 const rm = await imp('server/readModel.js');

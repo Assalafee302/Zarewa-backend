@@ -38,6 +38,15 @@ if (!database || !planPath || !approver) {
   process.exit(2);
 }
 
+if (live) {
+  const { loadLiveMysqlEnv } = await import(pathToFileURL(path.join(BE, 'scripts/lib/phase2LiveEnv.mjs')).href);
+  try {
+    loadLiveMysqlEnv(BE, database);
+  } catch (e) {
+    console.error(`Refused: ${e.message}`);
+    process.exit(3);
+  }
+}
 const { mysqlConfigFromEnv, createMysqlDatabase, databaseLabel } = await imp('server/mysqlDatabase.js');
 const cfg = { ...mysqlConfigFromEnv(), database };
 const localHost = /^(localhost|127\.0\.0\.1|::1)$/i.test(cfg.host);
@@ -46,10 +55,9 @@ if (!live && (!localHost || !rehearsalName)) {
   console.error(`Refused: ${databaseLabel(cfg)} — only a local rehearsal/fixture/test schema without --live.`);
   process.exit(3);
 }
-if (live && process.env.ZAREWA_PHASE2_LIVE_CONFIRM !== database) {
-  console.error(`Refused: --live needs ZAREWA_PHASE2_LIVE_CONFIRM=${database}.`);
-  process.exit(3);
-}
+/** Capex assets post in the open period (owner, 14 Oct: "October adjustment"), not on the locked Sep expense date. */
+const adjustmentDate = opt('adjustment-date') || new Date().toISOString().slice(0, 10);
+const ASSET_NOTE = opt('asset-note') || 'Acquired Sep 2026, transformer, reclassified from expenses';
 
 const { appendAuditLog } = await imp('server/controlOps.js');
 const { insertTreasuryMovementTx } = await imp('server/writeOps.js');
@@ -93,13 +101,56 @@ const audit = (item, op, details) =>
     details: { correctionId: item.id, field: item.field, approver, approvedAtISO, ...details },
   });
 
+/**
+ * Capex expenses whose fixed asset is still to register. The ERP's sync runs DDL (implicit MySQL commit), so it runs
+ * after the group transaction has committed — never inside it.
+ */
+const pendingCapex = [];
+const assetFor = (expenseId) => db.prepare(`SELECT id, name, notes, acquisition_date_iso FROM fixed_assets WHERE source_expense_id = ?`).get(expenseId);
+
+/**
+ * Fixed-asset row + capitalisation journal for a capex expense, dated in the open period (October adjustment), named
+ * "Transformer (<expense>)" with the owner's note (name / notes columns hold 100 characters). Finishes a half-done
+ * asset (registered but not yet named / noted).
+ */
+function registerCapexAsset(item, op) {
+  let asset = assetFor(op.key);
+  if (!asset) {
+    const r = syncFixedAssetFromCapexExpense(db, op.key, { actor, acquisitionDateIso: adjustmentDate });
+    if (r?.skipped) return `fixed asset not created (${r.reason})`;
+    if (!r?.ok) throw new Error(`${item.id}: fixed asset — ${r?.error}`);
+    asset = assetFor(op.key);
+  }
+  const name = `Transformer (${op.key})`.slice(0, 100);
+  const notes = ASSET_NOTE.slice(0, 100);
+  if (asset.name === name && asset.notes === notes) return `fixed asset ${asset.id} already registered ${asset.acquisition_date_iso}`;
+  db.prepare(`UPDATE fixed_assets SET name = ?, notes = ? WHERE id = ?`).run(name, notes, asset.id);
+  audit(item, { ...op, table: 'fixed_assets', key: asset.id }, {
+    table: 'fixed_assets', key: asset.id, sourceExpense: op.key, acquisitionDateIso: asset.acquisition_date_iso,
+    before: { name: asset.name, notes: asset.notes }, after: { name, notes },
+  });
+  return `fixed asset ${asset.id} registered ${asset.acquisition_date_iso}`;
+}
+const capexDone = (expenseId) => {
+  const a = assetFor(expenseId);
+  return Boolean(a && a.name === `Transformer (${expenseId})`.slice(0, 100));
+};
+
 function runOp(item, op) {
   if (op.kind === 'update') {
     const t = ALLOWED[op.table];
     if (!t || t.key !== op.keyCol || !t.cols.includes(op.col)) throw new Error(`${item.id}: ${op.table}.${op.col} not allowed`);
     const row = db.prepare(`SELECT ${op.col} AS v FROM ${op.table} WHERE ${op.keyCol} = ?`).get(op.key);
     if (!row) return { outcome: 'skipped', why: 'record not found' };
-    if (same(row.v, op.after, op.compare)) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (same(row.v, op.after, op.compare)) {
+      // Category already corrected but its fixed asset not yet registered / named: finish it after the group commits.
+      if (op.afterHook === 'capexSync' && !capexDone(op.key)) {
+        if (!doApply) return { outcome: 'would apply', capex: `fixed asset to register (${adjustmentDate})` };
+        pendingCapex.push({ item, op });
+        return { outcome: 'applied', capex: 'fixed asset queued' };
+      }
+      return { outcome: 'skipped', why: 'already at the planned value' };
+    }
     if (!same(row.v, op.before, op.compare)) return { outcome: 'skipped', why: `current value ${JSON.stringify(row.v)} ≠ planned before ${JSON.stringify(op.before)}` };
     if (!doApply) return { outcome: 'would apply' };
     let after = op.after;
@@ -107,8 +158,8 @@ function runOp(item, op) {
     db.prepare(`UPDATE ${op.table} SET ${op.col} = ? WHERE ${op.keyCol} = ?`).run(after, op.key);
     audit(item, op, { table: op.table, key: op.key, column: op.col, before: row.v, after });
     if (op.afterHook === 'capexSync') {
-      const r = syncFixedAssetFromCapexExpense(db, op.key, { actor });
-      return { outcome: 'applied', capex: r?.skipped ? `fixed asset not created (${r.reason})` : r?.ok ? 'fixed asset registered' : `fixed asset: ${r?.error}` };
+      pendingCapex.push({ item, op });
+      return { outcome: 'applied', capex: 'fixed asset queued' };
     }
     return { outcome: 'applied' };
   }
@@ -198,6 +249,11 @@ for (const group of ['A', 'D', 'C', 'B']) {
     if (doApply) db.transaction(run)();
     else run();
     results.push(...groupResults);
+    // Fixed assets for capex expenses, after the group has committed (the ERP's sync runs DDL).
+    while (doApply && pendingCapex.length) {
+      const { item, op } = pendingCapex.shift();
+      results.push({ id: item.id, group, record: item.record, field: 'fixed asset', op: 'capexSync', outcome: 'applied', capex: registerCapexAsset(item, op) });
+    }
   } catch (e) {
     failed = { group, error: String(e.message || e) };
     results.push({ group, outcome: 'ROLLED BACK', why: failed.error });

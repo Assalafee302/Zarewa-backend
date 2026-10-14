@@ -57,9 +57,15 @@ if (!live && (!localHost || !rehearsalName)) {
 }
 /** Capex assets post in the open period (owner, 14 Oct: "October adjustment"), not on the locked Sep expense date. */
 const adjustmentDate = opt('adjustment-date') || new Date().toISOString().slice(0, 10);
-const ASSET_NOTE = opt('asset-note') || 'Acquired Sep 2026, transformer, reclassified from expenses';
+/**
+ * Owner, 14 Oct: the capex expenses in the plan are two payments for ONE transformer → one asset, cost = their sum.
+ */
+const ASSET_NAME = opt('asset-name') || 'Transformer (EXP-KD-26-0362 + 0397)';
+const ASSET_NOTE = opt('asset-note') || 'Acquired Sep 2026, transformer, paid in 2 parts';
 
 const { appendAuditLog } = await imp('server/controlOps.js');
+const { postBalancedJournalTx } = await imp('server/glOps.js');
+const { capexExpenseAssetMeta } = await imp('shared/expenseCategories.js');
 const { insertTreasuryMovementTx } = await imp('server/writeOps.js');
 const { createInvestigationCase, ensureInvestigationSchema } = await imp('server/office/investigationOps.js');
 const { syncFixedAssetFromCapexExpense } = await imp('server/fixedAssetAutomationOps.js');
@@ -106,35 +112,72 @@ const audit = (item, op, details) =>
  * after the group transaction has committed — never inside it.
  */
 const pendingCapex = [];
-const assetFor = (expenseId) => db.prepare(`SELECT id, name, notes, acquisition_date_iso FROM fixed_assets WHERE source_expense_id = ?`).get(expenseId);
+const assetFor = (expenseId) =>
+  db.prepare(`SELECT id, name, notes, cost_ngn, acquisition_date_iso FROM fixed_assets WHERE source_expense_id = ?`).get(expenseId);
+/** Capex expenses of the plan, in plan order: the first carries the asset row, the others add to its cost. */
+const capexKeys = plan.items.flatMap((i) => i.ops.filter((o) => o.afterHook === 'capexSync').map((o) => o.key));
+const expenseAmount = (id) => Math.round(Number(db.prepare(`SELECT amount_ngn AS a FROM expenses WHERE expense_id = ?`).get(id)?.a) || 0);
+const capexJournalFor = (id) =>
+  db.prepare(`SELECT id FROM gl_journal_entries WHERE source_kind = 'CAPEX_CAPITALIZE' AND source_id = ?`).get(id);
+const capexTotal = () => capexKeys.reduce((s, k) => s + expenseAmount(k), 0);
+
+function combinedCapexDone() {
+  if (!capexKeys.length) return true;
+  const a = assetFor(capexKeys[0]);
+  if (!a || a.name !== ASSET_NAME || a.notes !== ASSET_NOTE || Number(a.cost_ngn) !== capexTotal()) return false;
+  return capexKeys.slice(1).every((k) => capexJournalFor(k) && !assetFor(k));
+}
 
 /**
- * Fixed-asset row + capitalisation journal for a capex expense, dated in the open period (October adjustment), named
- * "Transformer (<expense>)" with the owner's note (name / notes columns hold 100 characters). Finishes a half-done
- * asset (registered but not yet named / noted).
+ * ONE fixed asset for all capex expenses of the plan (owner: two payments for one transformer), dated in the open
+ * period (October adjustment). The first expense goes through the ERP's own sync (asset row + capitalisation
+ * journal); every further expense gets the same kind of capitalisation journal (no second asset), and the asset's
+ * cost becomes the sum. Journals total = asset cost. Name / notes ≤ 100 characters. Re-runs finish half-done work.
  */
-function registerCapexAsset(item, op) {
-  let asset = assetFor(op.key);
+function registerCombinedCapexAsset(item) {
+  const [primary, ...others] = capexKeys;
+  let asset = assetFor(primary);
   if (!asset) {
-    const r = syncFixedAssetFromCapexExpense(db, op.key, { actor, acquisitionDateIso: adjustmentDate });
+    const r = syncFixedAssetFromCapexExpense(db, primary, { actor, acquisitionDateIso: adjustmentDate });
     if (r?.skipped) return `fixed asset not created (${r.reason})`;
     if (!r?.ok) throw new Error(`${item.id}: fixed asset — ${r?.error}`);
-    asset = assetFor(op.key);
+    asset = assetFor(primary);
   }
-  const name = `Transformer (${op.key})`.slice(0, 100);
+  for (const k of others) {
+    const own = assetFor(k);
+    if (own) throw new Error(`${item.id}: expense ${k} already has its own fixed asset ${own.id} — resolve before combining`);
+    if (capexJournalFor(k)) continue;
+    const exp = db.prepare(`SELECT * FROM expenses WHERE expense_id = ?`).get(k);
+    const amt = expenseAmount(k);
+    const meta = capexExpenseAssetMeta(exp.category);
+    const journal = postBalancedJournalTx(db, {
+      entryDateISO: asset.acquisition_date_iso,
+      memo: `Capex capitalization — ${ASSET_NAME}`,
+      sourceKind: 'CAPEX_CAPITALIZE',
+      sourceId: k,
+      branchId: exp.branch_id,
+      createdByUserId: null,
+      lines: [
+        { accountCode: meta.glAccountCode, debitNgn: amt, memo: ASSET_NAME },
+        { accountCode: '1000', creditNgn: amt, memo: k },
+      ],
+    });
+    audit(item, { kind: 'capexJournal', table: 'gl_journal_entries', key: k }, { sourceExpense: k, amountNgn: amt, asset: asset.id, journal });
+  }
+  const total = capexTotal();
+  const name = ASSET_NAME.slice(0, 100);
   const notes = ASSET_NOTE.slice(0, 100);
-  if (asset.name === name && asset.notes === notes) return `fixed asset ${asset.id} already registered ${asset.acquisition_date_iso}`;
-  db.prepare(`UPDATE fixed_assets SET name = ?, notes = ? WHERE id = ?`).run(name, notes, asset.id);
-  audit(item, { ...op, table: 'fixed_assets', key: asset.id }, {
-    table: 'fixed_assets', key: asset.id, sourceExpense: op.key, acquisitionDateIso: asset.acquisition_date_iso,
-    before: { name: asset.name, notes: asset.notes }, after: { name, notes },
-  });
-  return `fixed asset ${asset.id} registered ${asset.acquisition_date_iso}`;
+  if (asset.name !== name || asset.notes !== notes || Number(asset.cost_ngn) !== total) {
+    db.prepare(`UPDATE fixed_assets SET name = ?, notes = ?, cost_ngn = ?, updated_at_iso = ? WHERE id = ?`).run(
+      name, notes, total, new Date().toISOString(), asset.id
+    );
+    audit(item, { kind: 'capexAsset', table: 'fixed_assets', key: asset.id }, {
+      table: 'fixed_assets', key: asset.id, expenses: capexKeys, acquisitionDateIso: asset.acquisition_date_iso,
+      before: { name: asset.name, notes: asset.notes, cost_ngn: asset.cost_ngn }, after: { name, notes, cost_ngn: total },
+    });
+  }
+  return `fixed asset ${asset.id} "${name}", cost ₦${total.toLocaleString('en-NG')}, dated ${asset.acquisition_date_iso}`;
 }
-const capexDone = (expenseId) => {
-  const a = assetFor(expenseId);
-  return Boolean(a && a.name === `Transformer (${expenseId})`.slice(0, 100));
-};
 
 function runOp(item, op) {
   if (op.kind === 'update') {
@@ -144,7 +187,7 @@ function runOp(item, op) {
     if (!row) return { outcome: 'skipped', why: 'record not found' };
     if (same(row.v, op.after, op.compare)) {
       // Category already corrected but its fixed asset not yet registered / named: finish it after the group commits.
-      if (op.afterHook === 'capexSync' && !capexDone(op.key)) {
+      if (op.afterHook === 'capexSync' && !combinedCapexDone()) {
         if (!doApply) return { outcome: 'would apply', capex: `fixed asset to register (${adjustmentDate})` };
         pendingCapex.push({ item, op });
         return { outcome: 'applied', capex: 'fixed asset queued' };
@@ -250,9 +293,10 @@ for (const group of ['A', 'D', 'C', 'B']) {
     else run();
     results.push(...groupResults);
     // Fixed assets for capex expenses, after the group has committed (the ERP's sync runs DDL).
-    while (doApply && pendingCapex.length) {
-      const { item, op } = pendingCapex.shift();
-      results.push({ id: item.id, group, record: item.record, field: 'fixed asset', op: 'capexSync', outcome: 'applied', capex: registerCapexAsset(item, op) });
+    if (doApply && pendingCapex.length) {
+      const { item } = pendingCapex[0];
+      pendingCapex.length = 0;
+      results.push({ id: item.id, group, record: capexKeys.join(' + '), field: 'fixed asset', op: 'capexSync', outcome: 'applied', capex: registerCombinedCapexAsset(item) });
     }
   } catch (e) {
     failed = { group, error: String(e.message || e) };

@@ -57,3 +57,9 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - PO coil lines need an explicit purchase unit (kg | metre); coils need cost/kg = amount paid ÷ kg received (today a metre price is stored as a kg price, overvaluing metre-bought aluminium ≈ 1.6×).
 
 - Receipts get a **"Paid by (name on bank alert / teller)"** field, entered by the cashier. The sales report's "Paid by" column already reads it first (`paidByName` / `paidBy` / `payerName` on the receipt), then falls back to the matched bank-recon narration, then "not matched". POS card lines carry card/terminal text, not a name, so only this field can fill them.
+
+## Expenses report — rules (2026-10-14)
+
+- ERP view by ERP category (total unchanged) + "book" view after rule-based reclassification (frontend `src/lib/expensesReportCore.js`): R1 refund → Refunds; R2 IOU/10U or staff payee + loan/advance → Staff loans; R3 transformer/NEMSA/generator/machine → Fixed asset; R4 washer/felt → Accessories; R5 forklift → Maintenance. First match wins; every moved line is listed. No IDs hard-coded.
+- Book carriage = expense carriage + PO transport paid in period − expense lines duplicating a PO transport payment (treasury note names the payment request, or same amount same day).
+- Admin salary: salary/wages lines = payroll gross; other lines flagged. HR payroll is NOT in the ERP export — the payroll split (factory / branch / HQ share) is an optional input until a payroll source is wired in.

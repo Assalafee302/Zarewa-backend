@@ -75,6 +75,13 @@ const { reclassifyPaidPaymentRequestCategory } = await imp('server/expenseCatego
 const { createInvestigationCase, ensureInvestigationSchema } = await imp('server/office/investigationOps.js');
 const { syncFixedAssetFromCapexExpense } = await imp('server/fixedAssetAutomationOps.js');
 const { ensureAccountingPhase2Schema } = await imp('server/accountingPhase2Ops.js');
+const { ensureTreasuryCashGlAccount } = await imp('server/accountingPostingOps.js');
+const { tryPostCustomerRefundPayoutGlTx } = await imp('server/glOps.js');
+const { evaluateRefundPayoutGlPolicy } = await imp('server/ap1cReversalRefundOps.js');
+const { resolveRefundStatus } = await imp('server/sales/refundPayoutStatus.js');
+const { insertLedgerRows, insertAdvanceInEvent, recordCustomerAdvanceCash, insertCustomer } = await imp('server/writeOps.js');
+const { tryPostCustomerAdvanceGl } = await imp('server/glOps.js');
+const { planAdvanceIn } = await imp('shared/lib/customerLedgerCore.js');
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
 const db = createMysqlDatabase(cfg, { reset: false, bootstrap: false });
@@ -288,7 +295,21 @@ function runOp(item, op) {
     const account = db.prepare(`SELECT id, name, bank_name, branch_id FROM treasury_accounts WHERE id = ?`).get(op.treasuryAccountId);
     if (!account || account.branch_id !== op.branchId) return { outcome: 'skipped', why: `treasury account ${op.treasuryAccountId} not found on ${op.branchId}` };
     assertPeriodOpen(db, op.date, 'Expense date');
-    if (!doApply) return { outcome: 'would apply', account: `${account.name} (${account.bank_name})` };
+    const asset = op.addToAsset ? db.prepare(`SELECT * FROM fixed_assets WHERE id = ?`).get(op.addToAsset.assetId) : null;
+    if (op.addToAsset) {
+      if (!asset) return { outcome: 'skipped', why: `fixed asset ${op.addToAsset.assetId} not found` };
+      if (Number(asset.cost_ngn) !== op.addToAsset.expectedCostNgn) {
+        return { outcome: 'skipped', why: `asset cost ₦${asset.cost_ngn} ≠ planned before ₦${op.addToAsset.expectedCostNgn}` };
+      }
+      assertPeriodOpen(db, asset.acquisition_date_iso, 'Asset capitalisation date');
+    }
+    if (!doApply) {
+      return {
+        outcome: 'would apply',
+        account: `${account.name} (${account.bank_name})`,
+        ...(asset ? { asset: `${asset.id} cost ₦${asset.cost_ngn} → ₦${Number(asset.cost_ngn) + op.amountNgn}, capitalised ${asset.acquisition_date_iso}` } : {}),
+      };
+    }
     const expenseID = nextExpenseHumanId(db, op.branchId);
     db.prepare(
       `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id, category_lane)
@@ -333,7 +354,250 @@ function runOp(item, op) {
       table: 'expenses', key: expenseID, treasuryMovementId: movement.id, glJournal: gl.id || gl.journalId || null,
       date: op.date, amountNgn: op.amountNgn, account: `${account.name} (${account.bank_name})`,
     });
+    if (asset) {
+      // Additional cost on an existing capex asset, the way the combined transformer asset was built: capitalisation
+      // journal on the asset's date (open period), asset cost += amount, name / notes updated.
+      const meta = capexExpenseAssetMeta(op.category);
+      const name = op.addToAsset.name.replace('{expenseId}', expenseID.replace('EXP-KD-26-', '')).slice(0, 100);
+      const notes = op.addToAsset.notes.slice(0, 100);
+      const journal = postBalancedJournalTx(db, {
+        entryDateISO: asset.acquisition_date_iso,
+        memo: `Capex capitalization — ${name}`,
+        sourceKind: 'CAPEX_CAPITALIZE',
+        sourceId: expenseID,
+        branchId: op.branchId,
+        createdByUserId: null,
+        lines: [
+          { accountCode: meta.glAccountCode, debitNgn: op.amountNgn, memo: name },
+          { accountCode: '1000', creditNgn: op.amountNgn, memo: expenseID },
+        ],
+      });
+      const cost = Number(asset.cost_ngn) + op.amountNgn;
+      db.prepare(`UPDATE fixed_assets SET name = ?, notes = ?, cost_ngn = ?, updated_at_iso = ? WHERE id = ?`).run(name, notes, cost, new Date().toISOString(), asset.id);
+      audit(item, { kind: 'capexAsset', table: 'fixed_assets', key: asset.id }, {
+        table: 'fixed_assets', key: asset.id, addedExpense: expenseID, journal,
+        before: { name: asset.name, notes: asset.notes, cost_ngn: asset.cost_ngn }, after: { name, notes, cost_ngn: cost },
+      });
+      return { outcome: 'applied', expenseID, treasuryMovementId: movement.id, asset: `${asset.id} cost ₦${cost}` };
+    }
     return { outcome: 'applied', expenseID, treasuryMovementId: movement.id };
+  }
+  if (op.kind === 'moveTreasury') {
+    // Bank line booked on the wrong account / date: correct the treasury line in place (account + date), keep its
+    // links, move the stored balances, and reclass any GL line that sits on the old account's cash code.
+    const tm = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm) return { outcome: 'skipped', why: 'treasury line not found' };
+    const cur = String(tm.posted_at_iso || '').slice(0, 10);
+    if (Number(tm.treasury_account_id) === op.toAccountId && cur === op.toDate) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (Number(tm.treasury_account_id) !== op.fromAccountId || cur !== op.fromDate) {
+      return { outcome: 'skipped', why: `current account ${tm.treasury_account_id} / ${cur} ≠ planned before ${op.fromAccountId} / ${op.fromDate}` };
+    }
+    const rev = db.prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = ?`).get(tm.id);
+    if (rev) return { outcome: 'skipped', why: `line is reversed by ${rev.id}` };
+    assertPeriodOpen(db, op.fromDate, 'Current treasury date');
+    assertPeriodOpen(db, op.toDate, 'New treasury date');
+    const fromGl = `acc-cash-${op.fromAccountId}`;
+    const glLines = db
+      .prepare(
+        `SELECT l.journal_id, l.debit_ngn, l.credit_ngn FROM gl_journal_lines l JOIN gl_journal_entries j ON j.id = l.journal_id
+         WHERE l.account_id = ? AND (j.source_id = ? OR l.memo = ?)`
+      )
+      .all(fromGl, tm.id, tm.id);
+    const glNet = glLines.reduce((s, l) => s + Number(l.debit_ngn || 0) - Number(l.credit_ngn || 0), 0);
+    if (!doApply) return { outcome: 'would apply', amountNgn: tm.amount_ngn, glReclassNgn: glNet };
+    const after = `${op.toDate}${String(tm.posted_at_iso).slice(10) || 'T12:00:00.000Z'}`;
+    db.prepare(`UPDATE treasury_movements SET treasury_account_id = ?, posted_at_iso = ? WHERE id = ?`).run(op.toAccountId, after, tm.id);
+    const amt = Number(tm.amount_ngn);
+    db.prepare(`UPDATE treasury_accounts SET balance = balance - ? WHERE id = ?`).run(amt, op.fromAccountId);
+    db.prepare(`UPDATE treasury_accounts SET balance = balance + ? WHERE id = ?`).run(amt, op.toAccountId);
+    let journal = null;
+    if (glNet !== 0) {
+      const from = ensureTreasuryCashGlAccount(db, op.fromAccountId);
+      const to = ensureTreasuryCashGlAccount(db, op.toAccountId);
+      const a = Math.abs(glNet);
+      // Original journal credited (money out) or debited (money in) the old account: move that side to the new one.
+      const lines = glNet < 0
+        ? [{ accountCode: from.accountCode, debitNgn: a, memo: tm.id }, { accountCode: to.accountCode, creditNgn: a, memo: tm.id }]
+        : [{ accountCode: to.accountCode, debitNgn: a, memo: tm.id }, { accountCode: from.accountCode, creditNgn: a, memo: tm.id }];
+      journal = postBalancedJournalTx(db, {
+        entryDateISO: op.fromDate,
+        memo: `Phase 2 ${item.id}: ${tm.id} moved to ${to.accountName}`.slice(0, 200),
+        sourceKind: 'PHASE2_TREASURY_MOVE',
+        sourceId: tm.id,
+        branchId: 'BR-KD',
+        createdByUserId: null,
+        lines,
+      });
+    }
+    audit(item, { ...op, table: 'treasury_movements', key: tm.id }, {
+      table: 'treasury_movements', key: tm.id, note: op.note,
+      before: { treasury_account_id: tm.treasury_account_id, posted_at_iso: tm.posted_at_iso },
+      after: { treasury_account_id: op.toAccountId, posted_at_iso: after }, glReclassNgn: glNet, journal,
+    });
+    return { outcome: 'applied', glReclassNgn: glNet };
+  }
+  if (op.kind === 'refundRepay') {
+    // Refund recorded paid on the wrong date / amount / payee. Corrected in place (the ERP's payout reversal would
+    // delete the REFUND_ADVANCE ledger slice): treasury line, ledger slice and refund row get the bank's date and
+    // amount; GL: the old payout journal is reversed on its date and a new one posted on the bank date.
+    const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    if (!r) return { outcome: 'skipped', why: 'refund not found' };
+    const lines = db
+      .prepare(`SELECT * FROM treasury_movements WHERE source_kind = 'REFUND' AND source_id = ? AND type IN ('REFUND_PAYOUT', 'REFUND_PAYOUT_REVERSAL_IN')`)
+      .all(op.refundId);
+    const tm = lines.find((l) => l.id === op.originalMovementId);
+    if (!tm || lines.length !== 1) return { outcome: 'skipped', why: `payout lines ${lines.map((l) => l.id).join(', ') || 'none'} ≠ planned ${op.originalMovementId}` };
+    if (Number(r.paid_amount_ngn) === op.amountNgn && String(r.paid_at_iso).slice(0, 10) === op.payDate) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (Number(r.paid_amount_ngn) !== op.expectedPaidNgn || Number(tm.amount_ngn) !== -op.expectedPaidNgn) {
+      return { outcome: 'skipped', why: `paid ₦${r.paid_amount_ngn} / line ₦${tm.amount_ngn} ≠ planned ₦${op.expectedPaidNgn}` };
+    }
+    const slices = db.prepare(`SELECT * FROM ledger_entries WHERE bank_reference = ? AND type IN ('REFUND_ADVANCE', 'REFUND_OVERPAY', 'REFUND_CONCESSION')`).all(op.refundId);
+    if (slices.length > 1) return { outcome: 'skipped', why: `${slices.length} ledger slices — split by hand` };
+    const oldJournals = db.prepare(`SELECT id, entry_date_iso, source_id FROM gl_journal_entries WHERE source_kind = 'CUSTOMER_REFUND_PAYOUT_GL' AND source_id LIKE ?`).all(`${op.refundId}:%`);
+    assertPeriodOpen(db, op.reverseDate, 'Old payout date');
+    assertPeriodOpen(db, op.payDate, 'Bank payout date');
+    const current = { paidNgn: r.paid_amount_ngn, paidAt: r.paid_at_iso, payee: r.payee_name, status: r.status, line: `${tm.id} acct ${tm.treasury_account_id} ${tm.posted_at_iso} ₦${tm.amount_ngn}`, slices: slices.map((s) => `${s.id} ${s.type} ₦${s.amount_ngn}`), journals: oldJournals.map((j) => j.id) };
+    if (!doApply) return { outcome: 'would apply', current };
+    const atISO = `${op.payDate}T12:00:00.000Z`;
+    db.prepare(`UPDATE treasury_movements SET treasury_account_id = ?, posted_at_iso = ?, amount_ngn = ?, note = ? WHERE id = ?`).run(
+      op.treasuryAccountId, atISO, -op.amountNgn, `${op.payeeName}. ${op.note}`.slice(0, 500), tm.id
+    );
+    db.prepare(`UPDATE treasury_accounts SET balance = balance - ? WHERE id = ?`).run(Number(tm.amount_ngn), tm.treasury_account_id);
+    db.prepare(`UPDATE treasury_accounts SET balance = balance - ? WHERE id = ?`).run(op.amountNgn, op.treasuryAccountId);
+    for (const s of slices) {
+      db.prepare(`UPDATE ledger_entries SET amount_ngn = ?, at_iso = ? WHERE id = ?`).run(Math.min(Number(s.amount_ngn), op.amountNgn), atISO, s.id);
+    }
+    const reversals = [];
+    for (const j of oldJournals) {
+      const jl = db.prepare(`SELECT l.debit_ngn, l.credit_ngn, l.memo, a.code FROM gl_journal_lines l JOIN gl_accounts a ON a.id = l.account_id WHERE l.journal_id = ?`).all(j.id);
+      reversals.push(
+        postBalancedJournalTx(db, {
+          entryDateISO: String(j.entry_date_iso).slice(0, 10),
+          memo: `Phase 2 ${item.id}: reverse ${j.id} (${op.refundId} not paid on this date)`,
+          sourceKind: 'PHASE2_REFUND_CORRECTION',
+          sourceId: `${op.refundId}:${j.id}`,
+          branchId: r.branch_id,
+          createdByUserId: null,
+          lines: jl.map((l) => ({ accountCode: l.code, debitNgn: Number(l.credit_ngn) || 0, creditNgn: Number(l.debit_ngn) || 0, memo: l.memo })),
+        })
+      );
+    }
+    const policy = evaluateRefundPayoutGlPolicy(db, {
+      quotationRef: r.quotation_ref, customerId: r.customer_id, refundId: op.refundId,
+      reasonCategories: (() => { try { return JSON.parse(r.reason_category); } catch { return [r.reason_category]; } })(),
+      calculationLines: (() => { try { return JSON.parse(r.calculation_lines_json); } catch { return []; } })(),
+    });
+    const gl = tryPostCustomerRefundPayoutGlTx(db, {
+      refundId: op.refundId, payoutAmountNgn: op.amountNgn, payoutMovementIds: [tm.id], entryDateISO: op.payDate,
+      branchId: r.branch_id, createdByUserId: null, needsRevenueReview: policy.needsRevenueReview, debitAccountCode: policy.debitAccountCode,
+    });
+    if (!gl.ok && !gl.skipped && !gl.duplicate) throw new Error(`${item.id}: GL — ${gl.error}`);
+    const nextRow = { ...r, paid_amount_ngn: op.amountNgn };
+    const status = resolveRefundStatus(db, nextRow);
+    db.prepare(
+      `UPDATE customer_refunds SET paid_amount_ngn = ?, paid_at_iso = ?, payee_name = ?, payment_note = ?, status = ? WHERE refund_id = ?`
+    ).run(op.amountNgn, op.payDate, op.payeeName, op.note, status, op.refundId);
+    audit(item, { ...op, table: 'customer_refunds', key: op.refundId }, {
+      table: 'customer_refunds', key: op.refundId, before: current,
+      after: { paidNgn: op.amountNgn, paidAt: op.payDate, payee: op.payeeName, status, line: `${tm.id} acct ${op.treasuryAccountId} ${atISO} ₦${-op.amountNgn}`, unpaidNgn: Number(r.approved_amount_ngn) - op.amountNgn },
+      glReversals: reversals, glPayout: gl,
+    });
+    return { outcome: 'applied', status };
+  }
+  if (op.kind === 'reconLink') {
+    // One bank line ↔ ERP treasury lines, as a bank-reconciliation row; its description carries the payer name
+    // (the sales report's "Paid by" falls back to the matched bank narration).
+    const tms = db.prepare(`SELECT id, amount_ngn, treasury_account_id FROM treasury_movements WHERE id IN (${op.movementIds.map(() => '?').join(',')})`).all(...op.movementIds);
+    if (tms.length !== op.movementIds.length) return { outcome: 'skipped', why: 'treasury line(s) not found' };
+    if (tms.some((t) => Number(t.treasury_account_id) !== op.treasuryAccountId)) return { outcome: 'skipped', why: 'treasury line(s) not on the planned account' };
+    const linked = db.prepare(`SELECT id FROM bank_reconciliation_lines WHERE ${op.movementIds.map(() => 'system_match LIKE ?').join(' OR ')}`).get(...op.movementIds.map((id) => `%${id}%`));
+    if (linked) return { outcome: 'skipped', why: `already linked on ${linked.id}` };
+    const erpNgn = tms.reduce((s, t) => s + Number(t.amount_ngn), 0);
+    const varianceNgn = op.amountNgn - erpNgn;
+    if (!doApply) return { outcome: 'would apply', erpNgn, varianceNgn };
+    const last = db.prepare(`SELECT id FROM bank_reconciliation_lines WHERE id LIKE 'BKR-KD-26-%' ORDER BY id DESC LIMIT 1`).get();
+    const id = `BKR-KD-26-${String((Number(String(last?.id || '0').replace(/\D+/g, '').slice(-4)) || 0) + 1).padStart(4, '0')}`;
+    const match = `${op.movementIds.join(' + ')}${varianceNgn ? ` · bank ₦${varianceNgn.toLocaleString('en-NG')} more than the receipts` : ''}`;
+    db.prepare(
+      `INSERT INTO bank_reconciliation_lines (id, bank_date_iso, description, amount_ngn, system_match, status, branch_id,
+         matched_system_amount_ngn, variance_ngn, variance_percent, treasury_account_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(id, op.bankDateISO, op.description, op.amountNgn, match, 'Matched', op.branchId, erpNgn, varianceNgn, erpNgn ? Math.round((varianceNgn / erpNgn) * 10000) / 100 : null, op.treasuryAccountId);
+    audit(item, { ...op, table: 'bank_reconciliation_lines', key: id }, { table: 'bank_reconciliation_lines', key: id, after: { description: op.description, amountNgn: op.amountNgn, systemMatch: match, varianceNgn } });
+    return { outcome: 'applied', id, varianceNgn };
+  }
+  if (op.kind === 'setNote') {
+    // Treasury line description (note) only, when it still equals the planned "before".
+    const tm = db.prepare(`SELECT id, note FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm) return { outcome: 'skipped', why: 'treasury line not found' };
+    if (String(tm.note ?? '') === op.after) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (String(tm.note ?? '') !== String(op.before ?? '')) return { outcome: 'skipped', why: `current note ${JSON.stringify(tm.note)} ≠ planned before` };
+    if (!doApply) return { outcome: 'would apply' };
+    db.prepare(`UPDATE treasury_movements SET note = ? WHERE id = ?`).run(op.after, tm.id);
+    audit(item, { ...op, table: 'treasury_movements', key: tm.id }, { table: 'treasury_movements', key: tm.id, column: 'note', before: tm.note, after: op.after });
+    return { outcome: 'applied' };
+  }
+  if (op.kind === 'customerAdvance') {
+    // Money received with no quotation to apply it to → customer advance (unapplied credit, not income), the way the
+    // ERP's advance desk posts one: ADVANCE_IN ledger row + advance event + treasury ADVANCE_IN + advance GL. The
+    // payer becomes a customer when not on file. Then the bank-recon link that showed the excess names this advance.
+    let cust = db.prepare(`SELECT customer_id, name FROM customers WHERE LOWER(name) = LOWER(?) AND branch_id = ?`).get(op.customerName, op.branchId);
+    const dup = cust
+      ? db.prepare(`SELECT id FROM ledger_entries WHERE type = 'ADVANCE_IN' AND customer_id = ? AND amount_ngn = ? AND at_iso LIKE ?`).get(cust.customer_id, op.amountNgn, `${op.date}%`)
+      : null;
+    if (dup) return { outcome: 'skipped', why: `already posted as ${dup.id}` };
+    assertPeriodOpen(db, op.date, 'Advance date');
+    if (!doApply) return { outcome: 'would apply', customer: cust ? cust.customer_id : `new customer "${op.customerName}"` };
+    if (!cust) {
+      insertCustomer(db, { name: op.customerName, createdBy: approver, crmProfileNotes: op.note }, op.branchId);
+      cust = db.prepare(`SELECT customer_id, name FROM customers WHERE LOWER(name) = LOWER(?) AND branch_id = ?`).get(op.customerName, op.branchId);
+      audit(item, { ...op, table: 'customers', key: cust.customer_id }, { table: 'customers', key: cust.customer_id, after: { name: op.customerName } });
+    }
+    const plan = planAdvanceIn({ customerID: cust.customer_id, customerName: cust.name, amountNgn: op.amountNgn, paymentMethod: op.paymentMethod, bankReference: op.bankReference, purpose: op.note, dateISO: op.date });
+    const saved = insertLedgerRows(db, plan.rows.map((r) => ({ ...r, createdByName: approver })), op.branchId);
+    for (const row of saved) insertAdvanceInEvent(db, row);
+    const [created] = saved;
+    const movements = recordCustomerAdvanceCash(db, {
+      sourceId: created.id, customerID: cust.customer_id, customerName: cust.name, dateISO: op.date, reference: op.bankReference, note: op.note,
+      paymentLines: [{ treasuryAccountId: op.treasuryAccountId, amountNgn: op.amountNgn, postedAtISO: `${op.date}T12:00:00.000Z` }],
+      createdBy: approver, workspaceBranchId: op.branchId, actor: { ...actor, permissions: ['*'] },
+    });
+    const gl = tryPostCustomerAdvanceGl(db, { ledgerEntryId: created.id, amountNgn: op.amountNgn, entryDateISO: op.date, branchId: op.branchId, createdByUserId: null });
+    if (!gl.ok && !gl.skipped && !gl.duplicate) throw new Error(`${item.id}: GL — ${gl.error}`);
+    appendAuditLog(db, { actor, action: 'ledger.advance', entityKind: 'ledger_entry', entityId: created.id, note: op.note, details: { customerID: cust.customer_id, amountNgn: op.amountNgn } });
+    const tmIds = (movements || []).map((m) => m.id);
+    let recon = null;
+    if (op.reconForMovementId) {
+      recon = db.prepare(`SELECT id, system_match, matched_system_amount_ngn, variance_ngn FROM bank_reconciliation_lines WHERE system_match LIKE ?`).get(`%${op.reconForMovementId}%`);
+      if (recon) {
+        const match = `${String(recon.system_match).split(' · ')[0]} + ${tmIds.join(' + ')} (₦${op.amountNgn.toLocaleString('en-NG')} excess → advance ${created.id})`;
+        db.prepare(`UPDATE bank_reconciliation_lines SET system_match = ?, matched_system_amount_ngn = ?, variance_ngn = 0, variance_percent = 0 WHERE id = ?`).run(
+          match, Number(recon.matched_system_amount_ngn) + op.amountNgn, recon.id
+        );
+        audit(item, { ...op, table: 'bank_reconciliation_lines', key: recon.id }, { table: 'bank_reconciliation_lines', key: recon.id, before: recon, after: { system_match: match, variance_ngn: 0 } });
+      }
+    }
+    audit(item, { ...op, table: 'ledger_entries', key: created.id }, { table: 'ledger_entries', key: created.id, customerId: cust.customer_id, treasuryMovementIds: tmIds, gl, recon: recon?.id || null });
+    return { outcome: 'applied', ledgerEntryId: created.id, customer: cust.customer_id, treasuryMovementIds: tmIds };
+  }
+  if (op.kind === 'setOpening') {
+    // Opening balance, as the ERP's treasury-account edit does it (opening only; stored balance untouched), with the
+    // ERP's opening_change audit and the Phase 2 audit.
+    const a = db.prepare(`SELECT id, name, opening_balance_ngn FROM treasury_accounts WHERE id = ?`).get(op.treasuryAccountId);
+    if (!a) return { outcome: 'skipped', why: 'treasury account not found' };
+    if (Number(a.opening_balance_ngn) === op.after) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (Number(a.opening_balance_ngn) !== op.before) return { outcome: 'skipped', why: `current opening ₦${a.opening_balance_ngn} ≠ planned before ₦${op.before}` };
+    if (!doApply) return { outcome: 'would apply', current: a.opening_balance_ngn };
+    db.prepare(`UPDATE treasury_accounts SET opening_balance_ngn = ? WHERE id = ?`).run(op.after, a.id);
+    appendAuditLog(db, {
+      actor,
+      action: 'treasury_account.opening_change',
+      entityKind: 'treasury_account',
+      entityId: String(a.id),
+      note: item.reason.slice(0, 900),
+      details: { oldOpening: op.before, newOpening: op.after, reason: item.reason },
+    });
+    audit(item, { ...op, table: 'treasury_accounts', key: String(a.id) }, { table: 'treasury_accounts', key: a.id, column: 'opening_balance_ngn', before: op.before, after: op.after });
+    return { outcome: 'applied' };
   }
   if (op.kind === 'recodePaidRequest') {
     // Category of a paid payment request via the ERP's post-pay reclass (category, GL reclass journal per payout

@@ -77,4 +77,5 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 
 - fix/reports-round2 is NOT in the 7am deploy; merge only after the owner reviews the August PDFs.
 - DB-backed test to run against a real MySQL: `server/finance/bankStatementBalanceOps.test.js` (skips without MySQL).
+- `PRODUCTION_GATE_REQUIRES_CONFIRMED` (default off): owner switches it on Monday 19 Oct 2026 after the memo; set in the server env and restart.
 

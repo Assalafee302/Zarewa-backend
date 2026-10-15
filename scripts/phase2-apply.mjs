@@ -82,6 +82,7 @@ const { resolveRefundStatus } = await imp('server/sales/refundPayoutStatus.js');
 const { insertLedgerRows, insertAdvanceInEvent, recordCustomerAdvanceCash, insertCustomer } = await imp('server/writeOps.js');
 const { tryPostCustomerAdvanceGl } = await imp('server/glOps.js');
 const { planAdvanceIn } = await imp('shared/lib/customerLedgerCore.js');
+const { tryPostCustomerReceiptRefundFundUnwindGl } = await imp('server/glOps.js');
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
 const db = createMysqlDatabase(cfg, { reset: false, bootstrap: false });
@@ -578,6 +579,141 @@ function runOp(item, op) {
     }
     audit(item, { ...op, table: 'ledger_entries', key: created.id }, { table: 'ledger_entries', key: created.id, customerId: cust.customer_id, treasuryMovementIds: tmIds, gl, recon: recon?.id || null });
     return { outcome: 'applied', ledgerEntryId: created.id, customer: cust.customer_id, treasuryMovementIds: tmIds };
+  }
+  if (op.kind === 'reconLinkUpsert') {
+    // One bank-statement line (or one charge group) ↔ ERP treasury line(s) as a Matched bank-recon row. An existing
+    // row for the same bank line (same account, date and amount, or already naming one of the lines) only gets the
+    // missing movement ids appended; its description is kept.
+    if (op.expenseRef) {
+      // Line of an expense posted earlier in this plan (looked up by its date, amount, category and description).
+      const e = op.expenseRef;
+      const tm = db
+        .prepare(
+          `SELECT m.id FROM treasury_movements m JOIN expenses x ON x.expense_id = m.source_id
+           WHERE x.date = ? AND x.amount_ngn = ? AND x.category = ? AND x.expense_type = ? AND x.branch_id = ?`
+        )
+        .get(e.date, e.amountNgn, e.category, e.expenseType, op.branchId);
+      if (!tm) {
+        if (!doApply) return { outcome: 'would apply', action: 'insert (after the expense above posts)' };
+        return { outcome: 'skipped', why: 'expense line not found' };
+      }
+      op = { ...op, movementIds: [tm.id], systemMatch: `${tm.id} · ${op.systemMatch}` };
+    }
+    const tms = db.prepare(`SELECT id, amount_ngn, treasury_account_id FROM treasury_movements WHERE id IN (${op.movementIds.map(() => '?').join(',')})`).all(...op.movementIds);
+    if (tms.length !== op.movementIds.length) {
+      const have = new Set(tms.map((t) => t.id));
+      return { outcome: 'skipped', why: `treasury line(s) not found: ${op.movementIds.filter((i) => !have.has(i)).join(', ')}` };
+    }
+    const elsewhere = db
+      .prepare(`SELECT id, system_match FROM bank_reconciliation_lines WHERE bank_date_iso NOT LIKE ? AND (${op.movementIds.map(() => 'system_match LIKE ?').join(' OR ')})`)
+      .get(`${op.bankDateISO.slice(0, 7)}%`, ...op.movementIds.map((i) => `%${i}%`));
+    if (elsewhere) return { outcome: 'skipped', why: `a line is already linked on ${elsewhere.id} (${elsewhere.system_match})` };
+    // Same bank line = its bank id in the match text, or (rows from round 2, no bank id) same account, date and
+    // amount AND already naming one of the lines — so two bank lines of one ERP line, or two equal transfers on one
+    // day, stay separate rows.
+    const existing =
+      db.prepare(`SELECT * FROM bank_reconciliation_lines WHERE system_match LIKE ?`).get(`%· ${op.bankId}%`) ||
+      db
+        .prepare(
+          `SELECT * FROM bank_reconciliation_lines WHERE treasury_account_id = ? AND bank_date_iso = ? AND amount_ngn = ?
+             AND system_match NOT LIKE '%· MP-%' AND system_match NOT LIKE '%· TJ-%' AND system_match NOT LIKE '%· CHG-%'
+             AND (${op.movementIds.map(() => 'system_match LIKE ?').join(' OR ')})`
+        )
+        .get(op.treasuryAccountId, op.bankDateISO, op.amountNgn, ...op.movementIds.map((i) => `%${i}%`));
+    const erpNgn = tms.reduce((s, t) => s + Number(t.amount_ngn), 0);
+    if (existing) {
+      const missing = op.movementIds.filter((i) => !String(existing.system_match || '').includes(i));
+      if (!missing.length) return { outcome: 'skipped', why: `already linked on ${existing.id}` };
+      if (!doApply) return { outcome: 'would apply', action: `update ${existing.id}: add ${missing.join(', ')}` };
+      const [head, ...tail] = String(existing.system_match || '').split(' · ');
+      const match = [`${head} + ${missing.join(' + ')}`, ...tail].join(' · ');
+      db.prepare(`UPDATE bank_reconciliation_lines SET system_match = ?, matched_system_amount_ngn = ? WHERE id = ?`).run(match, erpNgn, existing.id);
+      audit(item, { ...op, table: 'bank_reconciliation_lines', key: existing.id }, { table: 'bank_reconciliation_lines', key: existing.id, before: { system_match: existing.system_match }, after: { system_match: match } });
+      return { outcome: 'applied', action: `updated ${existing.id}` };
+    }
+    if (!doApply) return { outcome: 'would apply', action: 'insert', erpNgn };
+    const last = db.prepare(`SELECT id FROM bank_reconciliation_lines WHERE id LIKE 'BKR-KD-26-%' ORDER BY id DESC LIMIT 1`).get();
+    const id = `BKR-KD-26-${String((Number(String(last?.id || '0').replace(/\D+/g, '').slice(-4)) || 0) + 1).padStart(4, '0')}`;
+    db.prepare(
+      `INSERT INTO bank_reconciliation_lines (id, bank_date_iso, description, amount_ngn, system_match, status, branch_id,
+         settled_amount_ngn, matched_system_amount_ngn, variance_ngn, variance_percent, treasury_account_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(id, op.bankDateISO, op.description, op.amountNgn, op.systemMatch, 'Matched', op.branchId, op.settledAmountNgn ?? null, erpNgn, op.varianceNgn, null, op.treasuryAccountId);
+    audit(item, { ...op, table: 'bank_reconciliation_lines', key: id }, { table: 'bank_reconciliation_lines', key: id, after: { bankId: op.bankId, systemMatch: op.systemMatch, amountNgn: op.amountNgn, varianceNgn: op.varianceNgn } });
+    return { outcome: 'applied', action: `inserted ${id}` };
+  }
+  if (op.kind === 'reversePhantomInflow') {
+    // Receipt confirmed from credit (ledger RECEIPT ₦0) whose RECEIPT_IN stayed on the till (commit b50d502). Reversed
+    // the way the ERP reverses refund-funded receipts since de1bb99 — RECEIPT_REVERSAL_OUT + refund-fund GL unwind —
+    // but on the original movement's date. Ledger, receipt and quotation are not touched.
+    const tm = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm) return { outcome: 'skipped', why: 'treasury line not found' };
+    const rev = db.prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = ?`).get(tm.id);
+    if (rev) return { outcome: 'skipped', why: `already reversed by ${rev.id}` };
+    if (tm.type !== 'RECEIPT_IN' || tm.source_id !== op.sourceId || Number(tm.treasury_account_id) !== op.accountId
+      || Number(tm.amount_ngn) !== op.amountNgn || String(tm.posted_at_iso).slice(0, 10) !== op.date) {
+      return { outcome: 'skipped', why: `line is ${tm.type} ${tm.source_id} acct ${tm.treasury_account_id} ₦${tm.amount_ngn} ${String(tm.posted_at_iso).slice(0, 10)} — not as planned` };
+    }
+    const le = db.prepare(`SELECT amount_ngn, quotation_ref, customer_id FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(op.sourceId);
+    if (!le || Number(le.amount_ngn) !== 0) return { outcome: 'skipped', why: `ledger RECEIPT ${op.sourceId} is ₦${le?.amount_ngn ?? 'missing'}, not ₦0` };
+    const settle = db.prepare(`SELECT details_json FROM audit_log WHERE action = 'receipt.finance_settlement' AND entity_id = ?`).all(op.sourceId);
+    const creditNgn = settle.reduce((m, a) => { try { return Math.max(m, Number(JSON.parse(a.details_json).refundCreditAppliedNgn) || 0); } catch { return m; } }, 0);
+    if (!(creditNgn > 0)) return { outcome: 'skipped', why: 'no refund-credit confirmation on this receipt' };
+    assertPeriodOpen(db, op.date, 'Original movement date');
+    const q = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(le.quotation_ref);
+    const paidBefore = q ? Number(q.paid_ngn) : null;
+    if (!doApply) return { outcome: 'would apply', creditNgn, quotation: le.quotation_ref, paidNgn: paidBefore };
+    const created = insertTreasuryMovementTx(db, {
+      type: 'RECEIPT_REVERSAL_OUT',
+      treasuryAccountId: tm.treasury_account_id,
+      amountNgn: -Number(tm.amount_ngn),
+      postedAtISO: `${op.date}T12:00:00.000Z`,
+      reference: tm.reference,
+      counterpartyKind: tm.counterparty_kind,
+      counterpartyId: tm.counterparty_id,
+      counterpartyName: tm.counterparty_name,
+      sourceKind: tm.source_kind,
+      sourceId: tm.source_id,
+      note: op.note,
+      createdBy: approver,
+      reversesMovementId: tm.id,
+      branchId: 'BR-KD',
+      allowNegativeBalance: true,
+    });
+    const gl = tryPostCustomerReceiptRefundFundUnwindGl(db, { ledgerEntryId: op.sourceId, keepCashNgn: 0, entryDateISO: op.date, branchId: 'BR-KD', createdByUserId: null });
+    if (!gl.ok && !gl.skipped && !gl.duplicate) throw new Error(`${item.id}: GL — ${gl.error}`);
+    // Method → "Refund fund", as the ERP's refund-funded unwind does (ledger RECEIPT and receipt mirror, when present).
+    let relabel = null;
+    if (op.relabelMethod) {
+      const lm = db.prepare(`SELECT payment_method FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(op.sourceId);
+      const sr = db.prepare(`SELECT method FROM sales_receipts WHERE id = ? OR ledger_entry_id = ?`).get(op.sourceId, op.sourceId);
+      db.prepare(`UPDATE ledger_entries SET payment_method = ? WHERE id = ? AND type = 'RECEIPT'`).run(op.relabelMethod, op.sourceId);
+      if (sr) db.prepare(`UPDATE sales_receipts SET method = ? WHERE id = ? OR ledger_entry_id = ?`).run(op.relabelMethod, op.sourceId, op.sourceId);
+      relabel = { before: { ledger: lm?.payment_method ?? null, receipt: sr?.method ?? null }, after: op.relabelMethod, receiptMirror: Boolean(sr) };
+    }
+    const paidAfter = q ? Number(db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(le.quotation_ref).paid_ngn) : null;
+    if (paidAfter !== paidBefore) throw new Error(`${item.id}: quotation ${le.quotation_ref} paid changed ${paidBefore} → ${paidAfter}`);
+    audit(item, { ...op, table: 'treasury_movements', key: created?.id }, { table: 'treasury_movements', reversed: tm.id, created: created?.id, amountNgn: -Number(tm.amount_ngn), date: op.date, gl, creditNgn, quotation: le.quotation_ref, paidNgn: paidBefore, relabel });
+    return { outcome: 'applied', created: created?.id, paidNgn: paidBefore, receiptMirror: relabel?.receiptMirror };
+  }
+  if (op.kind === 'relabelReceiptMethod') {
+    // Method / reference text only, so they name the account the treasury line sits on. No money moves.
+    const tm = db.prepare(`SELECT treasury_account_id FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm || Number(tm.treasury_account_id) !== op.accountId) return { outcome: 'skipped', why: `treasury line not on account ${op.accountId}` };
+    const le = db.prepare(`SELECT payment_method, bank_reference FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(op.receiptId);
+    const sr = db.prepare(`SELECT method FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    if (!le || !sr) return { outcome: 'skipped', why: 'receipt not found' };
+    if (le.payment_method === op.afterMethod && sr.method === op.afterMethod) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (le.payment_method !== op.beforeMethod || sr.method !== op.beforeMethod) return { outcome: 'skipped', why: `current method ${JSON.stringify(sr.method)} ≠ planned before` };
+    const afterRef = String(le.bank_reference || '').split(op.beforeRefToken).join(op.afterRefToken);
+    if (!doApply) return { outcome: 'would apply', after: op.afterMethod };
+    db.prepare(`UPDATE ledger_entries SET payment_method = ?, bank_reference = ? WHERE id = ? AND type = 'RECEIPT'`).run(op.afterMethod, afterRef, op.receiptId);
+    db.prepare(`UPDATE sales_receipts SET method = ? WHERE id = ?`).run(op.afterMethod, op.receiptId);
+    audit(item, { ...op, table: 'ledger_entries', key: op.receiptId }, {
+      table: 'ledger_entries+sales_receipts', key: op.receiptId,
+      before: { method: sr.method, payment_method: le.payment_method, bank_reference: le.bank_reference },
+      after: { method: op.afterMethod, payment_method: op.afterMethod, bank_reference: afterRef },
+    });
+    return { outcome: 'applied' };
   }
   if (op.kind === 'setOpening') {
     // Opening balance, as the ERP's treasury-account edit does it (opening only; stored balance untouched), with the

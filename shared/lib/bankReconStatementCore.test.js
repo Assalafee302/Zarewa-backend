@@ -111,8 +111,11 @@ describe('bank reconciliation statement — synthetic', () => {
   it('lists unlinked lines with severity and suggested matches', () => {
     const erp = Object.fromEntries(page.erpUnlinked.map((t) => [t.id, t]));
     expect(erp['TM-XX-26-0008'].severity).toBe('exception');
-    expect(erp['TM-XX-26-0009'].severity).toBe('review');
-    expect(erp['TM-XX-26-0009'].offsetMovementId).toBe('TM-XX-26-0010');
+    expect(erp['TM-XX-26-0009']).toBeUndefined();
+    expect(page.erpCancelledPairs.map((t) => [t.id, t.offsetMovementId])).toEqual([
+      ['TM-XX-26-0009', 'TM-XX-26-0010'],
+      ['TM-XX-26-0010', 'TM-XX-26-0009'],
+    ]);
     const bank = Object.fromEntries(page.bankUnlinked.map((b) => [b.id, b]));
     expect(bank['BKR-XX-26-0006'].severity).toBe('review');
     expect(bank['BKR-XX-26-0007'].severity).toBe('exception');
@@ -147,6 +150,21 @@ describe('bank reconciliation statement — synthetic', () => {
     expect(p.isCash).toBe(true);
     expect(p.erpUnlinked).toEqual([]);
     expect(p.erp.closingNgn).toBe(5_000);
+  });
+
+  it('counts statement lines per BKR row: one each, charge-group rows, fee groups 0', () => {
+    const p = buildBankReconStatement({
+      accounts: [acc],
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      treasuryMovements: [tm('TM-XX-26-0400', '2026-08-31', 'EXPENSE', -300), tm('TM-XX-26-0401', '2026-08-05', 'RECEIPT_IN', 900)],
+      bankLines: [
+        bk('BKR-XX-26-0400', '2026-08-31', -300, 'TM-XX-26-0400 · CHG-MP-AUG · group: stamp duty ₦300: 262 rows (MP-0008'),
+        bk('BKR-XX-26-0401', '2026-08-05', 900, 'TM-XX-26-0401 · MP-0005 · 2 bank:1 erp'),
+        bk('BKR-XX-26-0402', '2026-08-31', 0, 'TM-XX-26-0400 · FEE-MP-AUG · group: transfer fees ₦20 on 137 transfer lines'),
+      ],
+    }).pages[0];
+    expect(p.bank.statementLinesLinked).toBe(263);
   });
 
   it('flags a link to a movement that does not exist', () => {

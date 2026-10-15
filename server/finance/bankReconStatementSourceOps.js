@@ -1,5 +1,6 @@
 import { buildBankReconStatement } from '../../shared/lib/bankReconStatementCore.js';
 import { getBranch } from '../branches.js';
+import { calendarMonthKey, listStatementBalancesWith } from './bankStatementBalanceOps.js';
 
 /** Bank lines and movements this many days either side of the period label links that cross the period edge. */
 const LINK_WINDOW_DAYS = 45;
@@ -15,7 +16,7 @@ export function parseAccountAmounts(text) {
   const out = {};
   for (const part of String(text || '').split(',')) {
     const m = part.trim().match(/^(\d+)\s*:\s*(-?\d+(?:\.\d+)?)$/);
-    if (m) out[m[1]] = Math.round(Number(m[2]));
+    if (m) out[m[1]] = Math.round(Number(m[2]) * 100) / 100; // statement balances keep kobo
   }
   return out;
 }
@@ -59,8 +60,20 @@ export async function loadBankReconStatementSourceWith(all, { branchScope, start
   const expenses = expenseIds.length
     ? await all(`SELECT expense_id, category FROM expenses WHERE expense_id IN (${expenseIds.map(() => '?').join(',')})`, expenseIds)
     : [];
+  // Statement balances typed by Finance for this calendar month (table absent on older databases → none).
+  const periodKey = calendarMonthKey(startDate, endDate);
+  let statementBalances = [];
+  if (periodKey) {
+    try {
+      statementBalances = await listStatementBalancesWith(all, { periodKey, branchScope });
+    } catch {
+      statementBalances = [];
+    }
+  }
   return {
     branch: scoped ? { id: branchScope, name: branchName || branchScope } : { id: 'ALL', name: 'All branches' },
+    periodKey,
+    statementBalances,
     accounts: accounts.map((a) => ({
       id: a.id,
       name: a.name,
@@ -97,14 +110,22 @@ export async function loadBankReconStatementSourceWith(all, { branchScope, start
   };
 }
 
-/** Statement from loaded source + the statement balances the user typed ("2:1500000,4:-20"). */
+/**
+ * Statement from loaded source. Balances: stored statement balances for the month, overridden by any typed in
+ * the request ("2:1500000.25,4:-20").
+ */
 export function bankReconStatementFromSource(src, p) {
+  const stored = src.statementBalances || [];
+  const opening = Object.fromEntries(stored.map((b) => [String(b.treasuryAccountId), b.openingNgn]));
+  const closing = Object.fromEntries(stored.map((b) => [String(b.treasuryAccountId), b.closingNgn]));
   const report = buildBankReconStatement({
     ...src,
-    bankOpeningByAccount: parseAccountAmounts(p.bankOpening),
-    bankClosingByAccount: parseAccountAmounts(p.bankClosing),
+    bankOpeningByAccount: { ...opening, ...parseAccountAmounts(p.bankOpening) },
+    bankClosingByAccount: { ...closing, ...parseAccountAmounts(p.bankClosing) },
   });
-  return { ...report, branch: src.branch };
+  const byAccount = new Map(stored.map((b) => [String(b.treasuryAccountId), b]));
+  for (const page of report.pages) page.statementBalance = byAccount.get(String(page.account.id)) || null;
+  return { ...report, branch: src.branch, periodKey: src.periodKey, statementBalances: stored };
 }
 
 /**

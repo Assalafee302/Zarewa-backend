@@ -13,6 +13,13 @@
  *   ERP net − bank net = unlinked ERP lines + ERP lines whose bank line is in another period
  *                        − unlinked bank lines − (bank amount − linked ERP amount) on matched lines.
  * `unexplainedNgn` is what is left (expected ₦0).
+ *
+ * Statement balances (typed per account per month, with kobo): when the closing is given it IS the bank closing;
+ * opening + imported lines is the check. Any gap (statement movement not in the ERP's bank lines, e.g. statement
+ * lines not yet imported) is its own reconciling line, so
+ *   ERP closing − bank closing = opening difference + (ERP net − imported bank net) − statement gap.
+ * Statement lines covered by links are counted from the line refs in systemMatch (MP-0002, TJ-014, card-charge
+ * groups "group: card charges on MP-…").
  */
 
 export const BANK_RECON_SMALL_ITEM_NGN = 50_000;
@@ -62,6 +69,28 @@ const BANK_CHARGES_CATEGORY_RE = /^bank\s*charges?$/i;
 
 const day = (v) => String(v || '').slice(0, 10);
 const ngn = (v) => Math.round(Number(v) || 0);
+/** Statement balances keep kobo. */
+const kobo = (v) => Math.round((Number(v) || 0) * 100) / 100;
+const STATEMENT_REF_RE = /\b(?:MP|TJ|GT)-\d{3,5}\b/gi;
+
+/**
+ * Statement lines one BKR row stands for. Round 3 stores one BKR row per statement line, also for "2 bank:1 erp"
+ * pairs; a charge group stands for its stated rows ("… 262 rows", "14 charge rows"); fee / card-charge netting
+ * groups stand for 0 (the fees sit on lines already counted).
+ */
+export function statementLinesInBankRow(systemMatch, description = '') {
+  const text = `${systemMatch || ''} ${description || ''}`;
+  if (/\bgroup:/i.test(text)) {
+    const n = text.match(/:\s*(\d+)\s+(?:charge\s+)?rows\b/i);
+    return n ? Number(n[1]) : 0;
+  }
+  return 1;
+}
+
+/** Statement line refs named in a bank line's match text (MP-0002, TJ-014 …), once each. */
+export function statementLineRefs(systemMatch) {
+  return [...new Set([...String(systemMatch || '').matchAll(STATEMENT_REF_RE)].map((m) => m[0].toUpperCase()))];
+}
 const sum = (list, key = 'amountNgn') => list.reduce((s, x) => s + ngn(x[key]), 0);
 const TM_ID_RE = /TM-[A-Z]{2,4}-\d{2}-\d+/gi;
 
@@ -218,10 +247,17 @@ export function buildBankReconStatement(input = {}) {
       }));
     const bankNetNgn = sum(bankPeriod);
     const hasOpening = bankOpeningByAccount[accId] != null && bankOpeningByAccount[accId] !== '';
-    const bankOpeningNgn = hasOpening ? ngn(bankOpeningByAccount[accId]) : null;
-    const bankClosingNgn = hasOpening ? bankOpeningNgn + bankNetNgn : null;
+    const bankOpeningNgn = hasOpening ? kobo(bankOpeningByAccount[accId]) : null;
     const hasStatedClosing = bankClosingByAccount[accId] != null && bankClosingByAccount[accId] !== '';
-    const statedClosingNgn = hasStatedClosing ? ngn(bankClosingByAccount[accId]) : null;
+    const statedClosingNgn = hasStatedClosing ? kobo(bankClosingByAccount[accId]) : null;
+    const linesClosingNgn = hasOpening ? kobo(bankOpeningNgn + bankNetNgn) : null;
+    // The typed statement closing is the bank closing; opening + imported lines is only the check.
+    const bankClosingNgn = hasStatedClosing ? statedClosingNgn : linesClosingNgn;
+    const statementGapNgn = hasStatedClosing && hasOpening ? kobo(statedClosingNgn - linesClosingNgn) : null;
+    const statementLinesLinked = bankPeriod
+      .filter((b) => b.movementIds.length)
+      .reduce((n, b) => n + statementLinesInBankRow(b.systemMatch, b.description), 0);
+    const statementLinesUnlinked = bankPeriod.filter((b) => !b.movementIds.length).length;
 
     // --- Reconciling items ---------------------------------------------------------------------
     const periodIds = new Set(period.map((t) => t.id.toUpperCase()));
@@ -298,7 +334,7 @@ export function buildBankReconStatement(input = {}) {
     const suggestBank = suggestMatches(bankUnlinkedRaw, unmatchedErp);
     const outsideCoverage = (d) => !coverage || d < coverage.fromISO || d > coverage.toISO;
 
-    const erpUnlinked = noStatement
+    const erpUnlinkedAll = noStatement
       ? []
       : erpUnlinkedRaw.map((t) => {
           const s = suggestErp.get(t.id);
@@ -317,6 +353,9 @@ export function buildBankReconStatement(input = {}) {
             severity: offset || outside ? 'review' : severityFor(t.amountNgn),
           };
         });
+    // Posted and reversed inside the period (net ₦0, e.g. phantom credit receipts reversed in round 3): own list.
+    const erpUnlinked = erpUnlinkedAll.filter((t) => !t.offsetMovementId);
+    const erpCancelledPairs = erpUnlinkedAll.filter((t) => t.offsetMovementId);
     const bankUnlinked = bankUnlinkedRaw.map((b) => {
       const s = suggestBank.get(b.id);
       const reference = bankLineReference(b.systemMatch);
@@ -370,11 +409,16 @@ export function buildBankReconStatement(input = {}) {
         linesNetNgn: bankNetNgn,
         lineCount: bankPeriod.length,
         closingNgn: bankClosingNgn,
+        closingSource: hasStatedClosing ? 'statement' : hasOpening ? 'opening + imported lines' : '',
+        linesClosingNgn,
         statedClosingNgn,
-        statedClosingDiffNgn: hasStatedClosing && hasOpening ? statedClosingNgn - bankClosingNgn : null,
+        statedClosingDiffNgn: statementGapNgn,
+        statementGapNgn,
+        statementLinesLinked,
+        statementLinesUnlinked,
       },
-      differenceNgn: bankClosingNgn == null ? null : erpClosingNgn - bankClosingNgn,
-      openingDifferenceNgn: bankOpeningNgn == null ? null : erpOpeningNgn - bankOpeningNgn,
+      differenceNgn: bankClosingNgn == null ? null : kobo(erpClosingNgn - bankClosingNgn),
+      openingDifferenceNgn: bankOpeningNgn == null ? null : kobo(erpOpeningNgn - bankOpeningNgn),
       movementDifferenceNgn,
       reconciling: {
         erpUnlinkedNgn,
@@ -385,10 +429,11 @@ export function buildBankReconStatement(input = {}) {
       },
       erpUnlinked,
       erpTiming: noStatement ? [] : erpTiming,
+      erpCancelledPairs,
       bankUnlinked,
       matchedVariances,
       brokenLinks,
-      counts: { erpUnlinked: counts(erpUnlinked), bankUnlinked: counts(bankUnlinked) },
+      counts: { erpUnlinked: counts(erpUnlinked), bankUnlinked: counts(bankUnlinked), erpCancelledPairs: erpCancelledPairs.length },
       movements: period,
       bankLines: bankPeriod,
     };

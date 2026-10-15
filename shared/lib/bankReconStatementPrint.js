@@ -34,34 +34,57 @@ function statementRows(p) {
     rows.push({ item: 'Bank side', ids: 'No bank-statement lines imported for this account', amountNgn: '', _severity: 'exception' });
     return rows;
   }
+  const noBal = 'Not entered — add the statement balances for the month';
   rows.push(
     {
       item: 'Bank opening balance (statement)',
-      ids: p.bank.openingNgn == null ? 'Not entered — type the statement balance to complete' : '',
+      ids: p.bank.openingNgn == null ? noBal : '',
       amountNgn: p.bank.openingNgn ?? '',
       _severity: p.bank.openingNgn == null ? 'review' : '',
     },
-    { item: '± Bank-statement lines in the period', ids: `${p.bank.lineCount} line(s)`, amountNgn: p.bank.linesNetNgn },
-    { item: '= Bank closing balance', ids: '', amountNgn: p.bank.closingNgn ?? '', _strong: true },
     {
-      item: 'Difference (ERP closing − bank closing)',
-      ids: p.differenceNgn == null ? 'Needs the bank opening balance' : '',
-      amountNgn: p.differenceNgn ?? '',
-      _severity: p.differenceNgn ? 'exception' : '',
+      item: '± Bank lines in the ERP (BKR) dated in the period',
+      ids: `${p.bank.lineCount} BKR row(s) · statement lines: ${p.bank.statementLinesLinked} linked, ${p.bank.statementLinesUnlinked} not linked`,
+      amountNgn: p.bank.linesNetNgn,
     }
   );
-  if (p.bank.statedClosingDiffNgn) {
+  if (p.bank.statementGapNgn != null) {
     rows.push({
-      item: 'Statement closing typed ≠ opening + lines',
-      ids: 'Bank lines missing from the import?',
-      amountNgn: p.bank.statedClosingDiffNgn,
-      _severity: 'exception',
+      item: '± Statement lines not in the ERP (not imported / not linked)',
+      ids: p.bank.statementGapNgn ? 'Statement closing − opening − BKR lines' : 'None',
+      amountNgn: p.bank.statementGapNgn,
+      _severity: p.bank.statementGapNgn ? 'review' : '',
     });
+  }
+  rows.push(
+    {
+      item: '= Bank closing balance',
+      ids: p.bank.closingSource === 'statement' ? 'From the statement' : p.bank.closingSource || noBal,
+      amountNgn: p.bank.closingNgn ?? '',
+      _strong: true,
+    },
+    {
+      item: 'Difference (ERP closing − bank closing)',
+      ids: p.differenceNgn == null ? 'Needs the statement balances' : '',
+      amountNgn: p.differenceNgn ?? '',
+      _severity: p.differenceNgn ? 'exception' : '',
+      _strong: true,
+    }
+  );
+  if (p.openingDifferenceNgn != null) {
+    rows.push({ item: '   of which: difference already at the opening', ids: '', amountNgn: p.openingDifferenceNgn });
+  }
+  if (p.bank.statementGapNgn) {
+    rows.push({ item: '   of which: statement lines not in the ERP (less)', ids: '', amountNgn: -p.bank.statementGapNgn });
   }
   const r = p.reconciling;
   rows.push(
-    { item: 'Movements: ERP net − bank net', ids: '', amountNgn: p.movementDifferenceNgn, _strong: true },
-    { item: '   ERP lines with no bank link', ids: `${p.erpUnlinked.length} line(s)`, amountNgn: r.erpUnlinkedNgn },
+    { item: '   of which: movements, ERP net − BKR lines net', ids: '', amountNgn: p.movementDifferenceNgn, _strong: true },
+    {
+      item: '   ERP lines with no bank link',
+      ids: `${p.erpUnlinked.length} line(s)${p.erpCancelledPairs?.length ? ` + ${p.erpCancelledPairs.length} posted-and-reversed (net ₦0)` : ''}`,
+      amountNgn: r.erpUnlinkedNgn,
+    },
     { item: '   ERP lines on the bank in another period', ids: `${p.erpTiming.length} line(s)`, amountNgn: r.erpTimingNgn },
     { item: '   Less: bank lines with no ERP link', ids: `${p.bankUnlinked.length} line(s)`, amountNgn: -r.bankUnlinkedNgn },
     {
@@ -261,6 +284,13 @@ export function bankReconStatementDocument(report, opts = {}) {
         columns: ERP_COLUMNS,
         rows: p.erpUnlinked.map(erpRow),
         emptyText: 'Every ERP movement in the period is linked to a bank line.',
+      },
+      {
+        title: 'ERP movements posted and reversed in the period (net ₦0, no bank line expected)',
+        band,
+        columns: ERP_COLUMNS,
+        rows: (p.erpCancelledPairs || []).map((t) => ({ ...erpRow(t), _severity: '' , _small: false })),
+        emptyText: 'None.',
       },
       {
         title: 'ERP movements on the bank in another period (timing)',

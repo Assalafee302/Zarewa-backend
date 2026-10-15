@@ -36,6 +36,7 @@ import {
 import { buildConversionSummaryReport } from './conversionSummaryReport.js';
 import { buildPurchaseRegisterReport } from './procurement/purchaseRegisterSourceOps.js';
 import { buildBankReconStatementReport } from './finance/bankReconStatementSourceOps.js';
+import { listStatementBalances, upsertStatementBalance } from './finance/bankStatementBalanceOps.js';
 import {
   arAsAtReportRows,
   receiptsRegisterReportRows,
@@ -5235,6 +5236,30 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build purchase register report.' });
+    }
+  });
+
+  app.get('/api/treasury/statement-balances', requireManagementReportsView, (req, res) => {
+    try {
+      const periodKey = String(req.query.periodKey || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json({ ok: true, periodKey, balances: listStatementBalances(db, { periodKey, branchScope }) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load statement balances.' });
+    }
+  });
+
+  app.put('/api/treasury/statement-balances', requirePermission('finance.post'), (req, res) => {
+    try {
+      const r = upsertStatementBalance(db, req.body || {}, req.user, {
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
+      });
+      return res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save the statement balance.' });
     }
   });
 

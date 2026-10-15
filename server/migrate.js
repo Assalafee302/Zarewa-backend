@@ -1063,6 +1063,23 @@ function runMigrationsUnlocked(db) {
     }
   }
 
+  // Reports round 2 (C): bank statement opening/closing per account per month, typed by Finance.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bank_statement_balances (
+      id TEXT PRIMARY KEY,
+      treasury_account_id INTEGER NOT NULL,
+      period_key TEXT NOT NULL,
+      opening_kobo INTEGER NOT NULL,
+      closing_kobo INTEGER NOT NULL,
+      note TEXT,
+      entered_by_user_id TEXT,
+      entered_by_name TEXT,
+      entered_at_iso TEXT NOT NULL,
+      branch_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_bank_statement_balances_period ON bank_statement_balances(period_key);
+  `);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS bank_deposits (
       id TEXT PRIMARY KEY,

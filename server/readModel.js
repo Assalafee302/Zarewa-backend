@@ -2680,6 +2680,7 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
       handledBy: row.handled_by,
       ledgerEntryId: row.ledger_entry_id ?? null,
       paidByName: row.paid_by_name ?? '',
+      cashierNote: row.cashier_note ?? '',
       bankConfirmedAtISO: row.bank_confirmed_at_iso ?? null,
       bankConfirmedByUserId: row.bank_confirmed_by_user_id ?? null,
       bankConfirmedBy,

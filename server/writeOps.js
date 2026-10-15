@@ -13628,6 +13628,9 @@ function usableRefundFundForReceiptConfirm(db, row) {
   };
 }
 
+/** Cashier note on the receipt confirm step (round 2, E). The register shows the first 60 characters. */
+export const CASHIER_NOTE_MAX_CHARS = 200;
+
 export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor = null) {
   const id = String(receiptId || '').trim();
   if (!id) return { ok: false, error: 'Receipt id required.' };
@@ -13654,6 +13657,10 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
 
   const clearForDelivery =
     payload?.holdForDelivery === true || payload?.clearForDelivery === false ? false : true;
+  const cashierNote =
+    payload?.cashierNote === undefined || payload?.cashierNote === null
+      ? null
+      : String(payload.cashierNote).replace(/\s+/g, ' ').trim().slice(0, CASHIER_NOTE_MAX_CHARS);
   const rawAmt = payload?.bankReceivedAmountNgn;
   const hasBankAmt =
     rawAmt !== undefined && rawAmt !== null && String(rawAmt).trim() !== '';
@@ -13918,6 +13925,10 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
             bank_confirmed_by_user_id = ?
            WHERE id = ?`
         ).run(nextBankReceived, now, uid, id);
+      }
+      // Cashier note on the confirm step (round 2, E): short free text, shown as Remark on the receipts register.
+      if (cashierNote != null) {
+        db.prepare(`UPDATE sales_receipts SET cashier_note = ? WHERE id = ?`).run(cashierNote, id);
       }
     })();
   } catch (e) {

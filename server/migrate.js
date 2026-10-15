@@ -1652,7 +1652,7 @@ function migrateControlsPhase3(db) {
     }
   };
   const add = {
-    sales_receipts: [['paid_by_name', 'TEXT']],
+    sales_receipts: [['paid_by_name', 'TEXT'], ['cashier_note', 'TEXT']],
     purchase_order_lines: [
       ['purchase_unit', 'TEXT'],
       ['meters_ordered', 'REAL'],

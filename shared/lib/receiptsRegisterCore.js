@@ -11,6 +11,7 @@
  * - Confirmed = "Alert · <cashier> · <dd/mm hh:mm>" once the cashier confirmed the credit alert; blank otherwise,
  *   red when still blank 24 hours after the receipt.
  * - Statement = "✓ BKR-…" when a bank-statement line names the leg; blank otherwise.
+ * - Remark = the cashier note typed on the confirm step, else the ledger note (max 60 characters in print).
  * - Payer = name the cashier typed on the receipt (Paid by), else the "Paid by:" name on the linked bank line,
  *   else the name typed in the ledger bank reference. The source is kept for the export.
  * - Lines are grouped in three sections (no status column), each sorted by date with a subtotal by bank and a
@@ -194,7 +195,8 @@ export function buildReceiptsRegister(input = {}) {
       confirmedAtISO: confirmedAt,
       statement: bankLine ? `✓ ${bankLine.id}` : '',
       bankLineId: bankLine ? String(bankLine.id) : '',
-      remark: isReversal ? `Reversal of ${ledgerId}` : String(le.note || '').trim(),
+      // Remark = the cashier's note on the confirm step, else the ledger note.
+      remark: isReversal ? `Reversal of ${ledgerId}` : String(r?.cashierNote || '').trim() || String(le.note || '').trim(),
       receiptStatus: String(r?.status || '').trim(),
       exceptions,
       review,

@@ -7,6 +7,8 @@
  *   node scripts/seed-statement-balances-2026-08.mjs [--apply] [--by "Name"]
  */
 import { createDatabase } from '../server/db.js';
+import { createMysqlDatabase, mysqlConfigFromEnv } from '../server/mysqlDatabase.js';
+import { loadProjectEnv } from '../server/loadProjectEnv.js';
 import { upsertStatementBalance } from '../server/finance/bankStatementBalanceOps.js';
 
 const SEED = [
@@ -17,7 +19,9 @@ const args = process.argv.slice(2);
 const apply = args.includes('--apply');
 const by = args.includes('--by') ? args[args.indexOf('--by') + 1] : 'Owner (seed 15 Oct 2026)';
 
-const db = createDatabase({ seed: false });
+loadProjectEnv();
+// Dry run opens the schema without DDL or migrations and only reads; --apply opens it the way the app does.
+const db = apply ? createDatabase({ seed: false }) : createMysqlDatabase(mysqlConfigFromEnv(), { bootstrap: false });
 try {
   for (const s of SEED) {
     const acc = db.prepare(`SELECT id, name, acc_no, branch_id FROM treasury_accounts WHERE REPLACE(acc_no, ' ', '') = ?`).get(s.accNo);

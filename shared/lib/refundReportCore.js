@@ -37,7 +37,35 @@ export function nameTokens(name) {
     .filter((t) => t.length >= 3 && !TITLES.has(t));
 }
 
-const tokenMatch = (a, b) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
+/** Edit distance ≤ 1 (one letter changed, added or dropped). */
+function oneEditApart(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (a.length > b.length) i += 1;
+    else if (b.length > a.length) j += 1;
+    else {
+      i += 1;
+      j += 1;
+    }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+
+/** Same name token: equal, a 4+ letter prefix ("atta" ~ "attah"), or one letter apart on 5+ letters ("ahmed" ~ "ahmad"). */
+const tokenMatch = (a, b) =>
+  a === b ||
+  (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))) ||
+  (a.length >= 5 && b.length >= 5 && oneEditApart(a, b));
 
 /** Same person by name: at least one token in common (a 4+ letter prefix counts: "atta" ~ "attah"). */
 export function sameName(a, b) {

@@ -27,3 +27,16 @@ const out = {
 const target = path.join(process.cwd(), 'shared/lib/__fixtures__/kd-2026-09/bankReconSource.json');
 fs.writeFileSync(target, JSON.stringify(out));
 console.log(target, out.accounts.length, out.treasuryMovements.length, out.bankLines.length, out.expenses.length);
+
+// Refund report fixture: refunds only (treasury + bank lines come from bankReconSource.json).
+const refundsOut = {
+  _meta: out._meta,
+  startDate: out.startDate,
+  endDate: out.endDate,
+  refunds: sales.refunds.map((r) =>
+    pick(r, ['refundID', 'customerID', 'customer', 'quotationRef', 'reasonCategory', 'amountNgn', 'status', 'requestedAtISO', 'approvedAmountNgn', 'paidAmountNgn', 'paidAtISO', 'creditAppliedNgn'])
+  ),
+};
+const refundTarget = path.join(process.cwd(), 'shared/lib/__fixtures__/kd-2026-09/refundReportSource.json');
+fs.writeFileSync(refundTarget, JSON.stringify(refundsOut));
+console.log(refundTarget, refundsOut.refunds.length);

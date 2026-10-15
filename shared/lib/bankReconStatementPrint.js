@@ -35,10 +35,12 @@ function statementRows(p) {
     return rows;
   }
   const noBal = 'Not entered — add the statement balances for the month';
+  const sb = p.statementBalance;
+  const enteredBy = sb ? `Entered by ${sb.enteredByName || '—'} on ${printDate(sb.enteredAtISO)}` : '';
   rows.push(
     {
       item: 'Bank opening balance (statement)',
-      ids: p.bank.openingNgn == null ? noBal : '',
+      ids: p.bank.openingNgn == null ? noBal : enteredBy,
       amountNgn: p.bank.openingNgn ?? '',
       _severity: p.bank.openingNgn == null ? 'review' : '',
     },

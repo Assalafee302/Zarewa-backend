@@ -7691,6 +7691,11 @@ export function countCoilLotsForProductInWorkspace(db, productID, workspaceBranc
  * Paid toward a quotation for the production gate (Phase 3): receipts allocated to the quote + advance/overpay credit
  * applied − treasury reversals of receipt lines still counted (never trust quotations.paid_ngn alone).
  */
+/** Setting PRODUCTION_GATE_REQUIRES_CONFIRMED (default off; owner switches it on 19 Oct 2026). */
+export function productionGateRequiresConfirmed() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.PRODUCTION_GATE_REQUIRES_CONFIRMED || '').trim());
+}
+
 export function quotationProductionGatePaid(db, quotationRef, branchId) {
   const qKey = normalizeQuotRefDashKey(quotationRef);
   const bid = String(branchId || '').trim() || DEFAULT_BRANCH_ID;
@@ -7705,6 +7710,7 @@ export function quotationProductionGatePaid(db, quotationRef, branchId) {
     receipts,
     ledgerEntries,
     treasuryMovements: receiptTreasuryMovementsWithReversals(db, receipts),
+    requireConfirmed: productionGateRequiresConfirmed(),
   });
 }
 
@@ -7812,7 +7818,11 @@ function validateQuotationForCuttingList(
   } catch {
     minPaidFrac = 0.7;
   }
-  const cashPaidTotal = quotationProductionGatePaid(db, qref, bid).paidNgn;
+  const gatePaid = quotationProductionGatePaid(db, qref, bid);
+  const cashPaidTotal = gatePaid.paidNgn;
+  const unconfirmedNote = gatePaid.unconfirmedNgn
+    ? ` ₦${gatePaid.unconfirmedNgn.toLocaleString('en-NG')} in receipts not yet confirmed by the cashier (${gatePaid.unconfirmedReceiptIds.join(', ')}) does not count until confirmed.`
+    : '';
   if (
     !forDraft &&
     Boolean(qrow.manager_production_approved_at_iso) &&
@@ -7838,7 +7848,9 @@ function validateQuotationForCuttingList(
         code: 'PRODUCTION_GATE_BELOW_MIN_PAID',
         paidNgn: cashPaidTotal,
         paidPct,
-        error: `At least ${pct}% of the quotation must be paid before production (paid ₦${cashPaidTotal.toLocaleString('en-NG')} = ${paidPct}%: receipts + advance applied − reversals). A Branch Manager or above can override with a reason.`,
+        unconfirmedNgn: gatePaid.unconfirmedNgn,
+        unconfirmedReceiptIds: gatePaid.unconfirmedReceiptIds,
+        error: `At least ${pct}% of the quotation must be paid before production (paid ₦${cashPaidTotal.toLocaleString('en-NG')} = ${paidPct}%: receipts + advance applied − reversals).${unconfirmedNote} A Branch Manager or above can override with a reason.`,
       };
     }
   }

@@ -32,7 +32,30 @@ describe('1. production gate paid basis', () => {
       ...tm1499,
       ledgerEntries: [{ type: 'ADVANCE_APPLIED', quotationRef: 'QT-KD-26-0907', amountNgn: 100000 }],
     });
-    expect(r).toEqual({ receiptsNgn: 2811440, creditAppliedNgn: 100000, reversalsNgn: 0, paidNgn: 2911440 });
+    expect(r).toEqual({
+      receiptsNgn: 2811440,
+      creditAppliedNgn: 100000,
+      reversalsNgn: 0,
+      paidNgn: 2911440,
+      unconfirmedNgn: 0,
+      unconfirmedReceiptIds: [],
+    });
+  });
+
+  it('PRODUCTION_GATE_REQUIRES_CONFIRMED: only cashier-confirmed receipts count; credit applied still counts', () => {
+    const credit = [{ type: 'ADVANCE_APPLIED', quotationRef: 'QT-KD-26-0907', amountNgn: 100000 }];
+    const off = productionGatePaid({ ...tm1499, ledgerEntries: credit });
+    const on = productionGatePaid({ ...tm1499, ledgerEntries: credit, requireConfirmed: true });
+    expect(off.paidNgn).toBe(2911440);
+    expect(on).toMatchObject({ receiptsNgn: 0, creditAppliedNgn: 100000, paidNgn: 100000, unconfirmedNgn: 2811440 });
+    expect(on.unconfirmedReceiptIds).toHaveLength(1);
+    const confirmed = productionGatePaid({
+      ...tm1499,
+      receipts: tm1499.receipts.map((r) => ({ ...r, bankConfirmedAtISO: '2026-10-19T09:00:00.000Z' })),
+      ledgerEntries: credit,
+      requireConfirmed: true,
+    });
+    expect(confirmed).toMatchObject({ paidNgn: 2911440, unconfirmedNgn: 0 });
   });
 
   it('subtracts a treasury reversal of one receipt line (TM-1499 reversed in Phase 2)', () => {

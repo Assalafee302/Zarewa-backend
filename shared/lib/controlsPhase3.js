@@ -29,9 +29,16 @@ export function receiptCountsTowardPaid(status) {
   return !/^suspended.*investigation$/.test(s);
 }
 
+/** Receipt confirmed by the cashier: bank alert seen, or cash counted into the Cash Office (same confirm step). */
+export function receiptIsConfirmed(receipt) {
+  return Boolean(String(receipt?.bankConfirmedAtISO ?? receipt?.bank_confirmed_at_iso ?? '').trim());
+}
+
 /**
  * Paid toward a quotation for the production gate = receipts + advance/overpay credit applied − treasury reversals of
  * receipt lines that are still counted (a partial reversal like TM-KD-26-1499 leaves the receipt "Posted").
+ * With `requireConfirmed` (setting PRODUCTION_GATE_REQUIRES_CONFIRMED, owner 2026-10-15) a receipt counts only once
+ * the cashier confirmed it (bank alert / cash received); credit applied is not new cash and still counts.
  * @param {{
  *   quotationRef: string,
  *   receipts: { id?: string, ledgerEntryId?: string, quotationRef: string, amountNgn: number, status?: string }[],
@@ -39,9 +46,11 @@ export function receiptCountsTowardPaid(status) {
  *   treasuryMovements: { id: string, type: string, sourceKind?: string, sourceId?: string, amountNgn: number, reversesMovementId?: string | null }[],
  * }} input
  */
-export function productionGatePaid({ quotationRef, receipts = [], ledgerEntries = [], treasuryMovements = [] }) {
+export function productionGatePaid({ quotationRef, receipts = [], ledgerEntries = [], treasuryMovements = [], requireConfirmed = false }) {
   const q = key(quotationRef);
-  const counted = receipts.filter((r) => key(r.quotationRef) === q && receiptCountsTowardPaid(r.status));
+  const live = receipts.filter((r) => key(r.quotationRef) === q && receiptCountsTowardPaid(r.status));
+  const counted = requireConfirmed ? live.filter(receiptIsConfirmed) : live;
+  const unconfirmed = requireConfirmed ? live.filter((r) => !receiptIsConfirmed(r)) : [];
   const receiptsNgn = counted.reduce((s, r) => s + ngn(r.amountNgn), 0);
   const creditAppliedNgn = ledgerEntries
     .filter((e) => key(e.quotationRef) === q && (e.type === 'ADVANCE_APPLIED' || e.type === 'OVERPAY_APPLIED'))
@@ -58,7 +67,14 @@ export function productionGatePaid({ quotationRef, receipts = [], ledgerEntries 
     .reduce((s, m) => s + Math.abs(ngn(m.amountNgn)), 0);
 
   const paidNgn = receiptsNgn + creditAppliedNgn - Math.min(reversalsNgn, receiptsNgn);
-  return { receiptsNgn, creditAppliedNgn, reversalsNgn, paidNgn };
+  return {
+    receiptsNgn,
+    creditAppliedNgn,
+    reversalsNgn,
+    paidNgn,
+    unconfirmedNgn: unconfirmed.reduce((s, r) => s + ngn(r.amountNgn), 0),
+    unconfirmedReceiptIds: unconfirmed.map((r) => String(r.id || r.ledgerEntryId || '')),
+  };
 }
 
 /**

@@ -35,6 +35,7 @@ import {
 } from '../shared/lib/materialTransactionReportCore.js';
 import { buildConversionSummaryReport } from './conversionSummaryReport.js';
 import { buildPurchaseRegisterReport } from './procurement/purchaseRegisterSourceOps.js';
+import { buildBankReconStatementReport } from './finance/bankReconStatementSourceOps.js';
 import {
   arAsAtReportRows,
   receiptsRegisterReportRows,
@@ -5234,6 +5235,28 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build purchase register report.' });
+    }
+  });
+
+  app.get('/api/reports/bank-recon-statement', requireManagementReportsView, async (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+        return res.status(400).json({ ok: false, error: 'Valid startDate and endDate are required.' });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const report = await buildBankReconStatementReport(db, {
+        branchScope,
+        startDate,
+        endDate,
+        bankOpening: String(req.query.bankOpening || ''),
+        bankClosing: String(req.query.bankClosing || ''),
+      });
+      return res.json({ ok: true, startDate, endDate, branchScope, report });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not build bank reconciliation statement.' });
     }
   });
 

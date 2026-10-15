@@ -14,7 +14,7 @@
  * Category of a quotation = its first product line (e.g. "Roofing Sheet"), "Stone flat sheet", or
  * "Accessories only" — quotation lines carry no prices, so the whole quotation value goes to that category.
  */
-import { ACCRUAL_SMALL_ITEM_NGN, creditApplicationReceipts } from './salesAccrualCore.js';
+import { ACCRUAL_SMALL_ITEM_NGN, bankLinkedMovementIds, creditApplicationReceipts, creditLineLeftOutOfCash } from './salesAccrualCore.js';
 
 export const ACCRUAL_STATEMENT_TITLE = 'Accrual sales statement';
 
@@ -87,11 +87,13 @@ export function buildAccrualSalesStatement(accrual, src = {}) {
 
   // Credit receipts (₦0 ledger receipts) whose treasury lines would have looked like cash.
   const credit = creditApplicationReceipts(src.ledgerEntries || []);
+  const bankLinked = bankLinkedMovementIds(src.bankRecon || []);
   const phantom = new Map();
   for (const t of src.treasuryMovements || []) {
     if (String(t.sourceKind || '') !== 'LEDGER_RECEIPT' || !inPeriod(day(t.postedAtISO))) continue;
     const c = credit.get(String(t.sourceId || '').trim());
     if (!c || !ngn(t.amountNgn)) continue;
+    if (!creditLineLeftOutOfCash(t, credit, bankLinked)) continue; // bank-linked: real money, kept in cash
     const row = phantom.get(c.ledgerEntryId) || { ...c, treasuryMovementIds: [], leftOutNgn: 0, postedInNgn: 0 };
     row.treasuryMovementIds.push(String(t.id));
     row.leftOutNgn += ngn(t.amountNgn);

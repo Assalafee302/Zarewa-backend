@@ -6,7 +6,8 @@
  *   or an ADVANCE_IN / ADVANCE_REVERSAL_OUT. Split receipts give one line per bank leg. Date = the money date
  *   (treasury posting date); the period, sort and daily totals use it, so the grand total = cash received.
  * - Zero-amount ledger receipts (credit applied from the refund fund / overpayment) are not cash: listed in
- *   "Settled by credit, no cash", their treasury lines left out (same rule as the sales report, round 2 A1).
+ *   "Settled by credit, no cash", their treasury lines left out — unless a bank-statement line names the line
+ *   (then it is real money and stays in cash; same rule as the accrual statement, `creditLineLeftOutOfCash`).
  * - Bank = short bank name (Taj, Moniepoint, GT, Cash), from the treasury account, never the account title.
  * - Confirmed = "Alert · <cashier> · <dd/mm hh:mm>" once the cashier confirmed the credit alert; blank otherwise,
  *   red when still blank 24 hours after the receipt.
@@ -33,7 +34,7 @@ export const SECTION_LABELS = {
   [STATUS_SETTLES_DEBT]: 'Settles earlier debt',
 };
 export const SECTION_LABEL_OPEN_ADVANCE = 'Not yet produced';
-import { creditApplicationReceipts, saleJobsByQuotation } from './salesAccrualCore.js';
+import { bankLinkedMovementIds, creditApplicationReceipts, creditLineLeftOutOfCash, saleJobsByQuotation } from './salesAccrualCore.js';
 import { sameName } from './refundReportCore.js';
 
 export const RECEIPT_LEG_TYPES = ['RECEIPT_IN', 'RECEIPT_REVERSAL_OUT', 'ADVANCE_IN', 'ADVANCE_REVERSAL_OUT'];
@@ -109,6 +110,7 @@ export function buildReceiptsRegister(input = {}) {
     return Boolean(d) && (!startDate || d >= startDate) && (!endDate || d <= endDate);
   };
   const credit = creditApplicationReceipts(ledgerEntries);
+  const bankLinkedIds = bankLinkedMovementIds(bankRecon);
   const ledgerById = new Map(ledgerEntries.map((e) => [String(e.id || '').trim(), e]));
   const receiptByLedger = new Map();
   for (const r of receipts) {
@@ -140,7 +142,7 @@ export function buildReceiptsRegister(input = {}) {
       RECEIPT_LEG_TYPES.includes(t.type) &&
       inPeriod(t.postedAtISO) &&
       ngn(t.amountNgn) !== 0 &&
-      !(String(t.sourceKind || '') === 'LEDGER_RECEIPT' && credit.has(String(t.sourceId || '').trim()))
+      !creditLineLeftOutOfCash(t, credit, bankLinkedIds)
   );
   const legLedgerIds = new Set(legs.map((t) => String(t.sourceId || '').trim()));
   const hoursSince = (iso) => (Date.parse(asAtISO) - Date.parse(iso.length <= 10 ? `${iso}T00:00:00Z` : iso)) / 3_600_000;

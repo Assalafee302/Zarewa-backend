@@ -14,7 +14,7 @@
  * - Customer balance = cash received − refunds paid out − value produced (from treasury, by posting date).
  *   > 0 is an advance, < 0 is a debt.
  * - Cash excludes: treasury lines of zero-amount ledger receipts (credit applications — see
- *   `creditApplicationReceipts`), receipt and advance reversals (they reduce cash), and RECEIPT_IN lines that re-post an
+ *   `creditApplicationReceipts`) that no bank-statement line names (`creditLineLeftOutOfCash`), receipt and advance reversals (they reduce cash), and RECEIPT_IN lines that re-post an
  *   unconsumed earlier ADVANCE_IN of the same customer with no matching bank-statement inflow (double-counted
  *   advance applications; "unverified" when bank recon does not cover the date). Treasury lines with no
  *   customer are left out of balances and listed.
@@ -93,6 +93,26 @@ export function creditApplicationReceipts(ledgerEntries = []) {
     });
   }
   return out;
+}
+
+/** Treasury movement ids named by any bank-statement line (bank recon `systemMatch`). */
+export function bankLinkedMovementIds(bankRecon = []) {
+  const ids = new Set();
+  for (const b of bankRecon || []) {
+    for (const m of String(b?.systemMatch || '').matchAll(/TM-[A-Z]{2,4}-\d{2}-\d+/gi)) ids.add(m[0].toUpperCase());
+  }
+  return ids;
+}
+
+/**
+ * A treasury line of a zero-amount (credit) ledger receipt is left out of cash — unless a bank-statement line
+ * names it: then the money did reach the bank and it stays in cash (owner, 2026-10-15; e.g. Farouq TM-KD-26-2178
+ * once linked to MP-0348).
+ */
+export function creditLineLeftOutOfCash(t, creditReceipts, bankLinked) {
+  if (String(t?.sourceKind || '') !== 'LEDGER_RECEIPT') return false;
+  if (!creditReceipts.has(String(t?.sourceId || '').trim())) return false;
+  return !bankLinked.has(String(t?.id || '').toUpperCase());
 }
 
 /** No stated reason is treated like "Overpayment": it does not reduce the quotation value. */
@@ -206,8 +226,8 @@ export function buildSalesAccrual(input = {}) {
   // --- Customer cash lines ------------------------------------------------------------------------
   // Treasury lines of zero-amount ledger receipts are credit applications, not cash (owner, round 2 A1).
   const creditReceipts = creditApplicationReceipts(ledgerEntries);
-  const isCreditApplicationLine = (t) =>
-    String(t.sourceKind || '') === 'LEDGER_RECEIPT' && creditReceipts.has(String(t.sourceId || '').trim());
+  const bankLinked = bankLinkedMovementIds(bankRecon);
+  const isCreditApplicationLine = (t) => creditLineLeftOutOfCash(t, creditReceipts, bankLinked);
   const cashLines = treasuryMovements
     .filter((t) => CASH_TYPES.has(t.type) && !isCreditApplicationLine(t))
     .map((t) => ({

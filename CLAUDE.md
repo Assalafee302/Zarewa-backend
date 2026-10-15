@@ -66,3 +66,15 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - Payroll source (owner, 2026-10-14): today a monthly Excel payroll sheet; it moves into the HR module in the HR phase (with PAYE). Until then the expenses report takes the payroll split as an input and the live report says "not in the data source".
 - R6 imprest (incl. misspellings) → Admin expenses (EXP-0367). Cancelled payment requests are not expenses: left out of the book view, listed as exceptions (EXP-0398). Book Admin expenses ₦33,050.
 - Reports Phase 1 complete and approved 2026-10-14 (frontend `156c472` last). See RELEASE.md; not pushed/deployed until the owner's go-ahead.
+
+## Next data round (owner, 2026-10-15) — recorded, NOT run
+
+- Treasury stored balances: recompute `balance` for treasury accounts 2, 3, 4 from opening + movements with the ERP's own integrity routine (treasury_balance_integrity_runs), with audit. Taj (2) differs by ₦8,533,781 (= 21,401,720 − 12,867,939) from the round-2 opening-balance change. Not inside the 7am window.
+- Bank statement lines not in the ERP: round 3 imported links only. Import the 43 unlinked Aug Moniepoint statement lines (owner workbook `Aug2026_bank_to_ERP_links.xlsx`, sheet "Unlinked bank lines") as Review lines, and find the 4 workbook-linked lines missing from bank_reconciliation_lines (Aug Moniepoint statement gap ₦85,300.41). Until then the recon shows them only as the statement gap.
+- Seed Aug 2026 statement balances after the round-2 deploy: `node scripts/seed-statement-balances-2026-08.mjs` (dry run), then `--apply`.
+
+## Reports round 2 — release checklist additions
+
+- fix/reports-round2 is NOT in the 7am deploy; merge only after the owner reviews the August PDFs.
+- DB-backed test to run against a real MySQL: `server/finance/bankStatementBalanceOps.test.js` (skips without MySQL).
+

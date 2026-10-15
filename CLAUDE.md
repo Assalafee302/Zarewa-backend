@@ -66,3 +66,10 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - Payroll source (owner, 2026-10-14): today a monthly Excel payroll sheet; it moves into the HR module in the HR phase (with PAYE). Until then the expenses report takes the payroll split as an input and the live report says "not in the data source".
 - R6 imprest (incl. misspellings) → Admin expenses (EXP-0367). Cancelled payment requests are not expenses: left out of the book view, listed as exceptions (EXP-0398). Book Admin expenses ₦33,050.
 - Reports Phase 1 complete and approved 2026-10-14 (frontend `156c472` last). See RELEASE.md; not pushed/deployed until the owner's go-ahead.
+
+## Stock value — one spool rule (owner, 15 Oct 2026; branch fix/stock-gross-net)
+
+- Screens show GROSS kg only (weighed coil incl. spool). Every stock VALUE is net kg × rate.
+- One rule, `spoolKgForCoil` in `shared/lib/coilRegisterCore.js`: Aluzinc (incl. PPGI) 65 kg; aluminium bought by kg 45 kg; by the metre 0; rolls 0; a coil lighter than its spool is nil. The stock register's old 35/60 kg + 30 kg threshold rule is deleted.
+- Shared costing `buildCoilCosting` / `coilNetValueRows` (PO line match, bought by kg / metre, rate) feeds the material register, month-end coil stock report, stock register, coil stock as at, executive dashboard (BI), month-end data pack and the period-costs valuation export. Callers must pass every PO (`{ unlimited: true }`), or kg-bought aluminium loses its spool.
+- Month-end coil stock report (Reports): per coil Gross | Spool | Net | Rate | Value, subtotals by material and gauge, note "Gross = weighed coil incl. spool; Net = gross − spool; value at net." 31 Aug 2026 Kaduna: 64 coils, ₦131,158,023; book ₦145,755,980 — difference reconciled per coil (CL-26-2082 GRN dated 1 Sep ₦13,339,700; opening-batch book rates ₦1,258,267).

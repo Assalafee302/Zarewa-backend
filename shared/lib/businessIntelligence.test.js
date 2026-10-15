@@ -371,3 +371,29 @@ describe('businessIntelligence', () => {
     expect(pack.sales.outstandingReceivablesNgn).toBe(70_000);
   });
 });
+
+describe('coil stock value at net (one spool rule)', () => {
+  const coilLots = [
+    { coilNo: 'Z1', materialTypeName: 'Aluzinc', productID: 'PRD-102', currentWeightKg: 1000, unitCostNgnPerKg: 2000, branchId: 'BR-KD', currentStatus: 'Available' },
+    { coilNo: 'A1', materialTypeName: 'Aluminium', productID: 'COIL-ALU', currentWeightKg: 500, unitCostNgnPerKg: 7000, branchId: 'BR-KD', currentStatus: 'Available', poID: 'PO-1', gaugeLabel: '0.55mm', colour: 'Mill' },
+  ];
+  const purchaseOrders = [
+    { poID: 'PO-1', status: 'Received', lines: [{ productID: 'COIL-ALU', productName: 'Aluminium coil', lineType: 'coil_kg', gauge: '0.55mm', color: 'Mill', qtyOrdered: 500, qtyReceived: 500, unitPricePerKgNgn: 7000 }] },
+  ];
+
+  it('inventory analytics: Aluzinc 1,000 kg − 65 = 935 kg; aluminium by kg 500 − 45 = 455 kg', async () => {
+    const { computeInventoryAnalytics } = await import('./businessIntelligence.js');
+    const inv = computeInventoryAnalytics({ coilLots, purchaseOrders, products: [], stockMovements: [], productionJobs: [], quotations: [] });
+    const by = Object.fromEntries(inv.families.map((f) => [f.family, f]));
+    expect(by.aluzinc).toMatchObject({ kgOnHand: 1000, valuationNgn: 935 * 2000 });
+    expect(by.aluminium).toMatchObject({ kgOnHand: 500, valuationNgn: 455 * 7000 });
+  });
+
+  it('branch breakdown: coil value at net, kg on hand gross', async () => {
+    const { computeBranchBreakdown } = await import('./businessIntelligence.js');
+    const bb = computeBranchBreakdown({ coilLots, purchaseOrders, receipts: [], refunds: [], productionJobs: [], quotations: [], products: [], stockMovements: [] });
+    const kd = bb.byBranch.find((b) => b.branchId === 'BR-KD');
+    expect(kd.coilKgOnHand).toBe(1500);
+    expect(kd.coilValuationNgn).toBe(935 * 2000 + 455 * 7000);
+  });
+});

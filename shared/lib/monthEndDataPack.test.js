@@ -43,10 +43,11 @@ describe('month-end data pack', () => {
       expect(schedule.totalNgn).toBe(sum);
     }
     const close = pack.schedules.find((s) => s.id === 'coil-closing');
-    expect(close.lines[0].netKg).toBe(340);
-    expect(close.lines[0].spoolKg).toBe(60);
-    expect(close.totalNgn).toBe(340_000);
-    expect(close.lines[0].bookValueNgn).toBe(272_000);
+    // Aluzinc spool 65 kg (one rule): 400 − 65 = 335 kg net.
+    expect(close.lines[0].netKg).toBe(335);
+    expect(close.lines[0].spoolKg).toBe(65);
+    expect(close.totalNgn).toBe(335_000);
+    expect(close.lines[0].bookValueNgn).toBe(268_000);
     const factory = pack.schedules.find((s) => s.id === 'factory-overhead');
     expect(factory.lines.map((line) => line.ref).sort()).toEqual(['EXP-1', 'EXP-KD-26-0353']);
     const assets = pack.schedules.find((s) => s.id === 'asset-additions');

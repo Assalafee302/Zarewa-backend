@@ -4,6 +4,7 @@
  */
 
 import { displayCoilNumber, displayDocNumber } from './reportDisplayFormat.js';
+import { coilNetValueByCoil } from './coilRegisterCore.js';
 import {
   isAccessoryStockCheckProduct,
   isStoneStockCheckProduct,
@@ -12,18 +13,21 @@ import {
 /**
  * @param {Array<{ coilNo?: string, colour?: string, gaugeLabel?: string, materialTypeName?: string, currentWeightKg?: number, poID?: string, supplierName?: string, unitCostNgnPerKg?: number, landedCostNgn?: number }>} lots
  */
-export function stockCoilAsAtRows(lots = []) {
+export function stockCoilAsAtRows(lots = [], opts = {}) {
+  // Value at NET kg × rate by the one spool rule and the shared coil costing (owner, 15 Oct 2026); balance stays gross.
+  const byCoil = coilNetValueByCoil(lots, opts.purchaseOrders || [], {
+    kgOf: (c) => Math.round((Number(c.currentWeightKg) || 0) * 100) / 100,
+  });
   return (lots || []).map((lot) => {
     const mat = String(lot.materialTypeName || '').trim() || '—';
     const gauge = String(lot.gaugeLabel || '').trim() || '—';
     const balanceKg = Math.round((Number(lot.currentWeightKg) || 0) * 100) / 100;
-    const unitCostNgnPerKg = lot.unitCostNgnPerKg != null ? Math.round(Number(lot.unitCostNgnPerKg)) : null;
-    const valueNgn =
-      lot.landedCostNgn != null
-        ? Math.round(Number(lot.landedCostNgn))
-        : unitCostNgnPerKg != null
-          ? Math.round(unitCostNgnPerKg * balanceKg)
-          : null;
+    const v = byCoil.get(String(lot.coilNo || '').trim());
+    const rate = v?.rateNgnPerKg > 0 ? v.rateNgnPerKg : null;
+    const unitCostNgnPerKg = rate != null ? Math.round(rate) : null;
+    const spoolKg = v ? v.spoolKg : 0;
+    const netKg = v ? v.netKg : balanceKg;
+    const valueNgn = rate != null ? Math.round(netKg * rate) : null;
     return {
       coilNoDisplay: displayCoilNumber(lot.coilNo),
       coilNoFull: String(lot.coilNo || '').trim() || '—',
@@ -32,8 +36,12 @@ export function stockCoilAsAtRows(lots = []) {
       materialType: mat,
       matGaugeKey: `${mat}|${gauge}`,
       balanceKg,
+      spoolKg,
+      netKg,
       unitCostNgnPerKg,
       valueNgn,
+      boughtBy: v?.boughtBy || '',
+      costSource: v?.costSource || '',
       poIdDisplay: displayDocNumber(lot.poID) || '—',
       supplier: String(lot.supplierName || '').trim() || '—',
     };

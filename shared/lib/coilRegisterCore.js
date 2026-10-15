@@ -96,8 +96,12 @@ export function coilFamily(materialTypeName, productID = '') {
   return '';
 }
 
-/** Aluzinc (incl. PPGI) 65 kg; aluminium bought by kg 45 kg; aluminium bought by metre 0. */
+/**
+ * The one spool rule: Aluzinc (incl. PPGI) 65 kg; aluminium bought by kg 45 kg; aluminium bought by metre 0.
+ * A roll (stock form "roll") is recorded net — no spool.
+ */
 export function spoolKgForCoil(coil, boughtBy = 'kg') {
+  if (String(coil?.stockForm ?? coil?.stock_form ?? '').trim().toLowerCase() === 'roll') return 0;
   const fam = coilFamily(coil?.materialTypeName, coil?.productID);
   if (fam === 'aluminium' && boughtBy === 'metre') return SPOOL_KG.aluminiumByMetre;
   return fam ? SPOOL_KG[fam] : 0;
@@ -133,7 +137,8 @@ function openingBatchPrices(coils) {
   const counts = new Map();
   for (const c of coils) {
     const u = num(c.unitCostNgnPerKg);
-    if (!(u > 0)) continue;
+    // A batch is one material on one receive date: blank material or date is not a batch.
+    if (!(u > 0) || !c.family || !c.receivedISO) continue;
     const key = `${c.family}|${c.receivedISO}`;
     const m = counts.get(key) || new Map();
     m.set(u, (m.get(u) || 0) + 1);
@@ -145,45 +150,15 @@ function openingBatchPrices(coils) {
 }
 
 /**
- * @param {object} input
- * @param {object[]} input.coilLots
- * @param {object[]} input.stockMovements — all movements up to today (roll-back needs those after the period)
- * @param {object[]} [input.purchaseOrders] — with `lines`
- * @param {object[]} [input.productionJobs]
- * @param {object[]} [input.quotations]
- * @param {string} input.startDate
- * @param {string} input.endDate
- * @param {{ coilNo: string, receivedISO: string, note?: string }[]} [input.receivedDateCorrections]
- * @param {string} [input.stockCheckCorrectionsFromISO]
+ * Per-coil costing shared by every coil valuation (material register, month-end coil stock, stock register,
+ * coil stock as at, dashboards): coil → PO line (gauge / colour / kg match), bought by kg or by the metre
+ * (`purchaseUnitForLine`; opening aluminium with no PO = metre unless in OPENING_ALUMINIUM_BOUGHT_BY_KG), and
+ * unit cost (metre-bought = PO line amount ÷ kg received; else coil cost, landed ÷ kg, opening batch price).
+ * @param {object[]} coils normalised: { coilNo, family, receivedISO, ... }
+ * @param {object[]} purchaseOrders with `lines`
  */
-export function buildCoilRegister(input = {}) {
-  const {
-    coilLots = [],
-    stockMovements = [],
-    purchaseOrders = [],
-    productionJobs = [],
-    quotations = [],
-    startDate = '',
-    endDate = '',
-    receivedDateCorrections = COIL_RECEIVED_DATE_CORRECTIONS,
-    stockCheckCorrectionsFromISO = STOCK_CHECK_CORRECTIONS_FROM_ISO,
-  } = input;
-  const inPeriod = (iso) => Boolean(iso) && iso >= startDate && iso <= endDate;
-
-  const coils = coilLots
-    .map((c) => ({
-      ...c,
-      coilNo: String(c.coilNo || '').trim(),
-      family: coilFamily(c.materialTypeName, c.productID),
-      receivedISO: normaliseDateISO(c.receivedAtISO),
-    }))
-    .filter((c) => c.coilNo);
-  const coilByNo = new Map(coils.map((c) => [c.coilNo, c]));
-  const movesByCoil = indexCoilMovements(stockMovements, new Set(coilByNo.keys()));
+function buildCoilCosting(coils, purchaseOrders = []) {
   const batchPrice = openingBatchPrices(coils);
-  const correctionByCoil = new Map((receivedDateCorrections || []).map((c) => [String(c.coilNo).trim(), c]));
-  const isCorrection = (m) => CORRECTION_TYPES.has(m.type) && Boolean(stockCheckCorrectionsFromISO) && m.date >= stockCheckCorrectionsFromISO;
-
   const unitCost = (c) => {
     const line = lineOfCoil.get(c.coilNo);
     if (line && line.unit === 'metre' && line.costPerKg > 0) {
@@ -284,6 +259,95 @@ export function buildCoilRegister(input = {}) {
     }
     return { boughtBy: 'kg', boughtByRule: 'no PO line' };
   };
+
+  return { batchPrice, unitCost, lineOfCoil, coilsOfLineByPo, boughtByOf, isCoilLine, linePrice, coilsByPo };
+}
+
+/** Normalise coil lots the same way for every valuation. */
+function normaliseCoils(coilLots = []) {
+  return (coilLots || [])
+    .map((c) => ({
+      ...c,
+      coilNo: String(c.coilNo || '').trim(),
+      family: coilFamily(c.materialTypeName, c.productID),
+      receivedISO: normaliseDateISO(c.receivedAtISO),
+    }))
+    .filter((c) => c.coilNo);
+}
+
+/**
+ * Coils valued at NET kg × rate by the one spool rule (owner, 15 Oct 2026): Aluzinc 65 kg, aluminium bought by kg
+ * 45 kg, by the metre 0; a coil lighter than its spool is nil. Gross kg = `kgOf(coil)` (default live
+ * currentWeightKg). Every coil is returned (no receive-date filter) so callers keep their own row set.
+ * @param {object[]} coilLots
+ * @param {object[]} [purchaseOrders]
+ * @param {{ kgOf?: (coil: object) => number }} [opts]
+ */
+export function coilNetValueRows(coilLots = [], purchaseOrders = [], opts = {}) {
+  const coils = normaliseCoils(coilLots);
+  const costing = buildCoilCosting(coils, purchaseOrders);
+  const kgOf = typeof opts.kgOf === 'function' ? opts.kgOf : (c) => num(c.currentWeightKg);
+  return coils.map((c) => {
+    const grossKg = round2(Math.max(0, num(kgOf(c))));
+    const { boughtBy, boughtByRule } = costing.boughtByOf(c);
+    const { spoolKg, netKg } = splitSpool(grossKg, spoolKgForCoil(c, boughtBy));
+    const { unitCostNgnPerKg, costSource } = costing.unitCost(c);
+    return {
+      coilNo: c.coilNo,
+      family: c.family,
+      gaugeLabel: c.gaugeLabel || '',
+      colour: c.colour || '',
+      grossKg,
+      spoolKg,
+      netKg,
+      rateNgnPerKg: unitCostNgnPerKg,
+      valueNgn: ngn(netKg * unitCostNgnPerKg),
+      boughtBy,
+      boughtByRule,
+      costSource,
+    };
+  });
+}
+
+/** coilNo → net-value row (see coilNetValueRows). */
+export function coilNetValueByCoil(coilLots = [], purchaseOrders = [], opts = {}) {
+  return new Map(coilNetValueRows(coilLots, purchaseOrders, opts).map((r) => [r.coilNo, r]));
+}
+
+/**
+ * @param {object} input
+ * @param {object[]} input.coilLots
+ * @param {object[]} input.stockMovements — all movements up to today (roll-back needs those after the period)
+ * @param {object[]} [input.purchaseOrders] — with `lines`
+ * @param {object[]} [input.productionJobs]
+ * @param {object[]} [input.quotations]
+ * @param {string} input.startDate
+ * @param {string} input.endDate
+ * @param {{ coilNo: string, receivedISO: string, note?: string }[]} [input.receivedDateCorrections]
+ * @param {string} [input.stockCheckCorrectionsFromISO]
+ */
+export function buildCoilRegister(input = {}) {
+  const {
+    coilLots = [],
+    stockMovements = [],
+    purchaseOrders = [],
+    productionJobs = [],
+    quotations = [],
+    startDate = '',
+    endDate = '',
+    receivedDateCorrections = COIL_RECEIVED_DATE_CORRECTIONS,
+    stockCheckCorrectionsFromISO = STOCK_CHECK_CORRECTIONS_FROM_ISO,
+  } = input;
+  const inPeriod = (iso) => Boolean(iso) && iso >= startDate && iso <= endDate;
+
+  const coils = normaliseCoils(coilLots);
+  const coilByNo = new Map(coils.map((c) => [c.coilNo, c]));
+  const movesByCoil = indexCoilMovements(stockMovements, new Set(coilByNo.keys()));
+  const correctionByCoil = new Map((receivedDateCorrections || []).map((c) => [String(c.coilNo).trim(), c]));
+  const isCorrection = (m) => CORRECTION_TYPES.has(m.type) && Boolean(stockCheckCorrectionsFromISO) && m.date >= stockCheckCorrectionsFromISO;
+
+  const { batchPrice, unitCost, lineOfCoil, coilsOfLineByPo, boughtByOf, isCoilLine, linePrice, coilsByPo } =
+    buildCoilCosting(coils, purchaseOrders);
 
   // --- Stock at a date -----------------------------------------------------------------------
   const stockAt = (asAtISO, { applyReceivedDateCorrections = false } = {}) => {

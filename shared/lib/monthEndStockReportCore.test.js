@@ -84,3 +84,29 @@ describe('month-end coil stock report — rules on small inputs', () => {
     expect(rep.grandTotal.valueNgn).toBe(6_000_000);
   });
 });
+
+describe('coilNetValueRows — one rule for every stock value', () => {
+  it('31 Aug: same gross / spool / net / value per coil as the month-end report', async () => {
+    const { coilNetValueByCoil } = await import('./coilRegisterCore.js');
+    const kgAt = new Map(reg.stock.opening.rows.map((r) => [r.coilNo, r.kgGross]));
+    const lots = kd.coilLots.filter((c) => kgAt.has(String(c.coilNo).trim()));
+    const by = coilNetValueByCoil(lots, kd.purchaseOrders, { kgOf: (c) => kgAt.get(c.coilNo) });
+    for (const r of coils(aug31)) {
+      expect(by.get(r.coilNo)).toMatchObject({ grossKg: r.grossKg, spoolKg: r.spoolKg, netKg: r.netKg, valueNgn: r.valueNgn });
+    }
+  });
+
+  it('rolls carry no spool; coils lighter than the spool are nil', async () => {
+    const { coilNetValueRows } = await import('./coilRegisterCore.js');
+    const rows = coilNetValueRows([
+      { coilNo: 'R1', materialTypeName: 'Aluzinc', stockForm: 'roll', currentWeightKg: 500, unitCostNgnPerKg: 2000 },
+      { coilNo: 'C1', materialTypeName: 'Aluzinc', currentWeightKg: 40, unitCostNgnPerKg: 2000 },
+      { coilNo: 'C2', materialTypeName: 'Aluminium', poID: '', currentWeightKg: 1000, unitCostNgnPerKg: 7000 },
+    ]);
+    const by = Object.fromEntries(rows.map((r) => [r.coilNo, r]));
+    expect(by.R1).toMatchObject({ spoolKg: 0, netKg: 500, valueNgn: 1_000_000 });
+    expect(by.C1).toMatchObject({ spoolKg: 40, netKg: 0, valueNgn: 0 });
+    // Opening aluminium with no PO = bought by the metre → no spool.
+    expect(by.C2).toMatchObject({ boughtBy: 'metre', spoolKg: 0, netKg: 1000, valueNgn: 7_000_000 });
+  });
+});

@@ -5291,7 +5291,7 @@ export function registerHttpApi(app, db) {
         totals: stockAccessoryAsAtTotals(accessoryRows),
       };
       if (snap.length > 0) {
-        const rows = stockCoilAsAtRows(snap);
+        const rows = stockCoilAsAtRows(snap, { purchaseOrders: listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts()) });
         return res.json({
           ok: true,
           asAtDate,
@@ -5306,7 +5306,7 @@ export function registerHttpApi(app, db) {
         });
       }
       const live = listCoilLots(db, branchScope);
-      const rows = stockCoilAsAtRows(live);
+      const rows = stockCoilAsAtRows(live, { purchaseOrders: listPurchaseOrders(db, branchScope, reportPurchaseOrderListOpts()) });
       return res.json({
         ok: true,
         asAtDate,

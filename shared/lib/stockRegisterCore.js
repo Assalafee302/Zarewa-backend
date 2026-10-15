@@ -6,11 +6,9 @@
 
 import { displayCoilNumber, displayLast4 } from './reportDisplayFormat.js';
 import { roundKg, roundM } from './stockRegisterLineClearance.js';
+import { coilNetValueByCoil, spoolKgForCoil, splitSpool } from './coilRegisterCore.js';
 
-export const SPOOL_KG_DEFAULT = { aluminium: 35, aluzinc: 60 };
 
-/** Gross closing below this (kg) is treated as net — no spool deduction (tail/end pieces). */
-export const NET_KG_GROSS_THRESHOLD = 30;
 
 /** Short management groups for accessory lines. */
 export const ACCESSORY_REGISTER_TYPES = [
@@ -128,19 +126,19 @@ export function accessoryRegisterTypeLabel(key) {
 }
 
 /**
- * Gross closing kg → net kg for valuation (rolls are already net).
+ * Gross closing kg → net kg for valuation, by the one spool rule (coilRegisterCore.spoolKgForCoil, owner
+ * 15 Oct 2026): Aluzinc 65 kg, aluminium bought by kg 45 kg, by the metre 0, rolls 0; lighter than its spool = nil.
  * @param {number} grossKg
- * @param {'aluminium'|'aluzinc'} materialFamily
- * @param {'coil'|'roll'} stockForm
- * @param {{ aluminium?: number; aluzinc?: number }} [spoolKg]
+ * @param {{ materialFamily?: string, materialTypeName?: string, productID?: string, stockForm?: string }} coil
+ * @param {'kg'|'metre'} [boughtBy]
  */
-export function netKgFromGrossClosing(grossKg, materialFamily, stockForm, spoolKg = SPOOL_KG_DEFAULT) {
-  const gross = Math.max(0, Number(grossKg) || 0);
-  if (stockForm === 'roll') return round2(gross);
-  if (gross > 0 && gross < NET_KG_GROSS_THRESHOLD) return round2(gross);
-  const spool = Number(spoolKg?.[materialFamily]) || 0;
-  if (gross <= spool) return 0;
-  return round2(gross - spool);
+export function netKgFromGrossClosing(grossKg, coil = {}, boughtBy = 'kg') {
+  const c = {
+    materialTypeName: coil.materialTypeName || coil.materialFamily || coil.family || '',
+    productID: coil.productID,
+    stockForm: coil.stockForm,
+  };
+  return splitSpool(grossKg, spoolKgForCoil(c, boughtBy)).netKg;
 }
 
 function inPeriod(iso, start, end) {
@@ -366,6 +364,7 @@ function buildCoilLine(lot, ctx) {
   const usedM = roundM(ctx.usedMByCoil?.get(cn) || 0);
   const kgPerM = usedM > 0 && usedKg > 0 ? roundM(usedKg / usedM) : null;
   const stockForm = String(lot.stockForm || lot.stock_form || 'coil').toLowerCase() === 'roll' ? 'roll' : 'coil';
+  const boughtBy = ctx.boughtByCoil?.get(cn) || 'kg';
 
   const liveKg = Number(lot.currentWeightKg) || 0;
   const liveKgWhole = roundKg(liveKg);
@@ -435,6 +434,8 @@ function buildCoilLine(lot, ctx) {
     closingBlank: isFinishedLine,
     finishedInPeriod: isFinishedLine,
     stockForm,
+    boughtBy,
+    spoolRuleKg: spoolKgForCoil({ materialTypeName: family, stockForm }, boughtBy),
     remark: '',
     unitCostNgnPerKg: lot.unitCostNgnPerKg != null ? Math.round(Number(lot.unitCostNgnPerKg)) : null,
     countVarianceKg,
@@ -644,7 +645,7 @@ function buildInTransitAppendix(inTransitLoads, branchId) {
   return rows;
 }
 
-function coilSectionSummary(groups, materialFamily, spoolKg, fallbackUnitCostNgnPerKg = null) {
+function coilSectionSummary(groups, materialFamily, fallbackUnitCostNgnPerKg = null) {
   let grossClosingKg = 0;
   let netClosingKg = 0;
   let valueNgn = 0;
@@ -655,7 +656,7 @@ function coilSectionSummary(groups, materialFamily, spoolKg, fallbackUnitCostNgn
       if (r.finishedInPeriod || r.closingBlank || r.closingKg == null) continue;
       const gross = Number(r.closingKg) || 0;
       grossClosingKg += gross;
-      const net = netKgFromGrossClosing(gross, materialFamily, r.stockForm, spoolKg);
+      const net = netKgFromGrossClosing(gross, { materialFamily, stockForm: r.stockForm }, r.boughtBy);
       netClosingKg += net;
       const uc = Number(r.unitCostNgnPerKg) || fallback;
       if (uc > 0) valueNgn += Math.round(net * uc);
@@ -688,7 +689,6 @@ function coilSectionSummary(groups, materialFamily, spoolKg, fallbackUnitCostNgn
  */
 export function enrichStockRegisterValuation(register, pricing = {}) {
   if (!register) return register;
-  const spoolKg = pricing.spoolKg || SPOOL_KG_DEFAULT;
   const lookback = pricing.priceLookbackDays ?? 31;
   const sources = pricing.priceSources || {};
 
@@ -699,7 +699,6 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
   register.summary.aluminium = coilSectionSummary(
     register.coilSections?.aluminium?.groups,
     'aluminium',
-    spoolKg,
     aluCost
   );
   register.summary.aluminium.unitCostNgnPerKg = aluCost > 0 ? Math.round(aluCost) : null;
@@ -709,7 +708,6 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
   register.summary.aluzinc = coilSectionSummary(
     register.coilSections?.aluzinc?.groups,
     'aluzinc',
-    spoolKg,
     aluzCost
   );
   register.summary.aluzinc.unitCostNgnPerKg = aluzCost > 0 ? Math.round(aluzCost) : null;
@@ -859,7 +857,7 @@ export function buildNetKgSummaryByGauge(register) {
         if (r.finishedInPeriod || r.closingBlank || r.closingKg == null) continue;
         const gk = Number(r.closingKg) || 0;
         gross += gk;
-        net += netKgFromGrossClosing(gk, materialFamily, r.stockForm);
+        net += netKgFromGrossClosing(gk, { materialFamily, stockForm: r.stockForm }, r.boughtBy);
       }
       if (gross > 0 || net > 0) {
         byGauge.set(g.gaugeLabel, {
@@ -1014,11 +1012,14 @@ export function applyProcurementPricingToRegister(register, pricing = {}) {
  * @param {Map<string, number>} [opts.stoneOpeningByProduct]
  * @param {Map<string, number>} [opts.accessoryOpeningByProduct]
  * @param {Map<string, string>} [opts.accessoryDisplayNameByProduct]
- * @param {{ aluminium?: number; aluzinc?: number }} [opts.spoolKg]
+ * @param {object[]} [opts.purchaseOrders] with `lines` — how each coil was bought (kg / metre) for the spool rule
  */
 export function buildStockRegisterPack(opts = {}) {
   const { start, end, periodKey } = periodBoundsFromEndDate(opts.periodEnd);
-  const spoolKg = opts.spoolKg || SPOOL_KG_DEFAULT;
+  // Bought by kg / metre per coil (PO line rule shared with the material register) — drives the spool.
+  const boughtByCoil = new Map(
+    [...coilNetValueByCoil(opts.coilLots || [], opts.purchaseOrders || []).values()].map((r) => [r.coilNo, r.boughtBy])
+  );
 
   const openingByCoil = openingFromPrevSnapshot(opts.prevClosingSnapshots);
   const receivedByCoil = coilReceivedInPeriod(opts.coilLots, start, end);
@@ -1056,6 +1057,7 @@ export function buildStockRegisterPack(opts = {}) {
     usedAfterByCoil,
     usedMByCoil,
     masterData: opts.masterData || null,
+    boughtByCoil,
   };
 
   const coilSections = buildCoilSections(opts.coilLots, ctx);
@@ -1080,8 +1082,8 @@ export function buildStockRegisterPack(opts = {}) {
   const inTransit = buildInTransitAppendix(opts.inTransitLoads, opts.branchId);
 
   const summary = {
-    aluminium: coilSectionSummary(coilSections.aluminium.groups, 'aluminium', spoolKg, null),
-    aluzinc: coilSectionSummary(coilSections.aluzinc.groups, 'aluzinc', spoolKg, null),
+    aluminium: coilSectionSummary(coilSections.aluminium.groups, 'aluminium', null),
+    aluzinc: coilSectionSummary(coilSections.aluzinc.groups, 'aluzinc', null),
     stoneCoated: {
       totalRemainingM: round2(
         stone.groups.flatMap((g) => g.rows).reduce((s, r) => s + r.remainingM, 0)

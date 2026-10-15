@@ -36,7 +36,7 @@ import { tryPostStockRegisterClosingJournal } from './glOps.js';
 function newPeriodId() {
   return `SRP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
-import { listCoilLots, listInventoryCoilSnapshots, listProducts, listProductionJobs, listStockMovements } from './readModel.js';
+import { listCoilLots, listInventoryCoilSnapshots, listProducts, listProductionJobs, listPurchaseOrders, listStockMovements } from './readModel.js';
 import { listMasterData } from './masterData.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { getProductRowForWorkspace } from './productBranchInventory.js';
@@ -104,6 +104,8 @@ function buildPackWithPeriodContext(db, branchId, periodEndIso, opts = {}) {
     branchId: bid,
     periodEnd: end,
     coilLots: listCoilLots(db, bid),
+    // Every PO (not the default recent-N list): how each coil was bought drives its spool.
+    purchaseOrders: listPurchaseOrders(db, bid, { unlimited: true, skipSideEffects: true }),
     prevClosingSnapshots: prevSnapshots,
     // Unlimited lists so period used/closing is not capped by default list rows (other months).
     productionJobs: listProductionJobs(db, bid, { unlimited: true }),

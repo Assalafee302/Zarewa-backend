@@ -22,11 +22,23 @@ describe('stockCoilAsAtRows', () => {
     expect(rows[0].valueNgn).toBeNull();
   });
 
-  it('values a coil from its landed cost when available', () => {
+  it('values at net kg × the coil rate (unit cost first, never the whole landed cost of a part-used coil)', () => {
     const rows = stockCoilAsAtRows([
       { coilNo: 'CL-1', currentWeightKg: 100, landedCostNgn: 250000, unitCostNgnPerKg: 2400 },
+      { coilNo: 'CL-3', currentWeightKg: 400, weightKg: 1000, landedCostNgn: 2_000_000 },
     ]);
-    expect(rows[0].valueNgn).toBe(250000);
+    expect(rows[0].valueNgn).toBe(240000);
+    // Landed cost only as a rate: ₦2,000,000 ÷ 1,000 kg received = ₦2,000/kg × 400 kg left.
+    expect(rows[1]).toMatchObject({ unitCostNgnPerKg: 2000, valueNgn: 800000 });
+  });
+
+  it('deducts the spool by the one rule (Aluzinc 65 kg) and keeps the balance gross', () => {
+    const rows = stockCoilAsAtRows([
+      { coilNo: 'CL-4', materialTypeName: 'Aluzinc', currentWeightKg: 1000, unitCostNgnPerKg: 2000 },
+      { coilNo: 'CL-5', materialTypeName: 'Aluzinc', currentWeightKg: 40, unitCostNgnPerKg: 2000 },
+    ]);
+    expect(rows[0]).toMatchObject({ balanceKg: 1000, spoolKg: 65, netKg: 935, valueNgn: 1_870_000 });
+    expect(rows[1]).toMatchObject({ balanceKg: 40, spoolKg: 40, netKg: 0, valueNgn: 0 });
   });
 
   it('falls back to unit cost x weight when no landed cost is on record', () => {

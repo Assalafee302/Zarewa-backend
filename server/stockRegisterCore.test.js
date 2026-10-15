@@ -15,13 +15,14 @@ describe('stockRegisterCore', () => {
     expect(coilMaterialFamily('Aluzinc')).toBe('aluzinc');
   });
 
-  it('computes net kg with spool deduction for coils not rolls', () => {
-    expect(netKgFromGrossClosing(1000, 'aluminium', 'coil')).toBe(965);
-    expect(netKgFromGrossClosing(1000, 'aluzinc', 'coil')).toBe(940);
-    expect(netKgFromGrossClosing(1000, 'aluminium', 'roll')).toBe(1000);
-    expect(netKgFromGrossClosing(30, 'aluminium', 'coil')).toBe(0);
-    expect(netKgFromGrossClosing(29, 'aluminium', 'coil')).toBe(29);
-    expect(netKgFromGrossClosing(25, 'aluzinc', 'coil')).toBe(25);
+  it('computes net kg by the one spool rule (Aluzinc 65, aluminium by kg 45, by metre 0, rolls 0, nil below spool)', () => {
+    expect(netKgFromGrossClosing(1000, { materialFamily: 'aluminium', stockForm: 'coil' }, 'kg')).toBe(955);
+    expect(netKgFromGrossClosing(1000, { materialFamily: 'aluminium', stockForm: 'coil' }, 'metre')).toBe(1000);
+    expect(netKgFromGrossClosing(1000, { materialFamily: 'aluzinc', stockForm: 'coil' })).toBe(935);
+    expect(netKgFromGrossClosing(1000, { materialFamily: 'aluminium', stockForm: 'roll' }, 'kg')).toBe(1000);
+    // No 30 kg threshold any more: a coil lighter than its spool is nil, never "treated as net".
+    expect(netKgFromGrossClosing(29, { materialFamily: 'aluminium', stockForm: 'coil' }, 'kg')).toBe(0);
+    expect(netKgFromGrossClosing(25, { materialFamily: 'aluzinc', stockForm: 'coil' })).toBe(0);
   });
 
   it('builds coil register with opening received used closing', () => {
@@ -257,6 +258,13 @@ describe('stockRegisterCore', () => {
           currentStatus: 'Available',
           stockForm: 'coil',
           receivedAtISO: '2026-01-01',
+          poID: 'PO-1',
+        },
+      ],
+      purchaseOrders: [
+        {
+          poID: 'PO-1',
+          lines: [{ productID: 'COIL-ALU', productName: 'Aluminium coil', lineType: 'coil_kg', gauge: '0.22mm', color: 'NB', qtyOrdered: 500, qtyReceived: 500, unitPricePerKgNgn: 1200 }],
         },
       ],
       productionJobs: [],
@@ -271,9 +279,30 @@ describe('stockRegisterCore', () => {
       aluzincUnitCostNgnPerKg: 900,
       priceSources: { aluminium: 'purchase_31d', aluzinc: 'purchase_31d' },
     });
+    // Bought by kg on its PO line → 45 kg spool; value at net.
     expect(pack.summary.aluminium.unitCostNgnPerKg).toBe(1200);
-    expect(pack.summary.aluminium.netClosingKg).toBe(465);
-    expect(pack.summary.aluminium.valueNgn).toBe(465 * 1200);
+    expect(pack.summary.aluminium.netClosingKg).toBe(455);
+    expect(pack.summary.aluminium.spoolAdjustmentKg).toBe(45);
+    expect(pack.summary.aluminium.valueNgn).toBe(455 * 1200);
+  });
+
+  it('aluminium with no PO line is bought by the metre (no spool), as in the material register', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      prevClosingSnapshots: [{ coilNo: '3002', currentWeightKg: 500 }],
+      coilLots: [{ coilNo: '3002', gaugeLabel: '0.55mm', materialTypeName: 'Aluminium', currentWeightKg: 500, currentStatus: 'Available', receivedAtISO: '2026-01-01' }],
+      purchaseOrders: [],
+      productionJobs: [],
+      productionJobCoils: [],
+      coilControlEvents: [],
+      products: [],
+      stockMovements: [],
+      inTransitLoads: [],
+    });
+    enrichStockRegisterValuation(pack, { aluminiumUnitCostNgnPerKg: 7000 });
+    expect(pack.summary.aluminium.netClosingKg).toBe(500);
+    expect(pack.summary.aluminium.spoolAdjustmentKg).toBe(0);
   });
 
   it('shows full stone colour names and per-product accessory names', () => {

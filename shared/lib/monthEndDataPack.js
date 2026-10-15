@@ -92,7 +92,7 @@ export function coilValueAtDate(coil, kg, bookPrices = {}) {
   const family = coil.family || coilMaterialFamily(coil.material);
   const form = String(coil.stockForm || 'coil').toLowerCase() === 'roll' ? 'roll' : 'coil';
   const gross = round2(Math.max(0, Number(kg) || 0));
-  const netKg = family ? netKgFromGrossClosing(gross, family, form) : round2(gross);
+  const netKg = family ? netKgFromGrossClosing(gross, { materialFamily: family, stockForm: form }, coil.boughtBy || 'kg') : round2(gross);
   const poRate = roundMoney(coil.poRateNgn);
   const bookRate = roundMoney(bookPrices[family]);
   return {

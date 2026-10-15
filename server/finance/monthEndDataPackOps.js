@@ -7,6 +7,8 @@ import { hasColumn, tableExists } from '../ap2ReceivedBasisOps.js';
 import { buildSalesPhase1ReportFromDb } from '../sales/salesPhase1ReportOps.js';
 import { buildMonthEndDataPack, coilMaterialFamily, resolveMonthEndPeriod } from '../../shared/lib/monthEndDataPack.js';
 import { daysOutstanding } from '../procurement/supplierAdvanceAge.js';
+import { coilNetValueByCoil } from '../../shared/lib/coilRegisterCore.js';
+import { listCoilLots, listPurchaseOrders } from '../readModel.js';
 import { listLockedExplainedSummaries, loadExplainedIndex, partitionExplained } from './explainedItemsOps.js';
 
 function nextDay(iso) {
@@ -766,6 +768,8 @@ export function buildMonthEndDataPackFromDb(db, opts = {}) {
   const rateByLine = new Map(
     poPrices.map((line) => [`${line.po_id}|${line.line_key}`, money(line.unit_price_per_kg_ngn)])
   );
+  // How each coil was bought (kg / metre) — the spool rule shared with the material register needs it.
+  const boughtByCoil = coilNetValueByCoil(listCoilLots(db, branchId), listPurchaseOrders(db, branchId, { unlimited: true, skipSideEffects: true }));
   const coilInput = coils.map((coil) => {
     const receivedAt = iso(coil.received_at_iso);
     const receivedKg = Number(coil.weight_kg ?? coil.qty_received) || 0;
@@ -779,6 +783,7 @@ export function buildMonthEndDataPackFromDb(db, opts = {}) {
       gauge: coil.gauge_label,
       colour: coil.colour,
       stockForm: coil.stock_form || 'coil',
+      boughtBy: boughtByCoil.get(String(coil.coil_no || '').trim())?.boughtBy || 'kg',
       poRateNgn: poRate,
       openingKg: kgAt(live, receivedAt, receivedKg, period.openingDate, used),
       closingKg: kgAt(live, receivedAt, receivedKg, period.endDate, used),

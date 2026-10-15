@@ -88,6 +88,8 @@ export function loadBusinessIntelligenceSourceSlices(db, branchScope = 'ALL') {
     products: safeSlice('products', () => listProducts(db, scope), []),
     stockMovements: safeSlice('stockMovements', () => listStockMovements(db, scope), []),
     purchaseOrders: safeSlice('purchaseOrders', () => listPurchaseOrders(db, scope), []),
+    // Every PO for coil costing (bought by kg / metre → spool); the list above stays the dashboard's recent set.
+    coilCostingPurchaseOrders: safeSlice('coilCostingPurchaseOrders', () => listPurchaseOrders(db, scope, { unlimited: true, skipSideEffects: true }), []),
     expenses: safeSlice('expenses', () => listExpenses(db, scope), []),
     treasuryMovements: safeSlice('treasuryMovements', () => listTreasuryMovements(db, scope), []),
     paymentRequests,

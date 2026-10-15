@@ -13,6 +13,7 @@ import {
 import { normalizeMaterialProfile } from './materialProfileNormalize.js';
 import { receiptEffectiveCashNgn } from './receiptClearance.js';
 import { poLineOpenQtyForReceiving } from './poLineTypes.js';
+import { coilNetValueByCoil } from './coilRegisterCore.js';
 
 const ALU_PRODUCT_IDS = new Set(['COIL-ALU', 'MAT-001']);
 const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
@@ -288,8 +289,10 @@ function incomingPoKg(purchaseOrders, family) {
   return Math.round(kg);
 }
 
-function coilInventoryForFamily(coilLots, family) {
+function coilInventoryForFamily(coilLots, family, purchaseOrders = []) {
   const active = (coilLots || []).filter((c) => c.currentStatus !== 'Consumed');
+  // Stock value at NET kg × rate by the one spool rule and shared coil costing (owner, 15 Oct 2026).
+  const netValue = coilNetValueByCoil(active, purchaseOrders, { kgOf: liveCoilKg });
   let kgOnHand = 0;
   let valuationNgn = 0;
   let lowCoilCount = 0;
@@ -302,9 +305,7 @@ function coilInventoryForFamily(coilLots, family) {
     const kg = liveCoilKg(lot);
     kgOnHand += kg;
     if (kg > 0 && kg < 100) lowCoilCount += 1;
-    const unit = Number(lot.unitCostNgnPerKg) || 0;
-    if (unit > 0 && kg > 0) valuationNgn += Math.round(kg * unit);
-    else if (Number(lot.landedCostNgn) > 0) valuationNgn += Math.round(Number(lot.landedCostNgn));
+    valuationNgn += netValue.get(String(lot.coilNo || '').trim())?.valueNgn || 0;
 
     const gauge = lot.gaugeLabel || lot.gauge || '—';
     const colour = lot.colour || lot.color || '—';
@@ -444,15 +445,16 @@ export function computeBranchBreakdown(data, opts = {}) {
     row.refundsNgn += amt;
   }
 
-  for (const lot of (data.coilLots || []).filter((c) => c.currentStatus !== 'Consumed')) {
+  const activeCoils = (data.coilLots || []).filter((c) => c.currentStatus !== 'Consumed');
+  const coilNetValue = coilNetValueByCoil(activeCoils, data.coilCostingPurchaseOrders || data.purchaseOrders || [], { kgOf: liveCoilKg });
+  for (const lot of activeCoils) {
     const fam = coilFamilyFromLot(lot);
     if (fam !== 'aluminium' && fam !== 'aluzinc') continue;
     const row = ensure(String(lot.branchId || '').trim() || 'UNASSIGNED');
     const kg = liveCoilKg(lot);
     row.coilKgOnHand += kg;
-    const unit = Number(lot.unitCostNgnPerKg) || 0;
-    row.coilValuationNgn +=
-      unit > 0 && kg > 0 ? Math.round(kg * unit) : Math.round(Number(lot.landedCostNgn) || 0);
+    // Value at net kg × rate (one spool rule); kg on hand stays gross.
+    row.coilValuationNgn += coilNetValue.get(String(lot.coilNo || '').trim())?.valueNgn || 0;
   }
 
   const branchSkuTables = [];
@@ -894,7 +896,7 @@ export function computeInventoryAnalytics(data, opts = {}) {
   const windowDays = daysBetween(startIso, asOfISO);
 
   const families = COIL_FAMILIES.map((family) => {
-    const base = coilInventoryForFamily(data.coilLots, family);
+    const base = coilInventoryForFamily(data.coilLots, family, data.coilCostingPurchaseOrders || data.purchaseOrders);
     base.skuKgLedger = skuKgForFamily(data.products, family);
     const consumedMovement = consumptionKgInRange(data.stockMovements, family, startIso, asOfISO);
     const consumedProduction = productionKgInRange(

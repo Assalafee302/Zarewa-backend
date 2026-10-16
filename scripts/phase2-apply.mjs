@@ -83,8 +83,18 @@ const { insertLedgerRows, insertAdvanceInEvent, recordCustomerAdvanceCash, inser
 const { tryPostCustomerAdvanceGl } = await imp('server/glOps.js');
 const { planAdvanceIn } = await imp('shared/lib/customerLedgerCore.js');
 const { tryPostCustomerReceiptRefundFundUnwindGl } = await imp('server/glOps.js');
+const { applyFinanceConfirmedReceiptBookAmountTx } = await imp('server/writeOps.js');
+const { nextTreasuryTransferBatchHumanId } = await imp('server/humanId.js');
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+// --only <item id>: run one item of the plan (one short connection per item — the live host resets long ones).
+if (opt('only')) {
+  plan.items = plan.items.filter((i) => i.id === opt('only'));
+  if (!plan.items.length) {
+    console.error(`--only ${opt('only')}: not in the plan`);
+    process.exit(2);
+  }
+}
 const db = createMysqlDatabase(cfg, { reset: false, bootstrap: false });
 const actor = {
   id: null,
@@ -99,6 +109,7 @@ const ALLOWED = {
   production_jobs: { key: 'job_id', cols: ['status'] },
   sales_receipts: { key: 'id', cols: ['method', 'status'] },
   expenses: { key: 'expense_id', cols: ['category', 'expense_type'] },
+  customer_refunds: { key: 'refund_id', cols: ['amount_ngn', 'approved_amount_ngn'] },
 };
 
 const same = (current, expected, compare) => {
@@ -108,6 +119,25 @@ const same = (current, expected, compare) => {
     return Number(current) === Number(expected);
   }
   return String(current ?? '').trim() === String(expected).trim();
+};
+/** Locked accounting month → reason text (CHECK reports it as BLOCKED; APPLY refuses). */
+const lockedPeriodWhy = (dateISO, label) => {
+  try {
+    assertPeriodOpen(db, String(dateISO).slice(0, 10), label);
+    return '';
+  } catch (e) {
+    return String(e.message || e);
+  }
+};
+const blockedOrThrow = (item, why) => {
+  if (doApply) throw new Error(`${item.id}: ${why}`);
+  return { outcome: 'BLOCKED', why };
+};
+/** Ledger balance of a treasury account before a cut-off (opening + movements posted before it). */
+const accountBalanceAt = (accountId, cutISO) => {
+  const a = db.prepare(`SELECT opening_balance_ngn AS o FROM treasury_accounts WHERE id = ?`).get(accountId);
+  const s = db.prepare(`SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE treasury_account_id = ? AND posted_at_iso < ?`).get(accountId, cutISO);
+  return Math.round(Number(a?.o || 0) + Number(s?.s || 0));
 };
 const audit = (item, op, details) =>
   appendAuditLog(db, {
@@ -491,8 +521,12 @@ function runOp(item, op) {
     const gl = tryPostCustomerRefundPayoutGlTx(db, {
       refundId: op.refundId, payoutAmountNgn: op.amountNgn, payoutMovementIds: [tm.id], entryDateISO: op.payDate,
       branchId: r.branch_id, createdByUserId: null, needsRevenueReview: policy.needsRevenueReview, debitAccountCode: policy.debitAccountCode,
+      // Keyed on the correction: the original journal (same movement) was just reversed and must not swallow this one.
+      correctionId: item.id,
     });
-    if (!gl.ok && !gl.skipped && !gl.duplicate) throw new Error(`${item.id}: GL — ${gl.error}`);
+    if (!gl.ok || gl.skipped || gl.duplicate) {
+      throw new Error(`${item.id}: corrected payout journal not posted (${gl.duplicate ? `duplicate of ${gl.journalId}` : gl.error || 'skipped'})`);
+    }
     const nextRow = { ...r, paid_amount_ngn: op.amountNgn };
     const status = resolveRefundStatus(db, nextRow);
     db.prepare(
@@ -790,16 +824,269 @@ function runOp(item, op) {
     });
     return { outcome: 'applied' };
   }
+  if (op.kind === 'bankAdjustment') {
+    // One statement alignment line (BANK_RECON_ADJUSTMENT, treasury only — like the Sept recon adjustments), keyed by
+    // its schedule reference so it is never posted twice.
+    const dup = db.prepare(`SELECT id, amount_ngn FROM treasury_movements WHERE source_kind = 'BANK_RECON_LINE' AND source_id = ?`).get(op.scheduleRef);
+    if (dup) return { outcome: 'skipped', why: `already posted as ${dup.id} (₦${dup.amount_ngn})` };
+    const bal = accountBalanceAt(op.treasuryAccountId, op.balanceCutISO);
+    // CHECK does not run the earlier groups, so a planned redate into the period is not in the balance yet.
+    const pending = doApply ? 0 : Number(op.checkModePendingNgn || 0);
+    if (op.targetBalanceNgn != null) {
+      // Recomputed at run time: target statement balance − ERP balance now. Must still be the approved amount.
+      const recomputed = op.targetBalanceNgn - (bal + pending);
+      if (recomputed !== op.amountNgn) {
+        return { outcome: 'skipped', why: `recomputed ₦${recomputed} (= ₦${op.targetBalanceNgn} − ₦${bal + pending}) ≠ approved ₦${op.amountNgn} — ask the owner` };
+      }
+    } else if (bal + pending !== op.expectedBalanceBeforeNgn) {
+      return { outcome: 'skipped', why: `balance at ${op.balanceCutISO} is ₦${bal}, planned ₦${op.expectedBalanceBeforeNgn} — recompute the adjustment` };
+    }
+    // Lock checked after the recompute so a CHECK on a locked month still shows the figure.
+    const blocked = lockedPeriodWhy(op.date, 'Alignment date');
+    if (blocked) return { ...blockedOrThrow(item, blocked), balanceBeforeNgn: bal + pending, amountNgn: op.amountNgn };
+    if (!doApply) return { outcome: 'would apply', balanceBeforeNgn: bal, balanceAfterNgn: bal + op.amountNgn };
+    const mv = insertTreasuryMovementTx(db, {
+      type: 'BANK_RECON_ADJUSTMENT',
+      treasuryAccountId: op.treasuryAccountId,
+      amountNgn: op.amountNgn,
+      postedAtISO: `${op.date}T12:00:00.000Z`,
+      reference: op.scheduleRef,
+      counterpartyKind: 'BANK_RECON',
+      counterpartyId: op.scheduleRef,
+      counterpartyName: 'Bank reconciliation',
+      sourceKind: 'BANK_RECON_LINE',
+      sourceId: op.scheduleRef,
+      note: op.label,
+      createdBy: approver,
+      branchId: op.branchId,
+      allowNegativeBalance: true,
+    });
+    audit(item, { ...op, table: 'treasury_movements', key: mv.id }, { table: 'treasury_movements', key: mv.id, amountNgn: op.amountNgn, date: op.date, balanceBeforeNgn: bal });
+    return { outcome: 'applied', created: mv.id };
+  }
+  if (op.kind === 'internalTransfer') {
+    // Sweep between two accounts of the branch: both sides, the way the ERP's transferTreasuryFunds posts it
+    // (INTERNAL_TRANSFER_OUT / _IN pair, one batch id, treasury.transfer audit). Never twice: same accounts, day, amount.
+    const from = db.prepare(`SELECT id, name, branch_id FROM treasury_accounts WHERE id = ?`).get(op.fromId);
+    const to = db.prepare(`SELECT id, name, branch_id FROM treasury_accounts WHERE id = ?`).get(op.toId);
+    if (!from || !to || from.branch_id !== op.branchId || to.branch_id !== op.branchId) return { outcome: 'skipped', why: 'accounts not both on the branch' };
+    const dup = db
+      .prepare(
+        `SELECT id FROM treasury_movements WHERE type = 'INTERNAL_TRANSFER_OUT' AND treasury_account_id = ? AND counterparty_id = ?
+           AND amount_ngn = ? AND posted_at_iso LIKE ?`
+      )
+      .get(op.fromId, String(op.toId), -op.amountNgn, `${op.date}%`);
+    if (dup) return { outcome: 'skipped', why: `already posted as ${dup.id}` };
+    const blocked = lockedPeriodWhy(op.date, 'Transfer date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    if (!doApply) return { outcome: 'would apply', from: from.name, to: to.name };
+    const batchId = nextTreasuryTransferBatchHumanId(db);
+    const leg = (type, accountId, amountNgn, other) =>
+      insertTreasuryMovementTx(db, {
+        type,
+        treasuryAccountId: accountId,
+        amountNgn,
+        postedAtISO: `${op.date}T${op.time || '12:00'}:00.000Z`,
+        reference: op.reference,
+        counterpartyKind: 'INTERNAL',
+        counterpartyId: String(other),
+        sourceKind: 'TREASURY_TRANSFER',
+        sourceId: batchId,
+        note: op.reference,
+        createdBy: approver,
+        batchId,
+        branchId: op.branchId,
+        allowNegativeBalance: true,
+      });
+    const out = leg('INTERNAL_TRANSFER_OUT', op.fromId, -op.amountNgn, op.toId);
+    const inn = leg('INTERNAL_TRANSFER_IN', op.toId, op.amountNgn, op.fromId);
+    appendAuditLog(db, {
+      actor,
+      action: 'treasury.transfer',
+      entityKind: 'treasury_transfer',
+      entityId: batchId,
+      note: op.reference,
+      details: { fromId: op.fromId, toId: op.toId, amountNgn: op.amountNgn, branchId: op.branchId },
+    });
+    audit(item, { ...op, table: 'treasury_movements', key: batchId }, { table: 'treasury_movements', key: batchId, out: out.id, in: inn.id, amountNgn: op.amountNgn, date: op.date });
+    return { outcome: 'applied', batchId, movements: [out.id, inn.id] };
+  }
+  if (op.kind === 'receiptConfirmedAmount') {
+    // Receipt booked below the bank amount: the ERP's finance-confirm path (receipt / overpay split, sales receipt,
+    // treasury line, quotation paid, receipt.finance_amount_sync audit). Only when the current amount is the planned before.
+    const rec = db.prepare(`SELECT id, amount_ngn, date_iso, quotation_ref FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    if (!rec) return { outcome: 'skipped', why: 'receipt not found' };
+    const tm = db.prepare(`SELECT id, amount_ngn, treasury_account_id FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm || Number(tm.treasury_account_id) !== op.treasuryAccountId) return { outcome: 'skipped', why: `treasury line ${op.movementId} not on account ${op.treasuryAccountId}` };
+    if (Number(rec.amount_ngn) === op.amountNgn && Number(tm.amount_ngn) === op.amountNgn) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (Number(rec.amount_ngn) !== op.expectedNgn || Number(tm.amount_ngn) !== op.expectedNgn) {
+      return { outcome: 'skipped', why: `receipt ₦${rec.amount_ngn} / line ₦${tm.amount_ngn} ≠ planned before ₦${op.expectedNgn}` };
+    }
+    const blocked = lockedPeriodWhy(rec.date_iso, 'Receipt date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    if (!doApply) return { outcome: 'would apply', quotation: rec.quotation_ref };
+    const r = applyFinanceConfirmedReceiptBookAmountTx(db, op.receiptId, op.amountNgn, actor, { allowNegativeBalance: true });
+    if (!r?.ok) throw new Error(`${item.id}: ${r?.error}`);
+    const after = db.prepare(`SELECT amount_ngn FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (Number(after?.amount_ngn) !== op.amountNgn) throw new Error(`${item.id}: treasury line is ₦${after?.amount_ngn} after confirm, planned ₦${op.amountNgn}`);
+    audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, before: op.expectedNgn, after: op.amountNgn, movementId: op.movementId });
+    return { outcome: 'applied' };
+  }
+  if (op.kind === 'expenseGlRepair') {
+    // A postExpense cut off after its expense row and treasury line: add what is missing — the expense-payment
+    // journal (keyed on the treasury line, so never twice) and the expense.create / phase2 audit rows.
+    const exp = db.prepare(`SELECT * FROM expenses WHERE expense_id = ?`).get(op.expenseId);
+    const tm = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!exp || !tm) return { outcome: 'skipped', why: 'expense or treasury line not found' };
+    if (tm.source_id !== op.expenseId || Number(tm.amount_ngn) !== -Number(exp.amount_ngn) || Number(exp.amount_ngn) !== op.amountNgn) {
+      return { outcome: 'skipped', why: `expense ₦${exp.amount_ngn} / line ${tm.source_id} ₦${tm.amount_ngn} ≠ planned ₦${op.amountNgn}` };
+    }
+    const je = db.prepare(`SELECT id FROM gl_journal_entries WHERE source_kind = 'EXPENSE_PAYMENT_GL' AND source_id = ?`).get(op.movementId);
+    const created = db.prepare(`SELECT id FROM audit_log WHERE action = 'expense.create' AND entity_id = ?`).get(op.expenseId);
+    if (je && created) return { outcome: 'skipped', why: `already complete (${je.id}, audit ${created.id})` };
+    const blocked = lockedPeriodWhy(exp.date, 'Expense date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    if (!doApply) return { outcome: 'would apply', journal: je ? `exists ${je.id}` : 'to post', audit: created ? 'exists' : 'to write' };
+    let gl = { id: je?.id };
+    if (!je) {
+      gl = tryPostExpensePaymentGlTx(db, {
+        treasuryAccountId: tm.treasury_account_id, amountNgn: op.amountNgn, entryDateISO: exp.date, sourceId: tm.id,
+        expenseCategory: exp.category, branchId: exp.branch_id, createdByUserId: null, memo: exp.expense_type,
+      });
+      if (!gl.ok || gl.skipped || gl.duplicate) throw new Error(`${item.id}: expense journal not posted (${gl.error || (gl.duplicate ? 'duplicate' : 'skipped')})`);
+    }
+    if (!created) {
+      appendAuditLog(db, { actor, action: 'expense.create', entityKind: 'expense', entityId: op.expenseId, note: exp.expense_type, details: { amountNgn: op.amountNgn, treasuryAccountId: tm.treasury_account_id } });
+    }
+    audit(item, { ...op, table: 'expenses', key: op.expenseId }, { table: 'expenses', key: op.expenseId, treasuryMovementId: tm.id, glJournal: gl.id || gl.journalId || null, repairOf: op.repairOf });
+    return { outcome: 'applied', journal: gl.id || gl.journalId };
+  }
+  if (op.kind === 'refundPayoutGlRepair') {
+    // Corrected payout whose journal was skipped as a duplicate of the reversed original: post it on the payout
+    // date, keyed on this correction id (refundPayoutGlSourceId … #<correction id>).
+    const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    const tm = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!r || !tm) return { outcome: 'skipped', why: 'refund or payout line not found' };
+    if (Number(tm.amount_ngn) !== -op.amountNgn || String(tm.posted_at_iso).slice(0, 10) !== op.payDate || Number(r.paid_amount_ngn) !== op.amountNgn) {
+      return { outcome: 'skipped', why: `payout ${tm.posted_at_iso.slice(0, 10)} ₦${tm.amount_ngn} / paid ₦${r.paid_amount_ngn} ≠ planned ${op.payDate} ₦${op.amountNgn}` };
+    }
+    const live = db
+      .prepare(`SELECT id, source_id FROM gl_journal_entries WHERE source_kind = 'CUSTOMER_REFUND_PAYOUT_GL' AND source_id LIKE ? AND id NOT IN (${op.reversedJournalIds.map(() => '?').join(',')})`)
+      .get(`${op.refundId}:paid:%`, ...op.reversedJournalIds);
+    if (live) return { outcome: 'skipped', why: `payout journal already there (${live.id} ${live.source_id})` };
+    const blocked = lockedPeriodWhy(op.payDate, 'Payout date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const policy = evaluateRefundPayoutGlPolicy(db, {
+      quotationRef: r.quotation_ref, customerId: r.customer_id, refundId: op.refundId,
+      reasonCategories: (() => { try { return JSON.parse(r.reason_category); } catch { return [r.reason_category]; } })(),
+      calculationLines: (() => { try { return JSON.parse(r.calculation_lines_json); } catch { return []; } })(),
+    });
+    if (!doApply) return { outcome: 'would apply', debit: policy.debitAccountCode || '2500', revenueReview: Boolean(policy.needsRevenueReview) };
+    const gl = tryPostCustomerRefundPayoutGlTx(db, {
+      refundId: op.refundId, payoutAmountNgn: op.amountNgn, payoutMovementIds: [tm.id], entryDateISO: op.payDate,
+      branchId: r.branch_id, createdByUserId: null, needsRevenueReview: policy.needsRevenueReview, debitAccountCode: policy.debitAccountCode,
+      correctionId: op.correctionId,
+    });
+    if (!gl.ok || gl.skipped || gl.duplicate) throw new Error(`${item.id}: payout journal not posted (${gl.error || (gl.duplicate ? `duplicate of ${gl.journalId}` : 'skipped')})`);
+    audit(item, { ...op, table: 'gl_journal_entries', key: gl.id || gl.journalId }, { table: 'gl_journal_entries', key: gl.id || gl.journalId, refundId: op.refundId, amountNgn: op.amountNgn, payDate: op.payDate, repairOf: op.repairOf });
+    return { outcome: 'applied', journal: gl.id || gl.journalId };
+  }
   throw new Error(`${item.id}: unknown operation ${op.kind}`);
 }
 
 // DDL (CREATE TABLE IF NOT EXISTS) outside the transactions: MySQL commits implicitly on DDL.
-ensureInvestigationSchema(db);
-ensureAccountingPhase2Schema(db);
+// CHECK runs no DDL: it must stay read-only on a live schema.
+if (doApply) {
+  ensureInvestigationSchema(db);
+  ensureAccountingPhase2Schema(db);
+}
 
 const results = [];
 let failed = null;
-for (const group of ['A', 'D', 'C', 'B']) {
+
+/**
+ * --per-item: one item at a time, in plan order (the MySQL wrapper commits nested ERP transactions, so a group
+ * transaction is not all-or-nothing). Before / after each item: every planned account's ledger total (opening +
+ * movements) and stored balance; the change must equal the item's expectDeltaNgn (0 when the check finds it already
+ * done) and stored must equal ledger. Each step is appended to --progress (JSON lines). First error or mismatch stops.
+ */
+const perItem = has('per-item');
+const progressPath = opt('progress');
+const progress = (row) => {
+  if (progressPath) fs.appendFileSync(progressPath, `${JSON.stringify({ at: new Date().toISOString(), ...row })}\n`);
+};
+const balancesOf = (ids) =>
+  Object.fromEntries(
+    ids.map((id) => {
+      const a = db.prepare(`SELECT balance, opening_balance_ngn AS o FROM treasury_accounts WHERE id = ?`).get(id);
+      const s = db.prepare(`SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE treasury_account_id = ?`).get(id);
+      return [id, { ledger: Math.round(Number(a?.o || 0) + Number(s?.s || 0)), stored: Math.round(Number(a?.balance || 0)) }];
+    })
+  );
+/** id → { account, amount } for every movement on the watched accounts. */
+const rowsOf = (ids) =>
+  new Map(
+    db
+      .prepare(`SELECT id, treasury_account_id AS a, amount_ngn AS n, type FROM treasury_movements WHERE treasury_account_id IN (${ids.map(() => '?').join(',')})`)
+      .all(...ids)
+      .map((r) => [r.id, { a: Number(r.a), n: Math.round(Number(r.n)), type: r.type }])
+  );
+/**
+ * Change per account caused by the item: rows that existed before (amount / account changes) plus new rows of the
+ * item's own movement types. Other new rows (cashiers working meanwhile) are returned as concurrent, not counted.
+ */
+const itemDelta = (ids, beforeRows, afterRows, types) => {
+  const delta = Object.fromEntries(ids.map((id) => [id, 0]));
+  const concurrent = [];
+  for (const [id, r] of beforeRows) if (r.a in delta) delta[r.a] -= r.n;
+  for (const [id, r] of afterRows) {
+    if (!beforeRows.has(id) && !types.includes(r.type)) {
+      concurrent.push(`${id} ${r.type} acct ${r.a} ₦${r.n}`);
+      continue;
+    }
+    if (r.a in delta) delta[r.a] += r.n;
+  }
+  // A row moved off a watched account is gone from afterRows: its before amount stays subtracted (correct).
+  return { delta, concurrent };
+};
+if (perItem) {
+  const watch = [...new Set(plan.items.flatMap((i) => Object.keys(i.expectDeltaNgn || {}).map(Number)))];
+  progress({ event: 'start', mode: doApply ? 'apply' : 'check', plan: path.basename(planPath), balances: balancesOf(watch) });
+  for (const item of plan.items) {
+    const before = balancesOf(watch);
+    const beforeRows = rowsOf(watch);
+    const itemResults = [];
+    try {
+      for (const op of item.ops) itemResults.push({ id: item.id, record: item.record, field: item.field, op: op.kind, ...runOp(item, op) });
+    } catch (e) {
+      failed = { item: item.id, error: String(e.message || e) };
+      results.push(...itemResults, { id: item.id, outcome: 'FAILED', why: failed.error });
+      progress({ event: 'failed', item: item.id, error: failed.error, before, after: balancesOf(watch) });
+      break;
+    }
+    results.push(...itemResults);
+    const after = balancesOf(watch);
+    const { delta, concurrent } = itemDelta(watch, beforeRows, rowsOf(watch), item.expectTypes || []);
+    const posted = itemResults.some((r) => r.outcome === 'applied');
+    const mismatch = [];
+    for (const id of watch) {
+      const want = doApply && posted ? Number(item.expectDeltaNgn?.[id] || 0) : 0;
+      if (delta[id] !== want) mismatch.push(`account ${id}: item moved ₦${delta[id]}, expected ₦${want}`);
+      // Stored balance must move with the ledger (Taj has a known pre-existing stored ≠ ledger gap: keep it unchanged).
+      const gapBefore = before[id].stored - before[id].ledger;
+      const gapAfter = after[id].stored - after[id].ledger;
+      if (gapAfter !== gapBefore) mismatch.push(`account ${id}: stored − ledger was ₦${gapBefore}, now ₦${gapAfter}`);
+    }
+    progress({ event: 'item', item: item.id, outcomes: itemResults.map((r) => `${r.op}:${r.outcome}${r.why ? ` (${r.why})` : ''}`), expectDeltaNgn: item.expectDeltaNgn, itemDelta: delta, concurrent, before, after, mismatch });
+    if (mismatch.length) {
+      failed = { item: item.id, error: mismatch.join('; ') };
+      results.push({ id: item.id, outcome: 'VERIFY FAILED', why: failed.error });
+      break;
+    }
+  }
+  progress({ event: failed ? 'stopped' : 'done', failed });
+}
+for (const group of perItem ? [] : ['A', 'D', 'C', 'B', 'E']) {
   const items = plan.items.filter((i) => i.group === group);
   if (!items.length) continue;
   const groupResults = [];

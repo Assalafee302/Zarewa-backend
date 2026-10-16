@@ -799,8 +799,26 @@ export function tryPostCustomerAdvanceReversalGl(db, payload) {
 }
 
 /**
+ * Refund payout journal key: `refundId:paid:<movement ids>`, plus `#<correction id>` when a data correction
+ * re-posts a payout whose original journal was reversed (same movement, so without the suffix the re-post would
+ * collide with the reversed journal and be skipped as a duplicate).
+ * @param {string} refundId
+ * @param {string[]} movementIds sorted treasury movement ids
+ * @param {string} [correctionId]
+ */
+export function refundPayoutGlSourceId(refundId, movementIds, correctionId = '') {
+  const corr = String(correctionId || '').trim();
+  return `${refundId}:paid:${movementIds.join('-')}${corr ? `#${corr}` : ''}`;
+}
+
+/** Refund payout journal key without its `#<correction id>` suffix. */
+export function refundPayoutGlSourceBase(sourceId) {
+  return String(sourceId || '').split('#')[0];
+}
+
+/**
  * Cash refund to customer: reduce customer advances (2500) and cash (1000).
- * Idempotent per payout event via source_id = refundId:paid:<treasury movement id(s)>.
+ * Idempotent per payout event via source_id = refundId:paid:<treasury movement id(s)> (see refundPayoutGlSourceId).
  * Movement ids are never reused (unlike cumulative paid amount, which repeats after a
  * pay -> reverse -> pay-again cycle and would otherwise collide with the first payout's
  * journal and silently skip posting the second one).
@@ -829,7 +847,7 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
       entryDateISO: date,
       memo,
       sourceKind: 'CUSTOMER_REFUND_PAYOUT_GL',
-      sourceId: `${refundId}:paid:${movementIds.join('-')}`,
+      sourceId: refundPayoutGlSourceId(refundId, movementIds, payload.correctionId),
       branchId: payload.branchId ?? null,
       createdByUserId: payload.createdByUserId ?? null,
       lines: [

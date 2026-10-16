@@ -132,7 +132,8 @@ export function adjustTreasuryBalanceTx(db, treasuryAccountId, deltaNgn, opts = 
     }
   }
   const nextBalance = storedBefore + delta;
-  if (nextBalance < 0 && !opts.allowNegativeBalance) {
+  // Money in never makes a balance insufficient: only refuse outflows that end below zero.
+  if (delta < 0 && nextBalance < 0 && !opts.allowNegativeBalance) {
     throw new Error(`Insufficient balance in ${row.name}.`);
   }
   db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(nextBalance, treasuryAccountId);

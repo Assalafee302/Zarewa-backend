@@ -959,8 +959,10 @@ function treasuryAccountRow(db, treasuryAccountId) {
 function adjustTreasuryBalanceTx(db, treasuryAccountId, deltaNgn, opts = {}) {
   const row = treasuryAccountRow(db, treasuryAccountId);
   if (!row) throw new Error('Treasury account not found.');
-  const nextBalance = roundMoney(row.balance) + roundMoney(deltaNgn);
-  if (nextBalance < 0 && !opts.allowNegativeBalance) {
+  const delta = roundMoney(deltaNgn);
+  const nextBalance = roundMoney(row.balance) + delta;
+  // Money in never makes a balance insufficient: only refuse outflows that end below zero.
+  if (delta < 0 && nextBalance < 0 && !opts.allowNegativeBalance) {
     throw new Error(`Insufficient balance in ${row.name}.`);
   }
   db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(nextBalance, treasuryAccountId);

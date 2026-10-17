@@ -82,6 +82,7 @@ const CATEGORY_TO_LANE = Object.freeze({
   Welfare: 'admin',
   'Zakat & Sallah': 'admin',
   'Marketing & advertising': 'admin',
+  'Sales commission': 'admin',
   HQ: 'special',
   'Bank charges': 'finance_compliance',
   Tax: 'finance_compliance',

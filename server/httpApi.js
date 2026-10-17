@@ -36,6 +36,7 @@ import {
 import { buildConversionSummaryReport } from './conversionSummaryReport.js';
 import { buildPurchaseRegisterReport } from './procurement/purchaseRegisterSourceOps.js';
 import { buildBankReconStatementReport } from './finance/bankReconStatementSourceOps.js';
+import { buildTreasuryCashBookReport } from './finance/treasuryCashBookSourceOps.js';
 import { listStatementBalances, upsertStatementBalance } from './finance/bankStatementBalanceOps.js';
 import {
   arAsAtReportRows,
@@ -5282,6 +5283,38 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not build bank reconciliation statement.' });
+    }
+  });
+
+  // Treasury account statement — cash-book layout (one account, date range; SELECT only).
+  app.get('/api/reports/treasury-cash-book', requireManagementReportsView, async (req, res) => {
+    try {
+      const accountId = Number(req.query.accountId);
+      if (!accountId) {
+        // No account chosen: list the branch's treasury accounts to choose from.
+        const scope = resolveBootstrapBranchScope(req);
+        const accounts = db
+          .prepare(`SELECT id, name, bank_name, type FROM treasury_accounts ${scope && scope !== 'ALL' ? 'WHERE branch_id = ?' : ''} ORDER BY id`)
+          .all(...(scope && scope !== 'ALL' ? [scope] : []));
+        return res.json({ ok: true, accounts: accounts.map((a) => ({ id: a.id, name: a.name, bankName: a.bank_name || '', type: a.type })) });
+      }
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const endAtISO = String(req.query.endAt || '').trim();
+      if (!accountId || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+        return res.status(400).json({ ok: false, error: 'accountId and a valid startDate / endDate are required.' });
+      }
+      if (endAtISO && !Number.isFinite(Date.parse(endAtISO))) {
+        return res.status(400).json({ ok: false, error: 'endAt must be an ISO date-time.' });
+      }
+      // Confirmed movements by default (the balance of record); ?mode=all prints receipts awaiting confirmation too.
+      const mode = String(req.query.mode || '').trim().toLowerCase() === 'all' ? 'all' : 'confirmed';
+      const r = await buildTreasuryCashBookReport(db, { accountId, startDate, endDate, endAtISO, mode, branchScope: resolveBootstrapBranchScope(req) });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ok: true, startDate, endDate, book: r.book });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not build the treasury account statement.' });
     }
   });
 

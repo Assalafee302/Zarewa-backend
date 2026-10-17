@@ -88,7 +88,8 @@ const { tryPostExpensePaymentReversalGlTx } = await imp('server/accountingPostin
 const { buildRefundSettlementSummary, correctRefundPaidAmountNgn, resolveRefundStatus: resolveRefundStatusNow } = await imp('server/sales/refundPayoutStatus.js');
 const { refundHeldNetCashDueNgn } = await imp('server/finance/partnerWalletCredit.js');
 const { refundTillPayableNgn } = await imp('server/refundHandlers.js');
-const { payAccountsPayable, postPurchaseOrderTransport, syncPurchaseOrderTransportPaymentState, updateBankReconciliationLine } = await imp('server/writeOps.js');
+const { payAccountsPayable, postPurchaseOrderTransport, syncPurchaseOrderTransportPaymentState, updateBankReconciliationLine, patchSalesReceiptFinanceSettlement } = await imp('server/writeOps.js');
+const { lockAccountingPeriod, unlockAccountingPeriod } = await imp('server/controlOps.js');
 const { insertRefundRequest, previewRefundRequest } = await imp('server/controlOps.js');
 const { poSupplierPaymentCapBlock } = await imp('server/procurement/poSupplierAdvanceGuard.js');
 const { closeRefundUnpaidRemainder } = await imp('server/sales/payoutRoundingCloseOps.js');
@@ -1119,11 +1120,15 @@ function runOp(item, op) {
     const want = Object.entries(op.expectedMovements);
     const tmOk = tms.length === want.length && want.every(([id, amt]) => tms.some((t) => t.id === id && t.type === 'RECEIPT_IN' && Number(t.amount_ngn) === amt && Number(t.treasury_account_id) === op.accountId));
     if (!tmOk) return { outcome: 'skipped', why: `treasury lines not as planned: ${tms.map((t) => `${t.id} ${t.type} ₦${t.amount_ngn} acct ${t.treasury_account_id}`).join('; ')}` };
-    const twin = db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(op.twinReceiptId);
-    if (!twin || Number(twin.amount_ngn) !== op.expectedNgn || twin.quotation_ref !== le.quotation_ref || twin.customer_id !== le.customer_id) {
+    if (op.requireNoBankLink) {
+      const linked = tms.find((t) => db.prepare(`SELECT id FROM bank_reconciliation_lines WHERE system_match LIKE ?`).get(`%${t.id}%`));
+      if (linked) return { outcome: 'skipped', why: `${linked.id} is on a bank-recon row — the money may be on the bank` };
+    }
+    const twin = op.twinReceiptId ? db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(op.twinReceiptId) : null;
+    if (op.twinReceiptId && (!twin || Number(twin.amount_ngn) !== op.expectedNgn || twin.quotation_ref !== le.quotation_ref || twin.customer_id !== le.customer_id)) {
       return { outcome: 'skipped', why: `twin ${op.twinReceiptId} not the same receipt (amount/quotation/customer)` };
     }
-    const twinRev = db.prepare(`SELECT id FROM ledger_entries WHERE type = 'RECEIPT_REVERSAL' AND (bank_reference LIKE ? OR note LIKE ?)`).get(`%${op.twinReceiptId}%`, `%${op.twinReceiptId}%`);
+    const twinRev = op.twinReceiptId && db.prepare(`SELECT id FROM ledger_entries WHERE type = 'RECEIPT_REVERSAL' AND (bank_reference LIKE ? OR note LIKE ?)`).get(`%${op.twinReceiptId}%`, `%${op.twinReceiptId}%`);
     if (twinRev) return { outcome: 'skipped', why: `twin ${op.twinReceiptId} is itself reversed (${twinRev.id})` };
     const q = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(le.quotation_ref);
     const paidBefore = Number(q?.paid_ngn ?? 0);
@@ -1256,6 +1261,86 @@ function runOp(item, op) {
     if (!b?.ok) throw new Error(`${item.id}: ${op.toId} — ${b?.error}`);
     audit(item, { ...op, table: 'bank_reconciliation_lines', key: `${op.fromId}→${op.toId}` }, { table: 'bank_reconciliation_lines', ...view });
     return { outcome: 'applied', ...view };
+  }
+  if (op.kind === 'reconMatchToExpense') {
+    // Review bank row(s) (charges with no BC line yet) → Matched to the BC line posted earlier in this plan, found by its
+    // expense reference; through the ERP's updateBankReconciliationLine.
+    const tm = db
+      .prepare(`SELECT m.id FROM treasury_movements m JOIN expenses x ON x.expense_id = m.source_id WHERE x.reference = ? AND m.treasury_account_id = ?`)
+      .get(op.expenseReference, op.treasuryAccountId);
+    const rows = op.bankIds.map((b) => db.prepare(`SELECT * FROM bank_reconciliation_lines WHERE system_match LIKE ?`).get(`%· ${b}%`));
+    if (rows.some((r) => !r)) return { outcome: 'skipped', why: 'bank row not found' };
+    if (rows.every((r) => r.status === 'Matched' && tm && String(r.system_match).startsWith(tm.id))) return { outcome: 'skipped', why: 'already matched' };
+    if (rows.some((r) => r.status !== 'Review')) return { outcome: 'skipped', why: `row(s) not in Review: ${rows.filter((r) => r.status !== 'Review').map((r) => r.id).join(', ')}` };
+    if (!tm) {
+      if (!doApply) return { outcome: 'would apply', why: `after ${op.afterItem} posts the BC line (${op.expenseReference})`, rows: rows.map((r) => r.id) };
+      return { outcome: 'skipped', why: `BC line ${op.expenseReference} not found` };
+    }
+    if (!doApply) return { outcome: 'would apply', rows: rows.map((r) => r.id), movementId: tm.id };
+    for (const r of rows) {
+      const bankId = (String(r.system_match).match(/MP-[^ ·]+/) || [''])[0];
+      const res = updateBankReconciliationLine(db, r.id, { systemMatch: [tm.id, bankId, 'daily bank charges (BC)'].join(' · '), status: 'Matched' }, ownerActor);
+      if (!res?.ok) throw new Error(`${item.id}: ${r.id} — ${res?.error}`);
+    }
+    audit(item, { ...op, table: 'bank_reconciliation_lines', key: rows.map((r) => r.id).join(',') }, { table: 'bank_reconciliation_lines', rows: rows.map((r) => r.id), movementId: tm.id });
+    return { outcome: 'applied', rows: rows.map((r) => r.id), movementId: tm.id };
+  }
+  if (op.kind === 'receiptBankConfirm') {
+    // Finance confirmation of a receipt whose money is on the bank (every treasury line of it is linked to a Matched
+    // bank-recon row), through the ERP's patchSalesReceiptFinanceSettlement (bank received = the linked lines' total).
+    const sr = db.prepare(`SELECT id, status, amount_ngn, bank_confirmed_at_iso, date_iso, quotation_ref FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    if (!sr) return { outcome: 'skipped', why: 'receipt not found' };
+    if (sr.bank_confirmed_at_iso) return { outcome: 'skipped', why: `already confirmed ${sr.bank_confirmed_at_iso}` };
+    if (String(sr.status) !== op.expectedStatus) return { outcome: 'skipped', why: `status "${sr.status}", not "${op.expectedStatus}"` };
+    const tms = db.prepare(`SELECT id, type, amount_ngn, treasury_account_id FROM treasury_movements WHERE source_id = ?`).all(op.receiptId);
+    if (tms.some((t) => t.type !== 'RECEIPT_IN')) return { outcome: 'skipped', why: 'receipt has reversal lines' };
+    const links = tms.map((t) => ({ t, r: db.prepare(`SELECT id, status, amount_ngn FROM bank_reconciliation_lines WHERE system_match LIKE ? AND status = 'Matched'`).get(`${t.id} ·%`) }));
+    const unlinked = links.filter((l) => !l.r).map((l) => l.t.id);
+    if (unlinked.length) return { outcome: 'skipped', why: `not on the bank (no Matched recon row): ${unlinked.join(', ')}` };
+    const total = tms.reduce((s, t) => s + Number(t.amount_ngn), 0);
+    if (total !== op.amountNgn || Number(sr.amount_ngn) !== op.amountNgn) return { outcome: 'skipped', why: `receipt ₦${sr.amount_ngn} / lines ₦${total} ≠ planned ₦${op.amountNgn}` };
+    const blocked = lockedPeriodWhy(sr.date_iso, 'Receipt date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const view = { receipt: op.receiptId, quotation: sr.quotation_ref, amountNgn: total, bankRows: links.map((l) => l.r.id) };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const res = patchSalesReceiptFinanceSettlement(db, op.receiptId, { bankReceivedAmountNgn: total, clearForDelivery: true }, ownerActor);
+    if (!res?.ok) throw new Error(`${item.id}: ${res?.error}`);
+    const after = db.prepare(`SELECT status, bank_confirmed_at_iso, bank_received_amount_ngn FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    const tmAfter = db.prepare(`SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE source_id = ?`).get(op.receiptId);
+    if (Number(tmAfter.s) !== total) throw new Error(`${item.id}: treasury lines ₦${tmAfter.s} after confirm, were ₦${total}`);
+    audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, ...view, after });
+    return { outcome: 'applied', ...view, after };
+  }
+  if (op.kind === 'septReceiptConfirm') {
+    // A September receipt on hold whose money is on the bank (owner-approved): unlock September (audited), release
+    // the hold, confirm through the ERP's finance settlement, and relock September with its original reason — the
+    // relock runs even when a step fails.
+    const lock = db.prepare(`SELECT * FROM accounting_period_locks WHERE period_key = ?`).get(op.periodKey);
+    const sr = db.prepare(`SELECT id, status, amount_ngn, bank_confirmed_at_iso, date_iso FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    if (!sr) return { outcome: 'skipped', why: 'receipt not found' };
+    if (sr.bank_confirmed_at_iso) return { outcome: 'skipped', why: `already confirmed ${sr.bank_confirmed_at_iso}` };
+    if (String(sr.status) !== op.holdStatus) return { outcome: 'skipped', why: `status "${sr.status}", not the planned hold` };
+    const tms = db.prepare(`SELECT id, type, amount_ngn, treasury_account_id FROM treasury_movements WHERE source_id = ?`).all(op.receiptId);
+    if (tms.length !== 1 || tms[0].type !== 'RECEIPT_IN' || Number(tms[0].amount_ngn) !== op.amountNgn) return { outcome: 'skipped', why: 'treasury line not as planned' };
+    if (!lock) return { outcome: 'skipped', why: `${op.periodKey} is not locked — nothing to unlock (stop: check with the owner)` };
+    const view = { receipt: op.receiptId, date: sr.date_iso, amountNgn: op.amountNgn, lock: { reason: lock.reason, lockedAt: lock.locked_at_iso, by: lock.locked_by_name } };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const un = unlockAccountingPeriod(db, op.periodKey, ownerActor, `${item.id}: ${op.unlockReason}`);
+    if (!un?.ok) throw new Error(`${item.id}: unlock — ${un?.error}`);
+    let res;
+    let after;
+    try {
+      db.prepare(`UPDATE sales_receipts SET status = 'Pending clearance' WHERE id = ?`).run(op.receiptId);
+      appendAuditLog(db, { actor: ownerActor, action: 'receipt.bank_check_release', entityKind: 'sales_receipt', entityId: op.receiptId, note: op.note, details: { previousStatus: sr.status, status: 'Pending clearance' } });
+      res = patchSalesReceiptFinanceSettlement(db, op.receiptId, { bankReceivedAmountNgn: op.amountNgn, clearForDelivery: true }, ownerActor);
+      if (!res?.ok) throw new Error(`${item.id}: confirm — ${res?.error}`);
+      after = db.prepare(`SELECT status, bank_confirmed_at_iso, bank_received_amount_ngn FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    } finally {
+      const re = lockAccountingPeriod(db, { periodKey: op.periodKey, reason: lock.reason || op.relockReason }, ownerActor);
+      if (!re?.ok) throw new Error(`${item.id}: RELOCK FAILED — ${re?.error}. Lock ${op.periodKey} in the app now.`);
+    }
+    audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, ...view, after, relocked: true });
+    return { outcome: 'applied', ...view, after, relocked: true };
   }
   if (op.kind === 'refundRoundingClose') {
     // ERP rounding close (no money out) — only within the ERP's own limit.

@@ -646,7 +646,7 @@ import {
   refundPayoutAccountBlock,
 } from './finance/payoutAccountGate.js';
 import { addMissingPayoutAccountSafe } from './finance/payoutAccountOps.js';
-import { assertBmOmOverride } from './finance/managerOverride.js';
+import { assertBmOmOverride, overQuoteApprovalFromBody } from './finance/managerOverride.js';
 import { receiptDuplicatesWithin24h } from './finance/receiptDuplicateOps.js';
 import { receiptDuplicateRefusal } from '../shared/lib/receiptDuplicateGuard.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
@@ -7261,6 +7261,7 @@ export function registerHttpApi(app, db) {
         actor: req.user,
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
+        ...overQuoteApprovalFromBody(req.user, body, 'a haulage payment above the quoted fee'),
       });
       if (r.ok) {
         syncFinancePoTransportWorkItem(db, poId, req.user);
@@ -7327,8 +7328,9 @@ export function registerHttpApi(app, db) {
       actor: req.user,
       workspaceBranchId: req.workspaceBranchId,
       workspaceViewAll: Boolean(req.workspaceViewAll),
+      ...overQuoteApprovalFromBody(req.user, req.body || {}, 'a supplier payment above the purchase order value'),
     });
-    if (!r.ok) return res.status(400).json(r);
+    if (!r.ok) return res.status(r.code === 'MANAGER_OVERRIDE_REQUIRED' ? 403 : 400).json(r);
     res.status(200).json(withPurchaseOrderWriteDelta(db, req.params.poId, r));
   });
 

@@ -34,3 +34,25 @@ export function assertBmOmOverride({ actor, reason, subject }) {
 }
 
 export { userIsBranchManagerOrOm };
+
+/**
+ * A5: read an over-quote approval from a pay request body (`overQuoteReason`; the supplier
+ * route also accepts the old `mdNote`). Returns the approval when the actor may give it,
+ * otherwise the reason it was not accepted — used only if the payment really is above quote.
+ * @returns {{ overQuoteApproval: null | { reason: string, approverName: string, approverId: string, roleKey: string }, overQuoteApprovalError: null | object }}
+ */
+export function overQuoteApprovalFromBody(actor, body = {}, subject) {
+  const reason = String(body?.overQuoteReason ?? body?.mdNote ?? '').trim();
+  if (!reason) return { overQuoteApproval: null, overQuoteApprovalError: null };
+  const ov = assertBmOmOverride({ actor, reason, subject });
+  if (!ov.ok) return { overQuoteApproval: null, overQuoteApprovalError: ov };
+  return {
+    overQuoteApproval: {
+      reason: ov.reason,
+      approverName: ov.approver.name,
+      approverId: ov.approver.id,
+      roleKey: ov.approver.roleKey,
+    },
+    overQuoteApprovalError: null,
+  };
+}

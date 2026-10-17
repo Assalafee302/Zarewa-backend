@@ -24,6 +24,7 @@ const CATEGORY_TO_GL = Object.freeze({
   'Bank charges': '6170',
   Interest: '6300',
   'Marketing & advertising': '6400',
+  'Sales commission': '6400',
   HQ: '6120',
   Welfare: '6120',
   Security: '6120',

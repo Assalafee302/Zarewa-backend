@@ -83,7 +83,8 @@ const { insertLedgerRows, insertAdvanceInEvent, recordCustomerAdvanceCash, inser
 const { tryPostCustomerAdvanceGl } = await imp('server/glOps.js');
 const { planAdvanceIn } = await imp('shared/lib/customerLedgerCore.js');
 const { tryPostCustomerReceiptRefundFundUnwindGl } = await imp('server/glOps.js');
-const { applyFinanceConfirmedReceiptBookAmountTx, payRefundEntry, payPaymentRequest } = await imp('server/writeOps.js');
+const { applyFinanceConfirmedReceiptBookAmountTx, payRefundEntry, payPaymentRequest, expenseOutflowTreasuryMovementCorrectTx, reverseTreasurySourceTx, reverseReceiptEntry } = await imp('server/writeOps.js');
+const { tryPostExpensePaymentReversalGlTx } = await imp('server/accountingPostingOps.js');
 const { buildRefundSettlementSummary, correctRefundPaidAmountNgn, resolveRefundStatus: resolveRefundStatusNow } = await imp('server/sales/refundPayoutStatus.js');
 const { refundHeldNetCashDueNgn } = await imp('server/finance/partnerWalletCredit.js');
 const { refundTillPayableNgn } = await imp('server/refundHandlers.js');
@@ -360,7 +361,8 @@ function runOp(item, op) {
       type: 'EXPENSE',
       treasuryAccountId: op.treasuryAccountId,
       amountNgn: -op.amountNgn,
-      postedAtISO: `${op.date}T12:00:00.000Z`,
+      // Optional bank time (e.g. a charge at 09:44) — default noon UTC on the expense date.
+      postedAtISO: op.postedAtISO || `${op.date}T12:00:00.000Z`,
       reference: op.reference,
       counterpartyKind: 'EXPENSE',
       counterpartyId: expenseID,
@@ -990,6 +992,10 @@ function runOp(item, op) {
     const total = op.lines.reduce((s, l) => s + l.amountNgn, 0);
     const paid = Math.round(Number(p.paid_amount_ngn) || 0);
     if (paid >= total && paid === op.expectedPaidBeforeNgn + total) return { outcome: 'skipped', why: `already paid (₦${paid})` };
+    // CHECK of a payout that only becomes due after an earlier item of the same run (e.g. a line split before it).
+    if (!doApply && op.afterItem && paid !== op.expectedPaidBeforeNgn) {
+      return { outcome: 'would apply', why: `paid ₦${op.expectedPaidBeforeNgn} expected once ${op.afterItem} has posted (now ₦${paid})` };
+    }
     if (paid !== op.expectedPaidBeforeNgn) return { outcome: 'skipped', why: `paid ₦${paid} ≠ planned before ₦${op.expectedPaidBeforeNgn}` };
     if (!/approved/i.test(String(p.approval_status))) return { outcome: 'skipped', why: `status ${p.approval_status}` };
     if (Number(p.amount_requested_ngn) - paid < total) return { outcome: 'BLOCKED', why: `outstanding ₦${Number(p.amount_requested_ngn) - paid} < payout ₦${total}` };
@@ -1087,6 +1093,36 @@ function runOp(item, op) {
     audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, before: op.totalBeforeNgn, after: op.totalAfterNgn, line: `${op.movementId} ${op.lineBeforeNgn} → ${op.lineAfterNgn}` });
     return { outcome: 'applied' };
   }
+  if (op.kind === 'receiptReverse') {
+    // ERP receipt reversal (reverseReceiptEntry: RECEIPT_REVERSAL ledger row, receipt → Reversed, treasury lines
+    // reversed, GL reversal, quotation paid re-synced) — for a receipt keyed twice. The twin must stay as it is.
+    const le = db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(op.receiptId);
+    if (!le) return { outcome: 'skipped', why: 'receipt not found' };
+    const done = db.prepare(`SELECT id FROM ledger_entries WHERE type = 'RECEIPT_REVERSAL' AND (bank_reference LIKE ? OR note LIKE ?)`).get(`%${op.receiptId}%`, `%${op.receiptId}%`);
+    if (done) return { outcome: 'skipped', why: `already reversed by ${done.id}` };
+    if (Number(le.amount_ngn) !== op.expectedNgn) return { outcome: 'skipped', why: `receipt is ₦${le.amount_ngn}, not ₦${op.expectedNgn}` };
+    const sr = db.prepare(`SELECT status FROM sales_receipts WHERE id = ? OR ledger_entry_id = ?`).get(op.receiptId, op.receiptId);
+    if (String(sr?.status || '') !== op.expectedStatus) return { outcome: 'skipped', why: `receipt status "${sr?.status}", not "${op.expectedStatus}"` };
+    const tms = db.prepare(`SELECT id, type, treasury_account_id, amount_ngn FROM treasury_movements WHERE source_id = ?`).all(op.receiptId);
+    const want = Object.entries(op.expectedMovements);
+    const tmOk = tms.length === want.length && want.every(([id, amt]) => tms.some((t) => t.id === id && t.type === 'RECEIPT_IN' && Number(t.amount_ngn) === amt && Number(t.treasury_account_id) === op.accountId));
+    if (!tmOk) return { outcome: 'skipped', why: `treasury lines not as planned: ${tms.map((t) => `${t.id} ${t.type} ₦${t.amount_ngn} acct ${t.treasury_account_id}`).join('; ')}` };
+    const twin = db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(op.twinReceiptId);
+    if (!twin || Number(twin.amount_ngn) !== op.expectedNgn || twin.quotation_ref !== le.quotation_ref || twin.customer_id !== le.customer_id) {
+      return { outcome: 'skipped', why: `twin ${op.twinReceiptId} not the same receipt (amount/quotation/customer)` };
+    }
+    const twinRev = db.prepare(`SELECT id FROM ledger_entries WHERE type = 'RECEIPT_REVERSAL' AND (bank_reference LIKE ? OR note LIKE ?)`).get(`%${op.twinReceiptId}%`, `%${op.twinReceiptId}%`);
+    if (twinRev) return { outcome: 'skipped', why: `twin ${op.twinReceiptId} is itself reversed (${twinRev.id})` };
+    const q = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(le.quotation_ref);
+    const paidBefore = Number(q?.paid_ngn ?? 0);
+    if (!doApply) return { outcome: 'would apply', quotation: le.quotation_ref, paidBeforeNgn: paidBefore, paidAfterNgn: paidBefore - op.expectedNgn };
+    const res = reverseReceiptEntry(db, op.receiptId, `Phase 2 ${item.id}: ${op.note} Approved by ${approver}.`.slice(0, 500), ownerActor);
+    if (!res?.ok) throw new Error(`${item.id}: ${res?.error}`);
+    const paidAfter = Number(db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(le.quotation_ref)?.paid_ngn ?? 0);
+    if (paidAfter !== paidBefore - op.expectedNgn) throw new Error(`${item.id}: quotation ${le.quotation_ref} paid ${paidBefore} → ${paidAfter}, expected −${op.expectedNgn}`);
+    audit(item, { ...op, table: 'ledger_entries', key: op.receiptId }, { table: 'ledger_entries', reversed: op.receiptId, reversal: res.entry?.id, quotation: le.quotation_ref, paidBeforeNgn: paidBefore, paidAfterNgn: paidAfter });
+    return { outcome: 'applied', reversal: res.entry?.id, paidAfterNgn: paidAfter };
+  }
   if (op.kind === 'refundRoundingClose') {
     // ERP rounding close (no money out) — only within the ERP's own limit.
     const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
@@ -1102,6 +1138,10 @@ function runOp(item, op) {
     if (!doApply) return { outcome: 'would apply', remainderNgn: out };
     const res = closeRefundUnpaidRemainder(db, op.refundId, ownerActor, 'rounding');
     if (!res?.ok) throw new Error(`${item.id}: ${res?.error}`);
+    if (op.reasonNote) {
+      // The ERP's close note names the September investigation; add the owner's reason for this close.
+      db.prepare(`UPDATE customer_refunds SET payment_note = TRIM(CONCAT(COALESCE(payment_note, ''), ' ', ?)) WHERE refund_id = ?`).run(`(${op.reasonNote}, ₦${out}, ${approvedAtISO.slice(0, 10)})`, op.refundId);
+    }
     audit(item, { ...op, table: 'customer_refunds', key: op.refundId }, { table: 'customer_refunds', key: op.refundId, remainderClosedNgn: out, after: res.after });
     return { outcome: 'applied', remainderNgn: out };
   }
@@ -1132,6 +1172,66 @@ function runOp(item, op) {
     appendAuditLog(db, { actor: ownerActor, action: 'refund.remainder_written_off', entityKind: 'refund', entityId: op.refundId, note: sentence, details: { remainderClosedNgn: out, previousStatus: r.status, status } });
     audit(item, { ...op, table: 'customer_refunds', key: op.refundId }, { table: 'customer_refunds', key: op.refundId, before: view, status, concessionNgn: op.amountNgn });
     return { outcome: 'applied', status, ...view };
+  }
+  if (op.kind === 'payoutLineCorrect') {
+    // Payout line recorded at a different amount from the bank debit: the ERP's treasury-line correction
+    // (expenseOutflowTreasuryMovementCorrectTx) sets it to the bank amount and updates the refund / request and journal.
+    const tm = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm) return { outcome: 'skipped', why: 'treasury line not found' };
+    const cur = Math.round(Number(tm.amount_ngn));
+    // Optional bank date/time (op.postedAtISO); amount defaults to the current one when only the date moves.
+    const targetAmt = op.amountNgn ?? op.expectedNgn;
+    const curDay = String(tm.posted_at_iso).slice(0, 10);
+    const dayOk = !op.postedAtISO || String(tm.posted_at_iso) === op.postedAtISO;
+    if (cur === -targetAmt && dayOk) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (cur !== -op.expectedNgn) return { outcome: 'skipped', why: `line ₦${cur} ≠ planned before −₦${op.expectedNgn}` };
+    if (op.expectedDay && curDay !== op.expectedDay) return { outcome: 'skipped', why: `line dated ${curDay} ≠ planned before ${op.expectedDay}` };
+    const blocked = lockedPeriodWhy(tm.posted_at_iso, 'Payout date') || (op.postedAtISO ? lockedPeriodWhy(op.postedAtISO, 'Bank date') : '');
+    if (blocked) return blockedOrThrow(item, blocked);
+    let refund = null;
+    if (tm.source_kind === 'REFUND') {
+      const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(tm.source_id);
+      const s = r ? buildRefundSettlementSummary(db, r, {}) : null;
+      refund = r ? { refundId: r.refund_id, approvedNgn: Number(r.approved_amount_ngn), paidBeforeNgn: Number(r.paid_amount_ngn), paidAfterNgn: Number(r.paid_amount_ngn) - (op.expectedNgn - op.amountNgn), outstandingBeforeNgn: s?.cashOutstandingNgn, outstandingAfterNgn: (s?.cashOutstandingNgn || 0) + (op.expectedNgn - op.amountNgn) } : null;
+    }
+    const view = { line: `${tm.id} ${tm.type} ${tm.source_id}`, beforeNgn: cur, afterNgn: -targetAmt, beforeAt: tm.posted_at_iso, afterAt: op.postedAtISO || tm.posted_at_iso, ...(refund ? { refund } : {}) };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const r = expenseOutflowTreasuryMovementCorrectTx(
+      db,
+      op.movementId,
+      { amountNgn: targetAmt, ...(op.postedAtISO ? { postedAtISO: op.postedAtISO } : {}), note: op.note, workspaceBranchId: 'BR-KD', workspaceViewAll: true },
+      ownerActor
+    );
+    if (!r?.ok) throw new Error(`${item.id}: ${r?.error || 'payout line correction failed'}`);
+    const after = db.prepare(`SELECT amount_ngn, posted_at_iso FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (Math.round(Number(after.amount_ngn)) !== -targetAmt) throw new Error(`${item.id}: line is ₦${after.amount_ngn} after correction`);
+    if (op.postedAtISO && String(after.posted_at_iso).slice(0, 16) !== op.postedAtISO.slice(0, 16)) throw new Error(`${item.id}: line dated ${after.posted_at_iso} after correction`);
+    audit(item, { ...op, table: 'treasury_movements', key: op.movementId }, { table: 'treasury_movements', key: op.movementId, before: { amount: cur, at: tm.posted_at_iso }, after: { amount: -targetAmt, at: after.posted_at_iso }, note: op.note });
+    return { outcome: 'applied', ...view };
+  }
+  if (op.kind === 'expenseReverse') {
+    // Reverse a direct expense's treasury line (EXPENSE_REVERSAL_IN on the line's own date) and its payment journal;
+    // the expense record stays, marked with the reason. Replaced by other postings in the same plan.
+    const exp = db.prepare(`SELECT * FROM expenses WHERE expense_id = ?`).get(op.expenseId);
+    const tm = db.prepare(`SELECT * FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id = ? AND type = 'EXPENSE'`).get(op.expenseId);
+    if (!exp || !tm) return { outcome: 'skipped', why: 'expense or its treasury line not found' };
+    const rev = db.prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = ?`).get(tm.id);
+    if (rev) return { outcome: 'skipped', why: `already reversed by ${rev.id}` };
+    if (Number(exp.amount_ngn) !== op.expectedNgn) return { outcome: 'skipped', why: `expense ₦${exp.amount_ngn} ≠ planned ₦${op.expectedNgn}` };
+    const blocked = lockedPeriodWhy(tm.posted_at_iso, 'Reversal date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    if (!doApply) return { outcome: 'would apply', line: tm.id, amountNgn: Number(tm.amount_ngn), reversalAt: tm.posted_at_iso };
+    const created = reverseTreasurySourceTx(db, 'EXPENSE', op.expenseId, 'EXPENSE_REVERSAL_IN', op.reason, ownerActor, { postedAtISO: tm.posted_at_iso, allowNegativeBalance: true });
+    const mv = (created || [])[0];
+    if (!mv?.id) throw new Error(`${item.id}: reversal not created`);
+    const gl = tryPostExpensePaymentReversalGlTx(db, {
+      treasuryAccountId: tm.treasury_account_id, amountNgn: Number(exp.amount_ngn), entryDateISO: String(tm.posted_at_iso).slice(0, 10), sourceId: mv.id,
+      expenseCategory: exp.category, branchId: exp.branch_id, createdByUserId: null, memo: `${op.reason} (${op.expenseId})`,
+    });
+    if (!gl.ok && !gl.skipped && !gl.duplicate) throw new Error(`${item.id}: reversal journal — ${gl.error}`);
+    db.prepare(`UPDATE expenses SET expense_type = ? WHERE expense_id = ?`).run(`${exp.expense_type} — REVERSED: ${op.reason}`.slice(0, 250), op.expenseId);
+    audit(item, { ...op, table: 'expenses', key: op.expenseId }, { table: 'expenses', key: op.expenseId, reversal: mv.id, journal: gl.id || gl.journalId || null, reason: op.reason });
+    return { outcome: 'applied', reversal: mv.id };
   }
   if (op.kind === 'expenseGlRepair') {
     // A postExpense cut off after its expense row and treasury line: add what is missing — the expense-payment

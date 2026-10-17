@@ -658,6 +658,7 @@ import {
   setStaffShareBatchThresholdNgn,
 } from './finance/staffShareBatchOps.js';
 import { staffShareBatchedRefusal } from '../shared/lib/staffShareBatch.js';
+import { listStatementFreshness, recordBankStatementImport } from './finance/bankStatementImportOps.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
 import { holdReceiptAwaitingCreditCheck } from './sales/receiptBankCheckHold.js';
 import { setPoTransportPayoutHold } from './procurement/poTransportPayoutHold.js';
@@ -5256,6 +5257,20 @@ export function registerHttpApi(app, db) {
       res.status(500).json({ ok: false, error: 'Could not build purchase register report.' });
     }
   });
+
+  /** Finance Phase A (A8): "Statement loaded to dd/mm hh:mm" per bank account. */
+  app.get(
+    '/api/treasury/statement-freshness',
+    requirePermission(['finance.view', 'finance.pay', 'cashier.desk.view']),
+    (req, res) => {
+      try {
+        return res.json(listStatementFreshness(db, resolveBootstrapBranchScope(req)));
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load statement freshness.' });
+      }
+    }
+  );
 
   app.get('/api/treasury/statement-balances', requireManagementReportsView, (req, res) => {
     try {
@@ -12607,6 +12622,18 @@ export function registerHttpApi(app, db) {
       } catch (syncErr) {
         console.error(syncErr);
       }
+      // A8: which account this statement is for, and up to when it runs.
+      const statementImport = recordBankStatementImport(
+        db,
+        {
+          treasuryAccountId: req.body?.treasuryAccountId,
+          statementToISO: req.body?.statementToISO,
+          branchId,
+          lineDays: rows.map((r) => r.bankDateISO),
+          createdIds: created,
+        },
+        req.user
+      );
       res.status(200).json({
         ok: errors.length === 0,
         createdIds: created,
@@ -12616,6 +12643,7 @@ export function registerHttpApi(app, db) {
         errorCount: errors.length,
         errors,
         parseWarnings: parsed.parseErrors?.length ? parsed.parseErrors : undefined,
+        statementImport,
       });
     } catch (e) {
       console.error(e);
@@ -12666,6 +12694,18 @@ export function registerHttpApi(app, db) {
       } catch (syncErr) {
         console.error(syncErr);
       }
+      // A8: which account this statement is for, and up to when it runs.
+      const statementImport = recordBankStatementImport(
+        db,
+        {
+          treasuryAccountId: req.body?.treasuryAccountId,
+          statementToISO: req.body?.statementToISO,
+          branchId,
+          lineDays: normalized.map((r) => r.bankDateISO),
+          createdIds: created,
+        },
+        req.user
+      );
       res.status(200).json({
         ok: errors.length === 0,
         createdIds: created,
@@ -12674,6 +12714,7 @@ export function registerHttpApi(app, db) {
         skippedDuplicates: skippedDuplicates.length ? skippedDuplicates : undefined,
         errorCount: errors.length,
         errors,
+        statementImport,
       });
     } catch (e) {
       console.error(e);

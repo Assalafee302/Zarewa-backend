@@ -18,8 +18,8 @@ Found during the Moniepoint Oct 2026 reconciliation. Code only: no database writ
   `server/dbIntegrityMigrateTreasuryBalance.test.js` feed text SUMs like MySQL does.
 - **Has `reconcileTreasuryBalances` ever run in production?** Not from this code: its only caller,
   `runDbIntegrityHardening`, is not called anywhere, in any commit since the first one (19 Apr 2026). Note that if it
-  ever ran it would set each balance to the sum of movements only (no opening balance). Not checked against the
-  production dump; see the test report.
+  ever ran it would set each balance to the sum of movements only (no opening balance). Not yet checked against the
+  production dump (reading the dump needs your permission on this PC).
 
 ## Fix 2 — a paid mixed refund kept its overpayment on offer as credit
 
@@ -34,7 +34,9 @@ Found during the Moniepoint Oct 2026 reconciliation. Code only: no database writ
   rejected → nothing used up. Overpayment-only refunds work as before.
 - Also reads a stored row's `calculation_lines_json` string directly, so no caller can miss the lines.
 - **Tests:** `shared/lib/refundCreditApply.mixedOverpay.test.js` (same file in both repos).
-- **After deploy:** QT-KD-26-1697 should stop offering the ₦42,766 credit. Nothing to correct in data.
+- **After deploy:** QT-KD-26-1697 should stop offering the ₦42,766 credit. The fix stops new double credit; credit
+  already applied a second time (Moniepoint session's read-only scan, `exports/overpay-double-credit-scan-readonly.json`,
+  `givenTwiceNgn`) is a data correction for you to decide.
 
 ## Gap A — no way to RAISE an agreed haulage fee on a received PO (recorded, not built)
 

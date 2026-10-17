@@ -64,7 +64,7 @@ const ASSET_NAME = opt('asset-name') || 'Transformer (EXP-KD-26-0362 + 0397)';
 const ASSET_NOTE = opt('asset-note') || 'Acquired Sep 2026, transformer, paid in 2 parts';
 
 const { appendAuditLog } = await imp('server/controlOps.js');
-const { postBalancedJournalTx } = await imp('server/glOps.js');
+const { postBalancedJournalTx, amendBalancedJournalAmountTx } = await imp('server/glOps.js');
 const { capexExpenseAssetMeta } = await imp('shared/expenseCategories.js');
 const { insertTreasuryMovementTx } = await imp('server/writeOps.js');
 const { nextExpenseHumanId } = await imp('server/humanId.js');
@@ -587,7 +587,11 @@ function runOp(item, op) {
     // Money received with no quotation to apply it to → customer advance (unapplied credit, not income), the way the
     // ERP's advance desk posts one: ADVANCE_IN ledger row + advance event + treasury ADVANCE_IN + advance GL. The
     // payer becomes a customer when not on file. Then the bank-recon link that showed the excess names this advance.
-    let cust = db.prepare(`SELECT customer_id, name FROM customers WHERE LOWER(name) = LOWER(?) AND branch_id = ?`).get(op.customerName, op.branchId);
+    // op.customerId pins the customer when the name is not unique (e.g. "SURAJO").
+    let cust = op.customerId
+      ? db.prepare(`SELECT customer_id, name FROM customers WHERE customer_id = ?`).get(op.customerId)
+      : db.prepare(`SELECT customer_id, name FROM customers WHERE LOWER(name) = LOWER(?) AND branch_id = ?`).get(op.customerName, op.branchId);
+    if (op.customerId && !cust) return { outcome: 'skipped', why: `customer ${op.customerId} not found` };
     const dup = cust
       ? db.prepare(`SELECT id FROM ledger_entries WHERE type = 'ADVANCE_IN' AND customer_id = ? AND amount_ngn = ? AND at_iso LIKE ?`).get(cust.customer_id, op.amountNgn, `${op.date}%`)
       : null;
@@ -991,11 +995,15 @@ function runOp(item, op) {
     if (!p) return { outcome: 'skipped', why: 'payment request not found' };
     const total = op.lines.reduce((s, l) => s + l.amountNgn, 0);
     const paid = Math.round(Number(p.paid_amount_ngn) || 0);
-    if (paid >= total && paid === op.expectedPaidBeforeNgn + total) return { outcome: 'skipped', why: `already paid (₦${paid})` };
-    // CHECK of a payout that only becomes due after an earlier item of the same run (e.g. a line split before it).
-    if (!doApply && op.afterItem && paid !== op.expectedPaidBeforeNgn) {
+    // CHECK of a payout that only becomes due after an earlier item of the same run (e.g. a line split before it): that
+    // item has not posted in a CHECK, so the request still shows the old paid amount.
+    const posted = db.prepare(`SELECT id FROM treasury_movements WHERE source_kind = 'PAYMENT_REQUEST' AND source_id = ? AND reference = ?`).get(op.requestId, op.lines[0].reference);
+    if (posted) return { outcome: 'skipped', why: `already paid (${posted.id})` };
+    const pendingEarlier = !doApply && op.afterItem && paid !== op.expectedPaidBeforeNgn;
+    if (pendingEarlier) {
       return { outcome: 'would apply', why: `paid ₦${op.expectedPaidBeforeNgn} expected once ${op.afterItem} has posted (now ₦${paid})` };
     }
+    if (paid >= total && paid === op.expectedPaidBeforeNgn + total) return { outcome: 'skipped', why: `already paid (₦${paid})` };
     if (paid !== op.expectedPaidBeforeNgn) return { outcome: 'skipped', why: `paid ₦${paid} ≠ planned before ₦${op.expectedPaidBeforeNgn}` };
     if (!/approved/i.test(String(p.approval_status))) return { outcome: 'skipped', why: `status ${p.approval_status}` };
     if (Number(p.amount_requested_ngn) - paid < total) return { outcome: 'BLOCKED', why: `outstanding ₦${Number(p.amount_requested_ngn) - paid} < payout ₦${total}` };
@@ -1123,6 +1131,24 @@ function runOp(item, op) {
     audit(item, { ...op, table: 'ledger_entries', key: op.receiptId }, { table: 'ledger_entries', reversed: op.receiptId, reversal: res.entry?.id, quotation: le.quotation_ref, paidBeforeNgn: paidBefore, paidAfterNgn: paidAfter });
     return { outcome: 'applied', reversal: res.entry?.id, paidAfterNgn: paidAfter };
   }
+  if (op.kind === 'receiptHoldRelease') {
+    // Receipt held "Suspended — no bank receipt" (holdReceiptAwaitingCreditCheck) whose money is on the bank: back to
+    // the status it had before the hold. The ERP has no release action; the treasury line was never touched.
+    const sr = db.prepare(`SELECT id, status, amount_ngn FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    if (!sr) return { outcome: 'skipped', why: 'receipt not found' };
+    if (String(sr.status) === op.after) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (String(sr.status) !== op.before) return { outcome: 'skipped', why: `status "${sr.status}" ≠ planned before` };
+    const tms = db.prepare(`SELECT id, type, treasury_account_id, amount_ngn FROM treasury_movements WHERE source_id = ?`).all(op.receiptId);
+    const live = tms.filter((t) => t.type === 'RECEIPT_IN' && !tms.some((x) => x.type === 'RECEIPT_REVERSAL_OUT'));
+    if (live.length !== 1 || live[0].id !== op.movementId || Number(live[0].amount_ngn) !== op.amountNgn || Number(live[0].treasury_account_id) !== op.accountId) {
+      return { outcome: 'skipped', why: `treasury lines not as planned: ${tms.map((t) => `${t.id} ${t.type} ₦${t.amount_ngn}`).join('; ')}` };
+    }
+    if (!doApply) return { outcome: 'would apply', before: sr.status, after: op.after };
+    db.prepare(`UPDATE sales_receipts SET status = ? WHERE id = ?`).run(op.after, op.receiptId);
+    appendAuditLog(db, { actor: ownerActor, action: 'receipt.bank_check_release', entityKind: 'sales_receipt', entityId: op.receiptId, note: op.note, details: { previousStatus: sr.status, status: op.after, movementId: op.movementId } });
+    audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, column: 'status', before: sr.status, after: op.after });
+    return { outcome: 'applied' };
+  }
   if (op.kind === 'refundRoundingClose') {
     // ERP rounding close (no money out) — only within the ERP's own limit.
     const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
@@ -1194,7 +1220,18 @@ function runOp(item, op) {
       const s = r ? buildRefundSettlementSummary(db, r, {}) : null;
       refund = r ? { refundId: r.refund_id, approvedNgn: Number(r.approved_amount_ngn), paidBeforeNgn: Number(r.paid_amount_ngn), paidAfterNgn: Number(r.paid_amount_ngn) - (op.expectedNgn - op.amountNgn), outstandingBeforeNgn: s?.cashOutstandingNgn, outstandingAfterNgn: (s?.cashOutstandingNgn || 0) + (op.expectedNgn - op.amountNgn) } : null;
     }
-    const view = { line: `${tm.id} ${tm.type} ${tm.source_id}`, beforeNgn: cur, afterNgn: -targetAmt, beforeAt: tm.posted_at_iso, afterAt: op.postedAtISO || tm.posted_at_iso, ...(refund ? { refund } : {}) };
+    // Payment request line whose amount changes: the ERP correction moves the line and the journal date only, so the
+    // request's paid amount and the payout journal (EXPENSE_PAYMENT_GL keyed by the line) are set to the bank amount here.
+    let preq = null;
+    if (tm.source_kind === 'PAYMENT_REQUEST' && targetAmt !== op.expectedNgn) {
+      const p = db.prepare(`SELECT paid_amount_ngn FROM payment_requests WHERE request_id = ?`).get(tm.source_id);
+      const je = db.prepare(`SELECT id, entry_date_iso FROM gl_journal_entries WHERE source_kind = 'EXPENSE_PAYMENT_GL' AND source_id = ?`).all(tm.id);
+      const paidBefore = Math.round(Number(p?.paid_amount_ngn) || 0);
+      if (op.expectedPaidBeforeNgn != null && paidBefore !== op.expectedPaidBeforeNgn) return { outcome: 'skipped', why: `${tm.source_id} paid ₦${paidBefore} ≠ planned ₦${op.expectedPaidBeforeNgn}` };
+      if (je.length !== 1) return { outcome: 'skipped', why: `${je.length} payout journals for ${tm.id} (need exactly 1)` };
+      preq = { requestId: tm.source_id, paidBeforeNgn: paidBefore, paidAfterNgn: paidBefore - (op.expectedNgn - targetAmt), journalId: je[0].id, journalDateBefore: je[0].entry_date_iso };
+    }
+    const view = { line: `${tm.id} ${tm.type} ${tm.source_id}`, beforeNgn: cur, afterNgn: -targetAmt, beforeAt: tm.posted_at_iso, afterAt: op.postedAtISO || tm.posted_at_iso, ...(refund ? { refund } : {}), ...(preq ? { preq } : {}) };
     if (!doApply) return { outcome: 'would apply', ...view };
     const r = expenseOutflowTreasuryMovementCorrectTx(
       db,
@@ -1206,6 +1243,16 @@ function runOp(item, op) {
     const after = db.prepare(`SELECT amount_ngn, posted_at_iso FROM treasury_movements WHERE id = ?`).get(op.movementId);
     if (Math.round(Number(after.amount_ngn)) !== -targetAmt) throw new Error(`${item.id}: line is ₦${after.amount_ngn} after correction`);
     if (op.postedAtISO && String(after.posted_at_iso).slice(0, 16) !== op.postedAtISO.slice(0, 16)) throw new Error(`${item.id}: line dated ${after.posted_at_iso} after correction`);
+    if (preq) {
+      db.prepare(`UPDATE payment_requests SET paid_amount_ngn = ? WHERE request_id = ?`).run(preq.paidAfterNgn, preq.requestId);
+      const day = String(after.posted_at_iso).slice(0, 10);
+      const am = amendBalancedJournalAmountTx(db, preq.journalId, { nextAmountNgn: targetAmt, entryDateISO: day });
+      if (!am?.ok) throw new Error(`${item.id}: journal ${preq.journalId} — ${am?.error}`);
+      const jl = db.prepare(`SELECT SUM(debit_ngn) d, SUM(credit_ngn) c FROM gl_journal_lines WHERE journal_id = ?`).get(preq.journalId);
+      const jd = db.prepare(`SELECT entry_date_iso FROM gl_journal_entries WHERE id = ?`).get(preq.journalId);
+      if (Number(jl.d) !== targetAmt || Number(jl.c) !== targetAmt || String(jd.entry_date_iso).slice(0, 10) !== day) throw new Error(`${item.id}: journal ${preq.journalId} is ${jl.d}/${jl.c} on ${jd.entry_date_iso} after amend`);
+      audit(item, { ...op, table: 'payment_requests', key: preq.requestId }, { table: 'payment_requests', key: preq.requestId, column: 'paid_amount_ngn', before: preq.paidBeforeNgn, after: preq.paidAfterNgn, journal: { id: preq.journalId, amountNgn: targetAmt, date: day } });
+    }
     audit(item, { ...op, table: 'treasury_movements', key: op.movementId }, { table: 'treasury_movements', key: op.movementId, before: { amount: cur, at: tm.posted_at_iso }, after: { amount: -targetAmt, at: after.posted_at_iso }, note: op.note });
     return { outcome: 'applied', ...view };
   }

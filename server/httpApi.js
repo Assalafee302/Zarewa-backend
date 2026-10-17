@@ -646,6 +646,9 @@ import {
   refundPayoutAccountBlock,
 } from './finance/payoutAccountGate.js';
 import { addMissingPayoutAccountSafe } from './finance/payoutAccountOps.js';
+import { assertBmOmOverride } from './finance/managerOverride.js';
+import { receiptDuplicatesWithin24h } from './finance/receiptDuplicateOps.js';
+import { receiptDuplicateRefusal } from '../shared/lib/receiptDuplicateGuard.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
 import { holdReceiptAwaitingCreditCheck } from './sales/receiptBankCheckHold.js';
 import { setPoTransportPayoutHold } from './procurement/poTransportPayoutHold.js';
@@ -13823,6 +13826,20 @@ export function registerHttpApi(app, db) {
         });
       }
       const paidByName = receiptPaidByName(req.body || {}, cust.name || customerName);
+      // Finance Phase A (A2): same customer + amount + quotation / cutting list within 24 h is blocked.
+      const duplicates24h = receiptDuplicatesWithin24h(db, { customerID, quotationId, amountNgn, dateISO });
+      let duplicate24hOverride = null;
+      if (duplicates24h.length) {
+        const reason = String(req.body?.duplicate24hOverrideReason || '').trim();
+        if (!reason) return res.status(409).json(receiptDuplicateRefusal(duplicates24h, amountNgn));
+        const override = assertBmOmOverride({
+          actor: req.user,
+          reason,
+          subject: 'a second receipt within 24 hours',
+        });
+        if (!override.ok) return res.status(403).json({ ...override, duplicates: duplicates24h });
+        duplicate24hOverride = { reason: override.reason, approver: override.approver, duplicates: duplicates24h };
+      }
       const duplicateSignals = recentReceiptDuplicateSignals(db, {
         customerID,
         quotationId,
@@ -14088,8 +14105,20 @@ export function registerHttpApi(app, db) {
             advanceRepeatOverride: advanceRepeats.length
               ? { reason: advanceRepeatReason, repeats: advanceRepeats }
               : null,
+            duplicate24hOverride,
           },
         });
+        if (duplicate24hOverride) {
+          appendAuditLog(db, {
+            actor: req.user,
+            action: 'ledger.receipt_duplicate_24h_override',
+            entityKind: 'quotation',
+            entityId: quotationId,
+            status: 'flagged',
+            note: `[DUPLICATE OVERRIDE] ${duplicate24hOverride.approver.name || 'Manager'} posted a second ₦${Math.round(Number(amountNgn) || 0).toLocaleString('en-NG')} receipt within 24 h of ${duplicate24hOverride.duplicates.map((d) => d.id).join(', ')}: ${duplicate24hOverride.reason}`,
+            details: { receiptEntryId: parsed.receipt?.id ?? '', ...duplicate24hOverride },
+          });
+        }
         if (advanceRepeats.length) {
           appendAuditLog(db, {
             actor: req.user,

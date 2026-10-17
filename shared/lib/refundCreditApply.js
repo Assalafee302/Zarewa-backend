@@ -493,11 +493,9 @@ export function unclaimedOverpayCreditNgn({
  * @param {number} [treasuryPayoutNgn]
  */
 export function refundOverpayConsumedNgn(refund, treasuryPayoutNgn = 0) {
-  const overpayOnly = refundCategoriesAreOverpaymentOnly(
-    refund?.reasonCategory ?? refund?.reason_category,
-    refund?.calculationLines
-  );
-  const overpayLineNgn = overpayOnly ? null : refundOverpaymentLineNgn(refund?.calculationLines);
+  const lines = parseRefundCalculationLines(refund?.calculationLines ?? refund?.calculation_lines_json);
+  const overpayOnly = refundCategoriesAreOverpaymentOnly(refund?.reasonCategory ?? refund?.reason_category, lines);
+  const overpayLineNgn = overpayOnly ? null : refundOverpaymentLineNgn(lines);
   if (!overpayOnly && !(overpayLineNgn > 0)) return 0;
   const status = String(refund?.status || '').trim().toLowerCase();
   if (status === 'rejected' || status === 'cancelled') return 0;
@@ -513,12 +511,24 @@ export function refundOverpayConsumedNgn(refund, treasuryPayoutNgn = 0) {
   return overpayOnly ? consumed : Math.min(overpayLineNgn, consumed);
 }
 
+/** Calculation lines as an array; stored rows carry them as a JSON string (`calculation_lines_json`). */
+function parseRefundCalculationLines(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Sum of the Overpayment lines on a refund's calculation breakdown.
- * @param {Array<{ category?: string, amountNgn?: unknown, amount_ngn?: unknown }> | null | undefined} calculationLines
+ * @param {Array<{ category?: string, amountNgn?: unknown, amount_ngn?: unknown }> | string | null | undefined} calculationLines
  */
 export function refundOverpaymentLineNgn(calculationLines) {
-  const lines = Array.isArray(calculationLines) ? calculationLines : [];
+  const lines = parseRefundCalculationLines(calculationLines);
   let total = 0;
   for (const l of lines) {
     if (!String(l?.category || '').toLowerCase().includes('overpay')) continue;

@@ -86,3 +86,27 @@ describe('refundOverpayConsumedNgn — mixed refunds (RF-KD-26-9734, QT-KD-26-16
     expect(refundOverpayConsumedNgn({ ...overpayOnly, status: 'Pending', paidAmountNgn: 0, paidAtISO: '', paidBy: '' }, 0)).toBe(0);
   });
 });
+
+describe('refundOverpayConsumedNgn — stored row with calculation_lines_json string', () => {
+  it('parses the JSON lines on a raw DB row', () => {
+    const row = {
+      status: 'Paid',
+      reason_category: '["Overpayment","Installation","Transport"]',
+      calculation_lines_json: JSON.stringify([
+        { category: 'Overpayment', amountNgn: 47_450 },
+        { category: 'Installation', amountNgn: 15_000 },
+        { category: 'Transport', amountNgn: 12_000 },
+      ]),
+      amount_ngn: '74450',
+      paid_amount_ngn: '72000',
+      paid_at_iso: '2026-10-02',
+      paid_by: 'Cashier',
+    };
+    expect(refundOverpaymentLineNgn(row.calculation_lines_json)).toBe(47_450);
+    expect(refundOverpayConsumedNgn(row, '72000')).toBe(47_450);
+  });
+
+  it('bad JSON counts as no lines', () => {
+    expect(refundOverpaymentLineNgn('not json')).toBe(0);
+  });
+});

@@ -105,7 +105,7 @@ function reconcileTreasuryBalances(db) {
     const sumRow = db
       .prepare(`SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE treasury_account_id = ?`)
       .get(id);
-    db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(sumRow.s, id);
+    db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(Math.round(Number(sumRow?.s) || 0), id);
   }
 }
 

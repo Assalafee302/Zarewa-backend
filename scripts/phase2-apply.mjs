@@ -88,7 +88,7 @@ const { tryPostExpensePaymentReversalGlTx } = await imp('server/accountingPostin
 const { buildRefundSettlementSummary, correctRefundPaidAmountNgn, resolveRefundStatus: resolveRefundStatusNow } = await imp('server/sales/refundPayoutStatus.js');
 const { refundHeldNetCashDueNgn } = await imp('server/finance/partnerWalletCredit.js');
 const { refundTillPayableNgn } = await imp('server/refundHandlers.js');
-const { payAccountsPayable, postPurchaseOrderTransport, syncPurchaseOrderTransportPaymentState } = await imp('server/writeOps.js');
+const { payAccountsPayable, postPurchaseOrderTransport, syncPurchaseOrderTransportPaymentState, updateBankReconciliationLine } = await imp('server/writeOps.js');
 const { insertRefundRequest, previewRefundRequest } = await imp('server/controlOps.js');
 const { poSupplierPaymentCapBlock } = await imp('server/procurement/poSupplierAdvanceGuard.js');
 const { closeRefundUnpaidRemainder } = await imp('server/sales/payoutRoundingCloseOps.js');
@@ -1231,6 +1231,31 @@ function runOp(item, op) {
     }
     audit(item, { ...op, rows: undefined, table: 'bank_reconciliation_lines', key: `${created[0]}..${created.at(-1)}` }, { table: 'bank_reconciliation_lines', inserted: created.length, first: created[0], last: created.at(-1), matched: view.matched, review: view.review });
     return { outcome: 'applied', ...view, first: created[0], last: created.at(-1) };
+  }
+  if (op.kind === 'reconRepoint') {
+    // One ERP line linked to the wrong bank line: the old row goes to Review (link removed, reason kept in the text),
+    // the right row becomes Matched to it — both through the ERP's updateBankReconciliationLine (metadata only; a
+    // payout line takes the plain path: no settlement, no treasury adjustment).
+    const from = db.prepare(`SELECT * FROM bank_reconciliation_lines WHERE id = ?`).get(op.fromId);
+    const to = db.prepare(`SELECT * FROM bank_reconciliation_lines WHERE id = ?`).get(op.toId);
+    if (!from || !to) return { outcome: 'skipped', why: `bank line not found (${!from ? op.fromId : op.toId})` };
+    if (to.status === 'Matched' && String(to.system_match).startsWith(op.movementId) && from.status === 'Review') return { outcome: 'skipped', why: 'already re-pointed' };
+    if (from.status !== 'Matched' || !String(from.system_match || '').includes(op.movementId)) return { outcome: 'skipped', why: `${op.fromId} is ${from.status} "${from.system_match}", not Matched to ${op.movementId}` };
+    if (to.status !== 'Review' || !String(to.system_match || '').includes(`matches ${op.movementId}`)) return { outcome: 'skipped', why: `${op.toId} is ${to.status} "${to.system_match}", not the planned Review row` };
+    if (Number(from.amount_ngn) >= 0 || Number(to.amount_ngn) >= 0) return { outcome: 'skipped', why: 'only payout lines are re-pointed here' };
+    const others = db.prepare(`SELECT id FROM bank_reconciliation_lines WHERE system_match LIKE ? AND id NOT IN (?, ?)`).all(`%${op.movementId}%`, op.fromId, op.toId);
+    if (others.length) return { outcome: 'skipped', why: `${op.movementId} also on ${others.map((o) => o.id).join(', ')}` };
+    const fromMatch = `— · was ${from.system_match} · re-pointed to ${op.toId} (${op.reason})`.slice(0, 900);
+    const bankId = (String(to.system_match).match(/MP-[^ ·]+/) || [''])[0];
+    const toMatch = [op.movementId, bankId, op.toNote].filter(Boolean).join(' · ');
+    const view = { from: { id: op.fromId, date: from.bank_date_iso, ngn: Number(from.amount_ngn), before: from.system_match, after: fromMatch, status: 'Review' }, to: { id: op.toId, date: to.bank_date_iso, ngn: Number(to.amount_ngn), before: to.system_match, after: toMatch, status: 'Matched' } };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const a = updateBankReconciliationLine(db, op.fromId, { systemMatch: fromMatch, status: 'Review' }, ownerActor);
+    if (!a?.ok) throw new Error(`${item.id}: ${op.fromId} — ${a?.error}`);
+    const b = updateBankReconciliationLine(db, op.toId, { systemMatch: toMatch, status: 'Matched' }, ownerActor);
+    if (!b?.ok) throw new Error(`${item.id}: ${op.toId} — ${b?.error}`);
+    audit(item, { ...op, table: 'bank_reconciliation_lines', key: `${op.fromId}→${op.toId}` }, { table: 'bank_reconciliation_lines', ...view });
+    return { outcome: 'applied', ...view };
   }
   if (op.kind === 'refundRoundingClose') {
     // ERP rounding close (no money out) — only within the ERP's own limit.

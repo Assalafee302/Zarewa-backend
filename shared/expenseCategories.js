@@ -37,6 +37,7 @@ export const EXPENSE_CATEGORY_OPTIONS = Object.freeze([
   'Welfare',
   'Zakat & Sallah',
   'Marketing & advertising',
+  'Sales commission',
   // Corporate / other
   'HQ',
   'Chairman withdrawal',

@@ -5307,7 +5307,9 @@ export function registerHttpApi(app, db) {
       if (endAtISO && !Number.isFinite(Date.parse(endAtISO))) {
         return res.status(400).json({ ok: false, error: 'endAt must be an ISO date-time.' });
       }
-      const r = await buildTreasuryCashBookReport(db, { accountId, startDate, endDate, endAtISO, branchScope: resolveBootstrapBranchScope(req) });
+      // Confirmed movements by default (the balance of record); ?mode=all prints receipts awaiting confirmation too.
+      const mode = String(req.query.mode || '').trim().toLowerCase() === 'all' ? 'all' : 'confirmed';
+      const r = await buildTreasuryCashBookReport(db, { accountId, startDate, endDate, endAtISO, mode, branchScope: resolveBootstrapBranchScope(req) });
       if (!r.ok) return res.status(400).json(r);
       return res.json({ ok: true, startDate, endDate, book: r.book });
     } catch (e) {

@@ -33,7 +33,7 @@ export function staffAccountsFromUsers(users) {
  * @param {(sql: string, args: unknown[]) => object[] | Promise<object[]>} all
  * @param {{ accountId: number, startDate: string, endDate: string, endAtISO?: string, branchScope?: string }} p
  */
-export async function loadTreasuryCashBookSourceWith(all, { accountId, startDate, endDate, endAtISO = '', branchScope = 'ALL' }) {
+export async function loadTreasuryCashBookSourceWith(all, { accountId, startDate, endDate, endAtISO = '', branchScope = 'ALL', mode = 'confirmed' }) {
   const startISO = lagosDayStartISO(startDate);
   const endISO = endAtISO || lagosDayEndISO(endDate);
   const [account] = await all(
@@ -63,9 +63,29 @@ export async function loadTreasuryCashBookSourceWith(all, { accountId, startDate
 
   const ledger = await q(receiptIds, `SELECT id, customer_name, quotation_ref, payment_method, bank_reference FROM ledger_entries WHERE id IN (?)`);
   const salesReceipts = receiptIds.length
-    ? await tryAll(all, `SELECT id, paid_by_name FROM sales_receipts WHERE id IN (${inList(receiptIds)})`, receiptIds)
+    ? await tryAll(all, `SELECT id, paid_by_name, status, bank_confirmed_at_iso FROM sales_receipts WHERE id IN (${inList(receiptIds)})`, receiptIds)
     : [];
   const paidBy = new Map(salesReceipts.map((r) => [String(r.id), String(r.paid_by_name || '').trim()]));
+  // Finance-confirmed = bank confirmation recorded or status Cleared. A receipt with no sales_receipts row (advance
+  // desk, older data) has no confirmation step and counts as confirmed.
+  const receiptState = new Map(
+    salesReceipts.map((r) => [
+      String(r.id),
+      {
+        status: String(r.status || '').trim(),
+        confirmed: Boolean(String(r.bank_confirmed_at_iso || '').trim()) || /^cleared$/i.test(String(r.status || '').trim()),
+        reversed: /reversed/i.test(String(r.status || '')),
+      },
+    ])
+  );
+  // Before the period, receipt lines (and their reversals) of receipts still unconfirmed — left out of the confirmed opening.
+  const [unconfirmedBefore] = await tryAll(
+    all,
+    `SELECT COALESCE(SUM(m.amount_ngn), 0) AS s FROM treasury_movements m JOIN sales_receipts r ON r.id = m.source_id
+     WHERE m.treasury_account_id = ? AND m.posted_at_iso < ? AND m.source_kind = 'LEDGER_RECEIPT'
+       AND COALESCE(r.bank_confirmed_at_iso, '') = '' AND LOWER(TRIM(COALESCE(r.status, ''))) <> 'cleared'`,
+    [accountId, startISO]
+  );
   const refunds = await q(refundIds, `SELECT refund_id, customer_name, quotation_ref, payee_name, payment_note, split_distributions_json FROM customer_refunds WHERE refund_id IN (?)`);
   const refundLines = await q(refundIds, `SELECT id, source_id, posted_at_iso FROM treasury_movements WHERE source_kind = 'REFUND' AND type = 'REFUND_PAYOUT' AND source_id IN (?) ORDER BY posted_at_iso, id`);
   const preqs = await q(preqIds, `SELECT request_id, payee_name, description FROM payment_requests WHERE request_id IN (?)`);
@@ -116,7 +136,10 @@ export async function loadTreasuryCashBookSourceWith(all, { accountId, startDate
       startDate,
       endDate,
       endAtISO,
+      mode: mode === 'all' ? 'all' : 'confirmed',
       openingNgn: Math.round(Number(account.opening_balance_ngn) || 0) + Math.round(Number(account.before_ngn) || 0),
+      openingConfirmedNgn:
+        Math.round(Number(account.opening_balance_ngn) || 0) + Math.round(Number(account.before_ngn) || 0) - Math.round(Number(unconfirmedBefore?.s) || 0),
       movements: movements.map((m) => ({
         id: m.id,
         postedAtISO: m.posted_at_iso,
@@ -140,6 +163,7 @@ export async function loadTreasuryCashBookSourceWith(all, { accountId, startDate
             quotationRef: l.quotation_ref || '',
             bankReference: l.bank_reference || '',
             pos: /\bpos\b|\bcard\b/i.test(`${l.payment_method || ''} ${l.bank_reference || ''}`),
+            ...(receiptState.get(String(l.id)) || {}),
           },
         ])
       ),

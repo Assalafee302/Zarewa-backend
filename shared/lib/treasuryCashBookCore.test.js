@@ -136,8 +136,9 @@ describe('treasury cash book', () => {
     f.account.accNo = 'N/A';
     const doc = treasuryCashBookDocument(buildTreasuryCashBook(f));
     expect(doc.sections[0].title).toBe('Zarewa Aluminum & Plastics Ltd (Moniepoint)');
-    expect(doc.summary.rows.at(-1).label).toBe('Closing balance 02/10/2026 (to 09:44)');
-    expect(doc.summary.rows[1].label).toBe('Balance b/f 01/10/2026');
+    const labels = doc.summary.rows.map((r) => r.label);
+    expect(labels).toContain('Closing balance 02/10/2026 (to 09:44)');
+    expect(labels[1]).toBe('Balance b/f 01/10/2026');
     expect(doc.sections[0].pageBreakBefore).toBe(false);
     expect(doc.sections[0].rows.some((r) => /ERP corrected/.test(r.remark || ''))).toBe(false);
     const [sheet] = treasuryCashBookExcelSheets(buildTreasuryCashBook(f));
@@ -149,5 +150,70 @@ describe('treasury cash book', () => {
     expect(staffViaRemark(['Bakari Mohammed Ibrahim'], STAFF)).toBe('');
     expect(staffViaRemark(['MUHAMMAD IBRAHIM BAKARI'], STAFF)).toBe('via Bakari');
     expect(staffViaRemark(['paid via OM'], STAFF)).toBe('via OM account');
+  });
+});
+
+describe('treasury cash book — confirmed vs all movements (owner, 17 Oct)', () => {
+  // RC-2161 pending clearance (on the bank: no); RC-2168 pending then reversed (double entry); RC-1926 confirmed then reversed.
+  const confirmFixture = (mode) =>
+    fixture({
+      mode,
+      openingConfirmedNgn: 3411799 - 5000,
+      movements: [
+        ...fixture().movements,
+        { id: 'TM-20', postedAtISO: at('2026-10-02 12:00'), type: 'RECEIPT_IN', treasuryAccountId: 4, amountNgn: 34545, sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE-KD-26-2161' },
+        { id: 'TM-21', postedAtISO: at('2026-10-02 12:00'), type: 'RECEIPT_IN', treasuryAccountId: 4, amountNgn: 1562900, sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE-KD-26-2168' },
+        { id: 'TM-22', postedAtISO: at('2026-10-02 13:00'), type: 'RECEIPT_REVERSAL_OUT', treasuryAccountId: 4, amountNgn: -1562900, sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE-KD-26-2168', reversesMovementId: 'TM-21', reversesPostedAtISO: at('2026-10-02 12:00') },
+        { id: 'TM-23', postedAtISO: at('2026-10-01 12:00'), type: 'RECEIPT_IN', treasuryAccountId: 4, amountNgn: 4700, sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE-KD-26-1926' },
+        { id: 'TM-24', postedAtISO: at('2026-10-02 11:58'), type: 'RECEIPT_REVERSAL_OUT', treasuryAccountId: 4, amountNgn: -4700, sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE-KD-26-1926', reversesMovementId: 'TM-23', reversesPostedAtISO: at('2026-10-01 12:00') },
+      ],
+      receipts: {
+        ...fixture().receipts,
+        'LE-KD-26-2161': { customerName: 'Hannatu Thomas', confirmed: false, status: 'Pending clearance' },
+        'LE-KD-26-2168': { customerName: 'mamman cap zaria', confirmed: false, reversed: true, status: 'Reversed' },
+        'LE-KD-26-1926': { customerName: 'Anas Cap Zaria', confirmed: true, reversed: true, status: 'Reversed' },
+      },
+      bankNarrations: {},
+    });
+
+  it('confirmed (default) leaves out unconfirmed receipts and their reversals, from the confirmed opening', () => {
+    const book = buildTreasuryCashBook(confirmFixture(undefined));
+    const all = buildTreasuryCashBook(confirmFixture('all'));
+    expect(book.mode).toBe('confirmed');
+    expect(book.openingNgn).toBe(3411799 - 5000);
+    const ids = book.days.flatMap((d) => d.lines.map((l) => l.movementId));
+    expect(ids).not.toContain('TM-20');
+    expect(ids).not.toContain('TM-21');
+    expect(ids).not.toContain('TM-22');
+    expect(ids).toEqual(expect.arrayContaining(['TM-23', 'TM-24']));
+    expect(all.mode).toBe('all');
+    expect(all.openingNgn).toBe(3411799);
+    expect(all.days.flatMap((d) => d.lines.map((l) => l.movementId))).toEqual(expect.arrayContaining(['TM-20', 'TM-21', 'TM-22']));
+    // Same movements apart from the unconfirmed ones and the opening.
+    expect(all.closingNgn - book.closingNgn).toBe(34545 + 5000);
+  });
+
+  it('lists live unconfirmed receipts in both modes (reversed ones are not awaiting)', () => {
+    for (const mode of [undefined, 'all']) {
+      const book = buildTreasuryCashBook(confirmFixture(mode));
+      expect(book.awaiting).toEqual([
+        { date: '2026-10-02', ref: 'RC-2161', receiptId: 'LE-KD-26-2161', movementId: 'TM-20', customer: 'Hannatu Thomas', amountNgn: 34545, onBank: false, status: 'Pending clearance' },
+      ]);
+      expect(book.awaitingTotalNgn).toBe(34545);
+    }
+  });
+
+  it('print states the mode and ends with the awaiting block; Excel has an awaiting sheet', () => {
+    const doc = treasuryCashBookDocument(buildTreasuryCashBook(confirmFixture(undefined)));
+    expect(doc.title).toMatch(/confirmed movements/);
+    expect(doc.summary.rows.find((r) => r.label === 'Printed').value).toMatch(/Confirmed movements only/);
+    const block = doc.sections.at(-1);
+    expect(block.title).toBe('Awaiting confirmation');
+    expect(block.rows[0]).toMatchObject({ ref: 'RC-2161', customer: 'Hannatu Thomas', amountNgn: 34545, onBank: 'No match' });
+    expect(block.rows.at(-1)).toMatchObject({ customer: 'Total awaiting confirmation', amountNgn: 34545 });
+    expect(treasuryCashBookDocument(buildTreasuryCashBook(confirmFixture('all'))).title).toMatch(/all movements/);
+    const sheets = treasuryCashBookExcelSheets(buildTreasuryCashBook(confirmFixture(undefined)));
+    expect(sheets.map((s) => s.name)).toEqual(['Moniepoint cash book', 'Awaiting confirmation']);
+    expect(sheets[1].rows[0]).toMatchObject({ Ref: 'RC-2161', 'Amount ₦': 34545, 'On bank': 'No match' });
   });
 });

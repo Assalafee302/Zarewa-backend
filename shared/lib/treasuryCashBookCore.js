@@ -188,10 +188,16 @@ function remark(m, ctx) {
  *   corrections / bankNarrations — keyed lookups (see describe / remark)
  * @param {{name:string,label:string}[]} [input.staffAccounts] — staff whose accounts are used for payouts
  * @param {Record<string, number>} [input.statementClosings] — Lagos date → statement closing (kobo allowed)
+ * @param {'confirmed'|'all'} [input.mode] — "confirmed" (default, the balance of record) leaves out receipt lines whose
+ *   receipt is not yet finance-confirmed (receipts[id].confirmed === false), with their reversals, and starts from
+ *   openingConfirmedNgn; "all" prints every movement. Both list the live unconfirmed receipts in `awaiting`.
+ * @param {number} [input.openingConfirmedNgn] — ERP balance before startDate without unconfirmed receipts
  */
 export function buildTreasuryCashBook(input = {}) {
   const { account = {}, startDate = '', endDate = '', endAtISO = '' } = input;
   const ctx = input;
+  const mode = input.mode === 'all' ? 'all' : 'confirmed';
+  const unconfirmed = (m) => m.sourceKind === 'LEDGER_RECEIPT' && ctx.receipts?.[String(m.sourceId || '')]?.confirmed === false;
   const startMs = Date.parse(`${startDate}T00:00:00+01:00`);
   const endMs = endAtISO ? Date.parse(endAtISO) : Date.parse(`${endDate}T23:59:59.999+01:00`);
   const inRange = (iso) => {
@@ -202,9 +208,25 @@ export function buildTreasuryCashBook(input = {}) {
   // that day — when that receipt is in the range. The ERP posting date is unchanged.
   const printAt = (m) =>
     /_REVERSAL_OUT$/.test(String(m.type)) && m.reversesPostedAtISO && inRange(m.reversesPostedAtISO) ? m.reversesPostedAtISO : m.postedAtISO;
-  const moves = (input.movements || [])
+  const inAccount = (input.movements || [])
     .filter((m) => Number(m.treasuryAccountId ?? account.id) === Number(account.id))
-    .filter((m) => inRange(m.postedAtISO))
+    .filter((m) => inRange(m.postedAtISO));
+  // Receipts awaiting finance confirmation (live: not reversed), listed in both modes.
+  const awaiting = inAccount
+    .filter((m) => unconfirmed(m) && (m.type === 'RECEIPT_IN' || m.type === 'ADVANCE_IN'))
+    .filter((m) => !ctx.receipts?.[String(m.sourceId)]?.reversed && !inAccount.some((x) => x.reversesMovementId === m.id))
+    .map((m) => ({
+      date: lagosDate(m.postedAtISO),
+      ref: cashBookRef(m, ctx),
+      receiptId: m.sourceId,
+      movementId: m.id,
+      customer: describe(m, ctx),
+      amountNgn: n(m.amountNgn),
+      onBank: Boolean(ctx.bankNarrations?.[m.id]),
+      status: ctx.receipts?.[String(m.sourceId)]?.status || '',
+    }));
+  const moves = inAccount
+    .filter((m) => mode === 'all' || !unconfirmed(m))
     .map((m) => ({ ...m, printAtISO: printAt(m), printTie: printAt(m) === m.postedAtISO ? 0 : 1 }))
     .sort(
       (a, b) =>
@@ -213,7 +235,8 @@ export function buildTreasuryCashBook(input = {}) {
         String(a.postedAtISO).localeCompare(String(b.postedAtISO)) ||
         String(a.id).localeCompare(String(b.id))
     );
-  let balance = n(input.openingNgn);
+  const openingNgn = mode === 'confirmed' && input.openingConfirmedNgn != null ? n(input.openingConfirmedNgn) : n(input.openingNgn);
+  let balance = openingNgn;
   const days = [];
   // Every day of the range gets a block, even with no lines.
   const byDay = new Map();
@@ -283,13 +306,16 @@ export function buildTreasuryCashBook(input = {}) {
     startDate,
     endDate,
     endAtISO: endAtISO || '',
-    openingNgn: n(input.openingNgn),
+    mode,
+    openingNgn,
     closingNgn: balance,
     totalInNgn: r2(totalIn),
     totalOutNgn: r2(totalOut),
     bankChargesNgn: r2(totalCharges),
     days,
     hasStatement: days.some((d) => d.statementCloseNgn != null),
+    awaiting,
+    awaitingTotalNgn: r2(awaiting.reduce((s, a) => s + a.amountNgn, 0)),
   };
 }
 

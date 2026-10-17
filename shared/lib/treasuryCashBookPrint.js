@@ -51,8 +51,22 @@ export function treasuryCashBookDocument(book, opts = {}) {
   }));
   const cut = book.endAtISO ? ` (to ${lagosTime(book.endAtISO)})` : '';
   const account = cashBookAccountTitle(book.account);
+  const all = book.mode === 'all';
+  const awaiting = book.awaiting || [];
+  const awaitingColumns = [
+    { key: 'date', label: 'Date', kind: 'date' },
+    { key: 'ref', label: 'Ref', kind: 'id' },
+    { key: 'customer', label: 'Customer', kind: 'text' },
+    { key: 'amountNgn', label: 'Amount ₦', kind: 'money' },
+    { key: 'onBank', label: 'On bank', kind: 'text' },
+    { key: 'status', label: 'Status', kind: 'remarks' },
+  ];
+  const awaitingRows = [
+    ...awaiting.map((a) => ({ ...a, onBank: a.onBank ? 'Yes' : 'No match' })),
+    ...(awaiting.length ? [{ date: '', ref: '', customer: 'Total awaiting confirmation', amountNgn: book.awaitingTotalNgn, onBank: '', status: '', _strong: true }] : []),
+  ];
   return {
-    title: 'Treasury account statement — cash-book layout',
+    title: `Treasury account statement — cash-book layout (${all ? 'all movements' : 'confirmed movements'})`,
     branchName: book.branchName,
     startDate: book.startDate,
     endDate: book.endDate,
@@ -64,12 +78,28 @@ export function treasuryCashBookDocument(book, opts = {}) {
         { label: 'Money out (Dr)', value: book.totalOutNgn },
         { label: 'Bank charges (BC lines)', value: book.bankChargesNgn },
         { label: `Closing balance ${printDate(book.endDate)}${cut}`, value: book.closingNgn, strong: true },
+        { label: `Awaiting confirmation (${awaiting.length} line${awaiting.length === 1 ? '' : 's'}, ${all ? 'included above' : 'not included'})`, value: book.awaitingTotalNgn || 0 },
+        {
+          label: 'Printed',
+          value: all ? 'All movements, incl. receipts awaiting confirmation' : 'Confirmed movements only (balance of record)',
+          kind: 'text',
+        },
       ],
     },
     note:
       'Every ERP movement on this account in the period, in time order, one line each; a receipt reversal is printed on the day of the receipt it cancels. Per day: a Total line (money in and out, bank charges excluded), one bank-charges line (BC) and the closing balance. Amounts are transaction amounts; transfer and POS fees are in the BC line. Ref: RC receipt, EX payment request, EXP direct expense, RF refund, TR own-account transfer, PO supplier, IOU staff advance, RCW company-cut withdrawal, BC bank charges, ADJ statement alignment. Times are Lagos time.',
     // The table starts on page 1, under the summary.
-    sections: [{ title: account, band: account, columns, rows, emptyText: 'No movements in the period.', pageBreakBefore: false }],
+    sections: [
+      { title: account, band: account, columns, rows, emptyText: 'No movements in the period.', pageBreakBefore: false },
+      {
+        title: 'Awaiting confirmation',
+        band: `Receipts not yet confirmed by finance — ${all ? 'included in the balance above' : 'not in the balance above'}`,
+        columns: awaitingColumns,
+        rows: awaitingRows,
+        emptyText: 'No receipts awaiting confirmation.',
+        pageBreakBefore: false,
+      },
+    ],
     signOff: { preparedBy: opts.preparedBy, preparedAtISO: opts.preparedAtISO },
   };
 }
@@ -87,5 +117,17 @@ export function treasuryCashBookExcelSheets(book) {
     Remark: r.remark || '',
     'ERP movement': r.movementId || '',
   }));
-  return [{ name: `${book.account.bankName || book.account.name} cash book`.slice(0, 31), rows }];
+  const awaiting = (book.awaiting || []).map((a) => ({
+    Date: printDate(a.date),
+    Ref: a.ref,
+    Customer: a.customer,
+    'Amount ₦': a.amountNgn,
+    'On bank': a.onBank ? 'Yes' : 'No match',
+    Status: a.status,
+    'ERP movement': a.movementId,
+  }));
+  return [
+    { name: `${book.account.bankName || book.account.name} cash book`.slice(0, 31), rows },
+    { name: 'Awaiting confirmation', rows: awaiting.length ? awaiting : [{ Date: '', Ref: '', Customer: 'No receipts awaiting confirmation.' }] },
+  ];
 }

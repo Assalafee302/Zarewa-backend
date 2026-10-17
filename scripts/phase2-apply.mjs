@@ -88,7 +88,7 @@ const { tryPostExpensePaymentReversalGlTx } = await imp('server/accountingPostin
 const { buildRefundSettlementSummary, correctRefundPaidAmountNgn, resolveRefundStatus: resolveRefundStatusNow } = await imp('server/sales/refundPayoutStatus.js');
 const { refundHeldNetCashDueNgn } = await imp('server/finance/partnerWalletCredit.js');
 const { refundTillPayableNgn } = await imp('server/refundHandlers.js');
-const { payAccountsPayable } = await imp('server/writeOps.js');
+const { payAccountsPayable, postPurchaseOrderTransport } = await imp('server/writeOps.js');
 const { insertRefundRequest, previewRefundRequest } = await imp('server/controlOps.js');
 const { poSupplierPaymentCapBlock } = await imp('server/procurement/poSupplierAdvanceGuard.js');
 const { closeRefundUnpaidRemainder } = await imp('server/sales/payoutRoundingCloseOps.js');
@@ -1049,7 +1049,11 @@ function runOp(item, op) {
       suggestedNgn: preview?.suggestedAmountNgn ?? preview?.preview?.suggestedAmountNgn ?? undefined,
       approver: op.approverNote,
     };
-    if (!doApply) return { outcome: preview?.ok === false ? 'BLOCKED' : 'would apply', why: view.previewError, ...view };
+    // The ERP's own eligibility verdict (the refund form refuses on it) counts as a block too.
+    const elig = preview?.preview ?? preview;
+    if (elig?.refundEligibilityOk === false) { view.previewOk = false; view.previewError = elig.refundEligibilityError || 'refund eligibility failed'; }
+    if (!doApply) return { outcome: view.previewOk === false ? 'BLOCKED' : 'would apply', why: view.previewError, ...view };
+    if (view.previewOk === false) throw new Error(`${item.id}: ERP refused the refund — ${view.previewError}`);
     const r = insertRefundRequest(db, payload, ownerActor, qt.branch_id || 'BR-KD');
     if (!r?.ok) throw new Error(`${item.id}: ${r?.error || 'refund request failed'}`);
     const id = r.refundID || r.refundId || r.refund?.refund_id || r.id;
@@ -1148,6 +1152,31 @@ function runOp(item, op) {
     appendAuditLog(db, { actor: ownerActor, action: 'receipt.bank_check_release', entityKind: 'sales_receipt', entityId: op.receiptId, note: op.note, details: { previousStatus: sr.status, status: op.after, movementId: op.movementId } });
     audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, column: 'status', before: sr.status, after: op.after });
     return { outcome: 'applied' };
+  }
+  if (op.kind === 'poTransportPay') {
+    // PO haulage paid from the bank, through the ERP's postPurchaseOrderTransport (TRANSPORT_PAYMENT line, duplicate
+    // guard, PO transport state). The agreed fee on the PO is not changed here.
+    const po = db.prepare(`SELECT po_id, status, transport_agent_name, transport_amount_ngn FROM purchase_orders WHERE po_id = ?`).get(op.poId);
+    if (!po) return { outcome: 'skipped', why: 'PO not found' };
+    if (String(po.transport_agent_name || '').trim().toLowerCase() !== op.agentName.toLowerCase()) return { outcome: 'skipped', why: `transport agent "${po.transport_agent_name}", not "${op.agentName}"` };
+    const lines = db.prepare(`SELECT id, amount_ngn, posted_at_iso FROM treasury_movements WHERE source_kind = 'PURCHASE_ORDER' AND source_id = ? AND type = 'TRANSPORT_PAYMENT'`).all(op.poId);
+    const same = lines.find((l) => Number(l.amount_ngn) === -op.amountNgn && String(l.posted_at_iso).slice(0, 10) === op.postedAtISO.slice(0, 10));
+    if (same) return { outcome: 'skipped', why: `already posted as ${same.id}` };
+    if (op.expectedLinesBefore != null && lines.length !== op.expectedLinesBefore) return { outcome: 'skipped', why: `${lines.length} transport lines on ${op.poId}, planned ${op.expectedLinesBefore}` };
+    const blocked = lockedPeriodWhy(op.postedAtISO, 'Payout date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const view = { po: op.poId, status: po.status, feeNgn: Number(po.transport_amount_ngn), paidBeforeNgn: -lines.reduce((s, l) => s + Number(l.amount_ngn), 0), payNgn: op.amountNgn };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const res = postPurchaseOrderTransport(db, op.poId, {
+      treasuryAccountId: op.treasuryAccountId, amountNgn: op.amountNgn, dateISO: op.postedAtISO.slice(0, 10), postedAtISO: op.postedAtISO,
+      reference: op.reference, note: `${op.note} Phase 2 ${item.id}.`.slice(0, 500), createdBy: approver, actor: ownerActor,
+      workspaceBranchId: 'BR-KD', workspaceViewAll: true,
+    });
+    if (!res?.ok) throw new Error(`${item.id}: ${res?.error || 'transport payment failed'}`);
+    const after = db.prepare(`SELECT id FROM treasury_movements WHERE source_kind = 'PURCHASE_ORDER' AND source_id = ? AND type = 'TRANSPORT_PAYMENT' AND amount_ngn = ?`).all(op.poId, -op.amountNgn);
+    if (after.length !== 1) throw new Error(`${item.id}: ${after.length} lines of ₦${op.amountNgn} after posting`);
+    audit(item, { ...op, table: 'treasury_movements', key: after[0].id }, { table: 'treasury_movements', key: after[0].id, po: op.poId, amountNgn: op.amountNgn, before: view });
+    return { outcome: 'applied', movementId: after[0].id, ...view };
   }
   if (op.kind === 'refundRoundingClose') {
     // ERP rounding close (no money out) — only within the ERP's own limit.

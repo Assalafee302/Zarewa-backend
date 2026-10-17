@@ -1,7 +1,8 @@
 # Owner note — refund fixes and two PO haulage gaps (17 Oct 2026)
 
 Found during the Moniepoint Oct 2026 reconciliation. Code only: no database writes, nothing deployed or pushed.
-Branch `fix/refund-cap-and-mixed-overpay` in both repos (backend and frontend).
+- **Hotfix (Fix 1 only):** backend branch `hotfix/refund-sums`, commit `0b627cb` on top of `bccb1c0`.
+- **Fix 2:** branch `fix/refund-cap-and-mixed-overpay` in both repos (backend `f8ba8f1`, frontend `0d9452e`).
 
 ## Fix 1 — refund form wrongly says "fully covered by existing refund requests"
 
@@ -10,9 +11,15 @@ Branch `fix/refund-cap-and-mixed-overpay` in both repos (backend and frontend).
   "1913200" + 29200 became 191,320,029,200. The refund cap (cash in − refunded) went to zero and the form refused.
 - **Live case:** QT-KD-26-1777 (Gabdo nails, accessory shortfall ₦140,000–150,000).
 - **Fix:** both parts are turned into numbers before adding.
-- **Sweep:** searched the whole server for the same pattern (SUM/COUNT results added with `+` without a number
-  conversion). No other live case found; the others already convert.
-- **Test:** `server/quotationActiveRefundedTotalMysqlString.test.js` feeds text SUMs like MySQL does.
+- **Sweep:** checked every SUM / AVG / CAST-to-DECIMAL result in the server (76 uses). One more fixed:
+  `server/dbIntegrityMigrate.js` `reconcileTreasuryBalances` wrote a treasury balance straight from a text SUM.
+  The rest already convert, or are not money sums.
+- **Tests:** `server/quotationActiveRefundedTotalMysqlString.test.js` and
+  `server/dbIntegrityMigrateTreasuryBalance.test.js` feed text SUMs like MySQL does.
+- **Has `reconcileTreasuryBalances` ever run in production?** Not from this code: its only caller,
+  `runDbIntegrityHardening`, is not called anywhere, in any commit since the first one (19 Apr 2026). Note that if it
+  ever ran it would set each balance to the sum of movements only (no opening balance). Not checked against the
+  production dump; see the test report.
 
 ## Fix 2 — a paid mixed refund kept its overpayment on offer as credit
 
@@ -25,6 +32,7 @@ Branch `fix/refund-cap-and-mixed-overpay` in both repos (backend and frontend).
   refund's **Overpayment line is the part used up**, capped by what was actually paid out.
   Paid mixed → Overpayment line used up. Partly paid → up to the amount paid. Pending, approved-not-paid, cancelled,
   rejected → nothing used up. Overpayment-only refunds work as before.
+- Also reads a stored row's `calculation_lines_json` string directly, so no caller can miss the lines.
 - **Tests:** `shared/lib/refundCreditApply.mixedOverpay.test.js` (same file in both repos).
 - **After deploy:** QT-KD-26-1697 should stop offering the ₦42,766 credit. Nothing to correct in data.
 

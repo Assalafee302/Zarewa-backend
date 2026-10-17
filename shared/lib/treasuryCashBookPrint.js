@@ -2,12 +2,24 @@
  * Treasury account statement — cash-book layout: print document (shared print layout: A4 landscape, header repeats,
  * "Page x of y") and Excel sheet. Columns as the owner's cash book: Date (first line of the day only) | Ref |
  * Description | Cr (In) | Dr (Out) | Balance | Remark, plus "Statement close" and "Diff" when a statement closing is
- * on file for a day (optional OM columns).
+ * on file for a day (optional OM columns). Dates dd/mm/yyyy, times Africa/Lagos.
  */
 import { cashBookRows } from './treasuryCashBookCore.js';
+import { printDate } from './reportPrintDocument.js';
 
-const title = (book) =>
-  `Treasury account statement — ${book.account.name}${book.account.bankName ? ` (${book.account.bankName})` : ''}${book.account.accNo ? ` · ${book.account.accNo}` : ''}`;
+/** ISO instant → "HH:MM" in Africa/Lagos (UTC+1, no daylight saving). */
+export function lagosTime(iso) {
+  const t = Date.parse(String(iso || ''));
+  return Number.isFinite(t) ? new Date(t + 3600000).toISOString().slice(11, 16) : '';
+}
+
+const hasAccNo = (v) => {
+  const s = String(v || '').trim();
+  return Boolean(s) && !/^n\/?a$/i.test(s);
+};
+
+export const cashBookAccountTitle = (account) =>
+  `${account.name}${account.bankName ? ` (${account.bankName})` : ''}${hasAccNo(account.accNo) ? ` · ${account.accNo}` : ''}`;
 
 /**
  * @param {ReturnType<import('./treasuryCashBookCore.js').buildTreasuryCashBook>} book
@@ -37,7 +49,8 @@ export function treasuryCashBookDocument(book, opts = {}) {
     _strong: r.kind === 'total' || r.kind === 'closing' || r.kind === 'bf',
     _severity: r.kind === 'closing' && r.diffNgn ? 'exception' : undefined,
   }));
-  const cut = book.endAtISO ? ` (to ${book.endAtISO.slice(11, 16)} UTC on ${book.endDate})` : '';
+  const cut = book.endAtISO ? ` (to ${lagosTime(book.endAtISO)})` : '';
+  const account = cashBookAccountTitle(book.account);
   return {
     title: 'Treasury account statement — cash-book layout',
     branchName: book.branchName,
@@ -45,25 +58,26 @@ export function treasuryCashBookDocument(book, opts = {}) {
     endDate: book.endDate,
     summary: {
       rows: [
-        { label: 'Account', value: title(book).replace('Treasury account statement — ', ''), kind: 'text' },
-        { label: `Balance b/f ${book.startDate}`, value: book.openingNgn },
+        { label: 'Account', value: account, kind: 'text' },
+        { label: `Balance b/f ${printDate(book.startDate)}`, value: book.openingNgn },
         { label: 'Money in (Cr)', value: book.totalInNgn },
         { label: 'Money out (Dr)', value: book.totalOutNgn },
         { label: 'Bank charges (BC lines)', value: book.bankChargesNgn },
-        { label: `Closing balance ${book.endDate}${cut}`, value: book.closingNgn, strong: true },
+        { label: `Closing balance ${printDate(book.endDate)}${cut}`, value: book.closingNgn, strong: true },
       ],
     },
     note:
-      'Every ERP movement on this account in the period, in time order, one line each. Per day: a Total line (money in and out, bank charges excluded), one bank-charges line (BC) and the closing balance. Amounts are transaction amounts; transfer and POS fees are in the BC line. Ref: RC receipt, EX payment request, EXP direct expense, RF refund, TR own-account transfer, PO supplier, IOU staff advance, RCW company-cut withdrawal, BC bank charges, ADJ statement alignment.',
-    sections: [{ title: title(book), band: title(book), columns, rows, emptyText: 'No movements in the period.' }],
+      'Every ERP movement on this account in the period, in time order, one line each; a receipt reversal is printed on the day of the receipt it cancels. Per day: a Total line (money in and out, bank charges excluded), one bank-charges line (BC) and the closing balance. Amounts are transaction amounts; transfer and POS fees are in the BC line. Ref: RC receipt, EX payment request, EXP direct expense, RF refund, TR own-account transfer, PO supplier, IOU staff advance, RCW company-cut withdrawal, BC bank charges, ADJ statement alignment. Times are Lagos time.',
+    // The table starts on page 1, under the summary.
+    sections: [{ title: account, band: account, columns, rows, emptyText: 'No movements in the period.', pageBreakBefore: false }],
     signOff: { preparedBy: opts.preparedBy, preparedAtISO: opts.preparedAtISO },
   };
 }
 
-/** Excel: one sheet in print order, raw numbers and ISO dates. */
+/** Excel: one sheet in print order, raw numbers, dates dd/mm/yyyy, plus the ERP movement number. */
 export function treasuryCashBookExcelSheets(book) {
   const rows = cashBookRows(book).map((r) => ({
-    Date: r.date || '',
+    Date: r.date ? printDate(r.date) : '',
     Ref: r.ref || '',
     Description: r.description || '',
     'Cr (In) ₦': r.crNgn === '' ? '' : r.crNgn,

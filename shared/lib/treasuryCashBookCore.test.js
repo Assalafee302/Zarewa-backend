@@ -114,6 +114,37 @@ describe('treasury cash book', () => {
     expect(book.days[1].lines.map((l) => l.movementId)).toEqual(['TM-6']);
   });
 
+  it('a receipt reversal prints on the day of the receipt it cancels (pair nets to zero that day)', () => {
+    const f = fixture();
+    f.movements.push({ id: 'TM-R', postedAtISO: at('2026-10-02 10:00'), type: 'RECEIPT_REVERSAL_OUT', treasuryAccountId: 4, amountNgn: -353000, sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE-KD-26-2093', reversesMovementId: 'TM-1', reversesPostedAtISO: f.movements[0].postedAtISO });
+    const [d1, d2] = buildTreasuryCashBook(f).days;
+    expect(d1.lines.map((l) => l.movementId).slice(0, 2)).toEqual(['TM-1', 'TM-R']);
+    expect(d1.totalInNgn - 353000).toBe(0);
+    expect(d2.lines.some((l) => l.movementId === 'TM-R')).toBe(false);
+  });
+
+  it('every day of the range has a block, even with no lines', () => {
+    const book = buildTreasuryCashBook(fixture({ endDate: '2026-10-04' }));
+    expect(book.days.map((d) => d.date)).toEqual(['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04']);
+    const rows = cashBookRows(book);
+    expect(rows.filter((r) => r.description === '(no transactions)').length).toBe(2);
+    expect(book.days[3].closingNgn).toBe(book.days[1].closingNgn);
+  });
+
+  it('print: no "N/A" account number, Lagos cut-off time, dd/mm/yyyy, table on page 1, no correction tags', () => {
+    const f = fixture({ endAtISO: '2026-10-02T08:44:59.999Z', corrections: { 'TM-1': 'ERP corrected (R2-C1)' } });
+    f.account.accNo = 'N/A';
+    const doc = treasuryCashBookDocument(buildTreasuryCashBook(f));
+    expect(doc.sections[0].title).toBe('Zarewa Aluminum & Plastics Ltd (Moniepoint)');
+    expect(doc.summary.rows.at(-1).label).toBe('Closing balance 02/10/2026 (to 09:44)');
+    expect(doc.summary.rows[1].label).toBe('Balance b/f 01/10/2026');
+    expect(doc.sections[0].pageBreakBefore).toBe(false);
+    expect(doc.sections[0].rows.some((r) => /ERP corrected/.test(r.remark || ''))).toBe(false);
+    const [sheet] = treasuryCashBookExcelSheets(buildTreasuryCashBook(f));
+    expect(sheet.rows[1].Date).toBe('01/10/2026');
+    expect(sheet.rows[1]['ERP movement']).toBe('TM-1');
+  });
+
   it('staff via remark needs the whole name or an explicit "via"', () => {
     expect(staffViaRemark(['Bakari Mohammed Ibrahim'], STAFF)).toBe('');
     expect(staffViaRemark(['MUHAMMAD IBRAHIM BAKARI'], STAFF)).toBe('via Bakari');

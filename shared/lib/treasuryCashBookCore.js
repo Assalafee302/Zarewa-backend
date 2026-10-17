@@ -172,8 +172,7 @@ function remark(m, ctx) {
   if (m.type === 'REFUND_PAYOUT' && ref?.staffShare) parts.push('staff share 80%');
   if (m.type === 'INTERNAL_TRANSFER_OUT' || m.type === 'INTERNAL_TRANSFER_IN') parts.push('Internal transfer');
   if (m.type === 'RECEIPT_REVERSAL_OUT' && m.note) parts.push(m.note);
-  const c = ctx.corrections?.[m.id] || ctx.corrections?.[sid];
-  if (c) parts.push(c);
+  // ERP correction tags stay out of the printed remark (owner, 17 Oct); the XLSX carries the movement number.
   return [...new Set(parts)].join('; ');
 }
 
@@ -195,18 +194,32 @@ export function buildTreasuryCashBook(input = {}) {
   const ctx = input;
   const startMs = Date.parse(`${startDate}T00:00:00+01:00`);
   const endMs = endAtISO ? Date.parse(endAtISO) : Date.parse(`${endDate}T23:59:59.999+01:00`);
+  const inRange = (iso) => {
+    const t = Date.parse(iso);
+    return t >= startMs && t <= endMs;
+  };
+  // A receipt reversal prints on the day of the receipt it cancels (right after it), so the pair nets to zero on
+  // that day — when that receipt is in the range. The ERP posting date is unchanged.
+  const printAt = (m) =>
+    /_REVERSAL_OUT$/.test(String(m.type)) && m.reversesPostedAtISO && inRange(m.reversesPostedAtISO) ? m.reversesPostedAtISO : m.postedAtISO;
   const moves = (input.movements || [])
     .filter((m) => Number(m.treasuryAccountId ?? account.id) === Number(account.id))
-    .filter((m) => {
-      const t = Date.parse(m.postedAtISO);
-      return t >= startMs && t <= endMs;
-    })
-    .sort((a, b) => String(a.postedAtISO).localeCompare(String(b.postedAtISO)) || String(a.id).localeCompare(String(b.id)));
+    .filter((m) => inRange(m.postedAtISO))
+    .map((m) => ({ ...m, printAtISO: printAt(m), printTie: printAt(m) === m.postedAtISO ? 0 : 1 }))
+    .sort(
+      (a, b) =>
+        String(a.printAtISO).localeCompare(String(b.printAtISO)) ||
+        a.printTie - b.printTie ||
+        String(a.postedAtISO).localeCompare(String(b.postedAtISO)) ||
+        String(a.id).localeCompare(String(b.id))
+    );
   let balance = n(input.openingNgn);
   const days = [];
+  // Every day of the range gets a block, even with no lines.
   const byDay = new Map();
+  for (let d = startDate; d && d <= endDate; d = new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10)) byDay.set(d, []);
   for (const m of moves) {
-    const d = lagosDate(m.postedAtISO);
+    const d = lagosDate(m.printAtISO);
     if (!byDay.has(d)) byDay.set(d, []);
     byDay.get(d).push(m);
   }
@@ -234,6 +247,7 @@ export function buildTreasuryCashBook(input = {}) {
       lines.push({
         movementId: m.id,
         postedAtISO: m.postedAtISO,
+        printedOnReceiptDay: m.printTie === 1,
         ref: cashBookRef(m, ctx),
         description: describe(m, ctx),
         crNgn: amt >= 0 ? amt : '',
@@ -284,7 +298,7 @@ export function cashBookRows(book) {
   const rows = [{ kind: 'bf', date: book.startDate, ref: '', description: `Balance b/f — ${book.account.name}${book.account.bankName ? ` (${book.account.bankName})` : ''}`, crNgn: '', drNgn: '', balanceNgn: book.openingNgn, remark: '' }];
   for (const d of book.days) {
     d.lines.forEach((l, i) => rows.push({ kind: 'line', date: i === 0 ? d.date : '', ...l }));
-    if (!d.lines.length) rows.push({ kind: 'line', date: d.date, ref: '', description: '(bank charges only)', crNgn: '', drNgn: '', balanceNgn: d.openingNgn, remark: '' });
+    if (!d.lines.length) rows.push({ kind: 'line', date: d.date, ref: '', description: d.bankChargesNgn ? '(bank charges only)' : '(no transactions)', crNgn: '', drNgn: '', balanceNgn: d.openingNgn, remark: '' });
     rows.push({ kind: 'total', date: '', ref: '', description: `Total for ${d.date.slice(8, 10)}/${d.date.slice(5, 7)}`, crNgn: d.totalInNgn, drNgn: d.totalOutNgn, balanceNgn: '', remark: '' });
     rows.push({ kind: 'bc', date: '', ref: 'BC', description: 'Bank charges (stamp duty, VAT, transfer & POS fees)', crNgn: '', drNgn: d.bankChargesNgn || '', balanceNgn: r2(d.closingNgn), remark: d.bankChargesNgn ? 'One line per day' : 'No charges recorded' });
     rows.push({

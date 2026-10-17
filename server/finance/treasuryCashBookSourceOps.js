@@ -47,9 +47,10 @@ export async function loadTreasuryCashBookSourceWith(all, { accountId, startDate
     return { ok: false, error: 'Treasury account is not in this branch.' };
   }
   const movements = await all(
-    `SELECT id, posted_at_iso, type, treasury_account_id, amount_ngn, reference, counterparty_kind, counterparty_id, counterparty_name,
-            source_kind, source_id, note
-     FROM treasury_movements WHERE treasury_account_id = ? AND posted_at_iso >= ? AND posted_at_iso <= ? ORDER BY posted_at_iso, id`,
+    `SELECT m.id, m.posted_at_iso, m.type, m.treasury_account_id, m.amount_ngn, m.reference, m.counterparty_kind, m.counterparty_id,
+            m.counterparty_name, m.source_kind, m.source_id, m.note, m.reverses_movement_id,
+            (SELECT o.posted_at_iso FROM treasury_movements o WHERE o.id = m.reverses_movement_id) AS reverses_posted_at_iso
+     FROM treasury_movements m WHERE m.treasury_account_id = ? AND m.posted_at_iso >= ? AND m.posted_at_iso <= ? ORDER BY m.posted_at_iso, m.id`,
     [accountId, startISO, endISO]
   );
   const ids = (kinds) => uniq(movements.filter((m) => kinds.includes(m.source_kind)).map((m) => m.source_id));
@@ -127,6 +128,8 @@ export async function loadTreasuryCashBookSourceWith(all, { accountId, startDate
         sourceKind: m.source_kind || '',
         sourceId: m.source_id || '',
         note: m.note || '',
+        reversesMovementId: m.reverses_movement_id || '',
+        reversesPostedAtISO: m.reverses_posted_at_iso || '',
       })),
       receipts: Object.fromEntries(
         ledger.map((l) => [

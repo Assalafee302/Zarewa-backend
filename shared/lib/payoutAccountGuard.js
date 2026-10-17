@@ -5,6 +5,11 @@
  *
  * Missing: blank, a dash or em dash, "000", any placeholder word, all zeros, or
  * anything that is not exactly 10 digits once spaces and dashes are removed.
+ * Owner D1 (2026-10-17): an 11-digit OPay / wallet number starting with 0 is accepted by
+ * dropping the leading 0 and storing the 10 digits.
+ * Owner D2 (2026-10-17): the account rule applies when the money leaves a bank / wallet
+ * (Bank or POS treasury account). A Cash Office payout needs the recipient's name and a
+ * voucher reference instead.
  */
 
 export const PAYOUT_ACCOUNT_DIGITS = 10;
@@ -19,10 +24,15 @@ function isPlaceholder(value) {
   return PLACEHOLDER_TEXT.has(clean(value).toLowerCase());
 }
 
-/** Digits of an account number once spaces and dashes are removed; '' when anything else is in it. */
+/**
+ * The 10-digit account to pay and store: digits once spaces and dashes are removed, with the
+ * leading 0 dropped from an 11-digit wallet number (D1). '' when it is not a usable 10 digits.
+ */
 export function payoutAccountDigits(value) {
   const compact = clean(value).replace(/[\s-]/g, '');
-  return /^\d+$/.test(compact) ? compact : '';
+  if (!/^\d+$/.test(compact)) return '';
+  const ten = compact.length === 11 && compact.startsWith('0') ? compact.slice(1) : compact;
+  return ten.length === PAYOUT_ACCOUNT_DIGITS && !/^0+$/.test(ten) ? ten : '';
 }
 
 /**
@@ -33,14 +43,12 @@ export function payoutAccountProblem(account = {}) {
   const bankName = clean(account.bankName);
   const accountNo = clean(account.accountNo);
   const bankMissing = isPlaceholder(bankName);
-  const digits = payoutAccountDigits(accountNo);
-  const accountMissing =
-    isPlaceholder(accountNo) || digits.length !== PAYOUT_ACCOUNT_DIGITS || /^0+$/.test(digits);
+  const accountMissing = isPlaceholder(accountNo) || !payoutAccountDigits(accountNo);
   if (bankMissing && accountMissing) return 'No payout bank or account number on the payee profile.';
   if (bankMissing) return 'No payout bank on the payee profile.';
   if (accountMissing) {
     return accountNo && !isPlaceholder(accountNo)
-      ? `Payout account "${accountNo}" is not a ${PAYOUT_ACCOUNT_DIGITS}-digit account number.`
+      ? `Payout account "${accountNo}" is not a ${PAYOUT_ACCOUNT_DIGITS}-digit account (or an 11-digit wallet number starting with 0).`
       : 'No payout account number on the payee profile.';
   }
   return '';
@@ -104,4 +112,40 @@ export function transportAgentPayoutAccount(profile = {}) {
     payeeBankName: clean(p.payoutBankName ?? p.bankName),
     payeeAccountNo: clean(p.payoutAccountNo ?? p.bankAccountNo),
   };
+}
+
+/** D2: a treasury account of type Cash is the Cash Office; Bank and POS are bank / wallet. */
+export function treasuryAccountIsCashOffice(accountType) {
+  return /^cash$/i.test(clean(accountType));
+}
+
+/** D2: a Cash Office payout records who took the cash and the voucher it was paid on. */
+export function cashOfficePayoutProblem({ recipientName, voucherReference } = {}) {
+  const name = clean(recipientName);
+  const voucher = clean(voucherReference);
+  if (name.length < 3 && voucher.length < 3) return 'A Cash Office payout needs the recipient’s name and the voucher reference.';
+  if (name.length < 3) return 'A Cash Office payout needs the recipient’s name.';
+  if (voucher.length < 3) return 'A Cash Office payout needs the voucher reference.';
+  return '';
+}
+
+/**
+ * D2: which rule a payout must pass, from the treasury accounts it is paid from.
+ * Bank / wallet lines (or no lines, e.g. a wallet release) need every payee's account;
+ * Cash Office lines need recipient name + voucher reference. A split payout needs both.
+ * @param {{ accountTypes: string[], payees: object[], cash?: { recipientName?: string, voucherReference?: string } }} p
+ */
+export function payoutRouteBlock({ accountTypes = [], payees = [], cash = {} } = {}) {
+  const types = Array.isArray(accountTypes) ? accountTypes : [];
+  const hasCash = types.some((t) => treasuryAccountIsCashOffice(t));
+  const hasBank = !types.length || types.some((t) => !treasuryAccountIsCashOffice(t));
+  if (hasBank) {
+    const block = payoutAccountBlock(payees);
+    if (block) return block;
+  }
+  if (hasCash) {
+    const problem = cashOfficePayoutProblem(cash);
+    if (problem) return { ok: false, code: 'CASH_OFFICE_VOUCHER_REQUIRED', error: problem };
+  }
+  return null;
 }

@@ -641,9 +641,11 @@ import {
 } from './operations/negativeStockApprovalOps.js';
 import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWalletOps.js';
 import {
+  cashOfficeFromBody,
   paymentRequestPayoutAccountBlock,
   poTransportPayoutAccountBlock,
   refundPayoutAccountBlock,
+  stampCashOfficeLines,
 } from './finance/payoutAccountGate.js';
 import { addMissingPayoutAccountSafe } from './finance/payoutAccountOps.js';
 import { assertBmOmOverride, overQuoteApprovalFromBody } from './finance/managerOverride.js';
@@ -11138,10 +11140,15 @@ export function registerHttpApi(app, db) {
       const staffBatch = refundRowForPay ? refundStaffBatchState(db, refundRowForPay) : null;
       const batchedKeys = new Set((staffBatch?.batched || []).map((t) => `${t.partyKind}::${t.partyId}`));
       // A1: every payee this payout can reach needs a usable account.
+      // D2: bank / POS lines need the payee account; Cash Office lines need name + voucher.
+      const cashOffice = cashOfficeFromBody(body);
       const accountBlock = refundPayoutAccountBlock(db, req.params.refundId, {
         skip: (t) => batchedKeys.has(`${t.partyKind}::${t.partyId}`),
+        lines: treasuryLines,
+        cash: cashOffice,
       });
       if (accountBlock) return res.status(400).json(accountBlock);
+      stampCashOfficeLines(db, treasuryLines, cashOffice);
       if (staffBatch && staffBatch.batchedOwedNgn > 0) {
         const requestedNgn = treasuryLines.reduce((s, l) => s + Math.max(0, Math.round(Number(l?.amountNgn) || 0)), 0);
         if (requestedNgn > staffBatch.individualOwedNgn || (requestedNgn === 0 && staffBatch.individualOwedNgn === 0)) {
@@ -11881,9 +11888,15 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests/:requestId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
-      const accountBlock = paymentRequestPayoutAccountBlock(db, req.params.requestId);
-      if (accountBlock) return res.status(400).json(accountBlock);
       const treasuryLines = normalizeTreasuryLines(req.body || {});
+      // D2: bank / POS lines need the payee account; Cash Office lines need name + voucher.
+      const cashOffice = cashOfficeFromBody(req.body || {});
+      const accountBlock = paymentRequestPayoutAccountBlock(db, req.params.requestId, {
+        lines: treasuryLines,
+        cash: cashOffice,
+      });
+      if (accountBlock) return res.status(400).json(accountBlock);
+      stampCashOfficeLines(db, treasuryLines, cashOffice);
       const r = write.payPaymentRequest(db, req.params.requestId, {
         ...(req.body || {}),
         paymentLines: treasuryLines,

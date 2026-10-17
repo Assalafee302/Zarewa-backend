@@ -7,7 +7,7 @@ import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { actorName } from '../auth.js';
 import { appendAuditLog } from '../controlOps.js';
 import { payRefundEntry } from '../writeOps.js';
-import { payoutAccountBlock } from '../../shared/lib/payoutAccountGuard.js';
+import { payoutRouteBlock, treasuryAccountIsCashOffice } from '../../shared/lib/payoutAccountGuard.js';
 import { payoutRemainderOffersRoundingClose } from '../../shared/lib/payoutRoundingClose.js';
 import {
   STAFF_SHARE_BATCH_DEFAULT_THRESHOLD_NGN,
@@ -17,7 +17,7 @@ import {
   splitRefundOwedForStaffBatch,
   staffShareWeekKey,
 } from '../../shared/lib/staffShareBatch.js';
-import { refundPayeesAwaitingCash } from './payoutAccountGate.js';
+import { payoutLineAccountTypes, refundPayeesAwaitingCash } from './payoutAccountGate.js';
 import { refundHasOpenWalletCredit } from './partnerWalletCredit.js';
 import { buildRefundSettlementSummary } from '../sales/refundPayoutStatus.js';
 import { closeRefundUnpaidRemainder } from '../sales/payoutRoundingCloseOps.js';
@@ -160,13 +160,22 @@ export function payStaffShareBatch(db, payload = {}, actor = null) {
       error: `${batch.partyName} was already paid this week's staff-share batch (${batch.paidThisWeek.id}). New shares go in next week's batch.`,
     };
   }
-  const accountBlock = payoutAccountBlock([
-    { label: batch.partyName, bankName: batch.payeeBankName, accountNo: batch.payeeAccountNo },
-  ]);
+  // D2: from a bank / POS account the staff account is required; from the Cash Office, name + voucher.
+  const [accountType] = payoutLineAccountTypes(db, [{ treasuryAccountId }]);
+  const cashOffice = treasuryAccountIsCashOffice(accountType);
+  const cash = {
+    recipientName: clean(payload.cashRecipientName) || batch.partyName,
+    voucherReference: clean(payload.voucherReference),
+  };
+  const accountBlock = payoutRouteBlock({
+    accountTypes: [accountType || 'Bank'],
+    cash,
+    payees: [{ label: batch.partyName, bankName: batch.payeeBankName, accountNo: batch.payeeAccountNo }],
+  });
   if (accountBlock) return accountBlock;
 
   const payoutId = `SSB-${batch.branchId}-${listing.weekKey}-${partyId}`;
-  const reference = clean(payload.reference) || payoutId;
+  const reference = (cashOffice ? cash.voucherReference : clean(payload.reference)) || payoutId;
   const paid = [];
   const failed = [];
   for (const line of batch.readyLines) {
@@ -176,7 +185,9 @@ export function payStaffShareBatch(db, payload = {}, actor = null) {
           treasuryAccountId,
           amountNgn: line.owedNgn,
           reference,
-          note: `Weekly staff-share batch ${payoutId}`,
+          note: cashOffice
+            ? `Cash Office — paid to ${cash.recipientName}, voucher ${cash.voucherReference} · Weekly staff-share batch ${payoutId}`
+            : `Weekly staff-share batch ${payoutId}`,
           ...(payload.dateISO ? { dateISO: payload.dateISO } : {}),
         },
       ],

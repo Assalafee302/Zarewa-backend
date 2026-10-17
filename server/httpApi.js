@@ -640,6 +640,12 @@ import {
   listNegativeStockApprovalsForOm,
 } from './operations/negativeStockApprovalOps.js';
 import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWalletOps.js';
+import {
+  paymentRequestPayoutAccountBlock,
+  poTransportPayoutAccountBlock,
+  refundPayoutAccountBlock,
+} from './finance/payoutAccountGate.js';
+import { addMissingPayoutAccountSafe } from './finance/payoutAccountOps.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
 import { holdReceiptAwaitingCreditCheck } from './sales/receiptBankCheckHold.js';
 import { setPoTransportPayoutHold } from './procurement/poTransportPayoutHold.js';
@@ -7173,6 +7179,10 @@ export function registerHttpApi(app, db) {
         error: 'Recording haulage against treasury requires finance.pay permission.',
       });
     }
+    if (needsTreasury) {
+      const accountBlock = poTransportPayoutAccountBlock(db, poId, body.transportAgentId);
+      if (accountBlock) return res.status(400).json(accountBlock);
+    }
     return handlePatchWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped, ctx) => {
       const inOuter = Boolean(ctx?.withinEditApprovalTransaction);
       const syncOpts = inOuter ? { outerTransaction: true } : {};
@@ -7235,6 +7245,8 @@ export function registerHttpApi(app, db) {
           error: 'Recording haulage against treasury requires finance.pay permission.',
         });
       }
+      const accountBlock = poTransportPayoutAccountBlock(db, poId);
+      if (accountBlock) return res.status(400).json(accountBlock);
       const r = write.postPurchaseOrderTransport(db, poId, {
         treasuryAccountId: body.treasuryAccountId,
         amountNgn: body.amountNgn,
@@ -10965,6 +10977,37 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /** Finance Phase A (A1): fill a payee's missing bank + 10-digit account from the pay desk. */
+  app.post('/api/payout-accounts', requirePermission('finance.pay'), (req, res) => {
+    try {
+      const body = req.body || {};
+      const target = String(body.target || '').trim();
+      if (target === 'refund') {
+        const g = assertRefundIdInWorkspace(db, req, body.refundId);
+        if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error });
+      } else if (target === 'payment_request') {
+        const g = assertPaymentRequestIdInWorkspace(db, req, body.requestId);
+        if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error });
+      } else if (target === 'transport_agent' && body.poId) {
+        const g = assertPurchaseOrderIdInWorkspace(db, req, body.poId);
+        if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error });
+      }
+      const r = addMissingPayoutAccountSafe(db, body, req.user);
+      if (!r.ok) return res.status(r.code === 'NOT_FOUND' ? 404 : 400).json(r);
+      if (target === 'refund') {
+        const refund = getCustomerRefundDetail(db, String(body.refundId || ''));
+        return res.json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
+      }
+      if (target === 'transport_agent' && body.poId) {
+        return res.json(withPurchaseOrderWriteDelta(db, String(body.poId), r));
+      }
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.post('/api/refunds/:refundId/close-rounding', requirePermission('finance.pay'), (req, res) => {
     try {
       const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
@@ -10983,6 +11026,8 @@ export function registerHttpApi(app, db) {
     try {
       const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
       if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
+      const accountBlock = refundPayoutAccountBlock(db, req.params.refundId);
+      if (accountBlock) return res.status(400).json(accountBlock);
       const treasuryLines = normalizeTreasuryLines(req.body || {});
       const body = req.body || {};
       const r = payRefundEntryWithOptionalWalletRelease(db, req.params.refundId, {
@@ -11697,6 +11742,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests/:requestId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
+      const accountBlock = paymentRequestPayoutAccountBlock(db, req.params.requestId);
+      if (accountBlock) return res.status(400).json(accountBlock);
       const treasuryLines = normalizeTreasuryLines(req.body || {});
       const r = write.payPaymentRequest(db, req.params.requestId, {
         ...(req.body || {}),

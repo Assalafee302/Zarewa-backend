@@ -83,7 +83,15 @@ const { insertLedgerRows, insertAdvanceInEvent, recordCustomerAdvanceCash, inser
 const { tryPostCustomerAdvanceGl } = await imp('server/glOps.js');
 const { planAdvanceIn } = await imp('shared/lib/customerLedgerCore.js');
 const { tryPostCustomerReceiptRefundFundUnwindGl } = await imp('server/glOps.js');
-const { applyFinanceConfirmedReceiptBookAmountTx } = await imp('server/writeOps.js');
+const { applyFinanceConfirmedReceiptBookAmountTx, payRefundEntry, payPaymentRequest } = await imp('server/writeOps.js');
+const { buildRefundSettlementSummary, correctRefundPaidAmountNgn, resolveRefundStatus: resolveRefundStatusNow } = await imp('server/sales/refundPayoutStatus.js');
+const { refundHeldNetCashDueNgn } = await imp('server/finance/partnerWalletCredit.js');
+const { refundTillPayableNgn } = await imp('server/refundHandlers.js');
+const { payAccountsPayable } = await imp('server/writeOps.js');
+const { insertRefundRequest, previewRefundRequest } = await imp('server/controlOps.js');
+const { poSupplierPaymentCapBlock } = await imp('server/procurement/poSupplierAdvanceGuard.js');
+const { closeRefundUnpaidRemainder } = await imp('server/sales/payoutRoundingCloseOps.js');
+const { PAYOUT_ROUNDING_CLOSE_MAX_NGN } = await imp('shared/lib/payoutRoundingClose.js');
 const { nextTreasuryTransferBatchHumanId } = await imp('server/humanId.js');
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
@@ -104,6 +112,8 @@ const actor = {
   permissions: ['investigation.manage'],
 };
 const approvedAtISO = new Date().toISOString();
+/** The owner's own ERP user, for ERP pay functions that check who pays (admin passes segregation checks). */
+const ownerActor = { id: 'USR-ADMIN', displayName: approver, name: approver, username: 'admin', roleKey: 'admin', jobTitle: 'Operations Manager', permissions: ['*'] };
 const ALLOWED = {
   coil_lots: { key: 'coil_no', cols: ['unit_cost_ngn_per_kg', 'received_at_iso', 'gauge_label'] },
   production_jobs: { key: 'job_id', cols: ['status'] },
@@ -931,6 +941,197 @@ function runOp(item, op) {
     if (Number(after?.amount_ngn) !== op.amountNgn) throw new Error(`${item.id}: treasury line is ₦${after?.amount_ngn} after confirm, planned ₦${op.amountNgn}`);
     audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, before: op.expectedNgn, after: op.amountNgn, movementId: op.movementId });
     return { outcome: 'applied' };
+  }
+  if (op.kind === 'refundPay') {
+    // Bank payout(s) already made on an approved refund, recorded through the ERP's own payRefundEntry (ledger slices,
+    // treasury lines, payout journal, status). CHECK shows the ERP's settlement figures; never pays above them.
+    let r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    if (!r) return { outcome: 'skipped', why: 'refund not found' };
+    const total = op.lines.reduce((s, l) => s + l.amountNgn, 0);
+    if (op.repairPaidFirst) {
+      // Stored paid / status are stale (e.g. RF-9782 marked Paid with no payout line). payRefundEntry repairs them from
+      // treasury + wallet + credit before paying; here the same repair is evaluated on the row (with the approved amount
+      // a preceding op sets, when CHECK has not applied it yet).
+      const approvedNow = doApply ? Number(r.approved_amount_ngn) : Number(op.approvedAfterNgn ?? r.approved_amount_ngn);
+      const sim = { ...r, approved_amount_ngn: approvedNow };
+      const repaired = Math.round(correctRefundPaidAmountNgn(db, sim));
+      const lineCount = db.prepare(`SELECT COUNT(*) n FROM treasury_movements WHERE source_kind = 'REFUND' AND source_id = ? AND type = 'REFUND_PAYOUT'`).get(op.refundId).n;
+      if (Number(lineCount) > 0 && repaired >= op.expectedPaidBeforeNgn + total) return { outcome: 'skipped', why: `already paid (repaired paid ₦${repaired})` };
+      if (repaired !== op.expectedPaidBeforeNgn) return { outcome: 'skipped', why: `repaired paid ₦${repaired} ≠ planned before ₦${op.expectedPaidBeforeNgn}` };
+      r = { ...sim, paid_amount_ngn: repaired, status: resolveRefundStatusNow(db, { ...sim, paid_amount_ngn: repaired }) };
+    }
+    const paid = Math.round(Number(r.paid_amount_ngn) || 0);
+    if (paid === op.expectedPaidBeforeNgn + total) return { outcome: 'skipped', why: `already paid (₦${paid})` };
+    if (paid !== op.expectedPaidBeforeNgn) return { outcome: 'skipped', why: `paid ₦${paid} ≠ planned before ₦${op.expectedPaidBeforeNgn}` };
+    for (const l of op.lines) {
+      const blocked = lockedPeriodWhy(l.postedAtISO, 'Payout date');
+      if (blocked) return blockedOrThrow(item, blocked);
+    }
+    const approved = Math.round(Number(r.approved_amount_ngn || r.amount_ngn) || 0);
+    const summary = buildRefundSettlementSummary(db, r, {});
+    const held = refundHeldNetCashDueNgn(db, r, approved, {});
+    const tillPayable = refundTillPayableNgn({ cashOutstandingNgn: summary.cashOutstandingNgn, heldNetNgn: held, adminMayPayUncleared: true, openWalletNgn: summary.walletOpenNgn });
+    const view = { status: r.status, approvedNgn: approved, paidBeforeNgn: paid, cashOutstandingNgn: summary.cashOutstandingNgn, heldUnclearedNgn: held, walletOpenNgn: summary.walletOpenNgn, tillPayableNgn: tillPayable, payNgn: total, remainderAfterNgn: summary.cashOutstandingNgn - total };
+    if (total > tillPayable) return { outcome: 'BLOCKED', why: `payout ₦${total} > ERP payable now ₦${tillPayable}`, ...view };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const res = payRefundEntry(db, op.refundId, {
+      actor: ownerActor, paidBy: approver, workspaceBranchId: 'BR-KD', workspaceViewAll: true,
+      paymentNote: `${op.note} Recorded from the bank statement (payout already made). Phase 2 ${item.id}, approved by ${approver}.`.slice(0, 500),
+      paymentLines: op.lines.map((l) => ({ treasuryAccountId: l.treasuryAccountId, amountNgn: l.amountNgn, postedAtISO: l.postedAtISO, reference: l.reference, note: l.note })),
+    });
+    if (!res?.ok) throw new Error(`${item.id}: ${res?.error || 'refund payout failed'}${res?.code ? ` (${res.code})` : ''}`);
+    audit(item, { ...op, table: 'customer_refunds', key: op.refundId }, { table: 'customer_refunds', key: op.refundId, lines: op.lines, before: view, movements: (res.movements || []).map((m) => m?.id || m) });
+    return { outcome: 'applied', ...view };
+  }
+  if (op.kind === 'preqPay') {
+    // Approved payment request paid from the bank (lines = bank debits), through the ERP's payPaymentRequest.
+    const p = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(op.requestId);
+    if (!p) return { outcome: 'skipped', why: 'payment request not found' };
+    const total = op.lines.reduce((s, l) => s + l.amountNgn, 0);
+    const paid = Math.round(Number(p.paid_amount_ngn) || 0);
+    if (paid >= total && paid === op.expectedPaidBeforeNgn + total) return { outcome: 'skipped', why: `already paid (₦${paid})` };
+    if (paid !== op.expectedPaidBeforeNgn) return { outcome: 'skipped', why: `paid ₦${paid} ≠ planned before ₦${op.expectedPaidBeforeNgn}` };
+    if (!/approved/i.test(String(p.approval_status))) return { outcome: 'skipped', why: `status ${p.approval_status}` };
+    if (Number(p.amount_requested_ngn) - paid < total) return { outcome: 'BLOCKED', why: `outstanding ₦${Number(p.amount_requested_ngn) - paid} < payout ₦${total}` };
+    for (const l of op.lines) {
+      const blocked = lockedPeriodWhy(l.postedAtISO, 'Payout date');
+      if (blocked) return blockedOrThrow(item, blocked);
+    }
+    const view = { requested: Number(p.amount_requested_ngn), paidBeforeNgn: paid, payNgn: total, approvedBy: p.approved_by };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const res = payPaymentRequest(db, op.requestId, {
+      actor: ownerActor, paidBy: approver, createdBy: approver, workspaceBranchId: 'BR-KD', workspaceViewAll: true,
+      note: `${op.note} Recorded from the bank statement. Phase 2 ${item.id}.`.slice(0, 500),
+      paymentLines: op.lines.map((l) => ({ treasuryAccountId: l.treasuryAccountId, amountNgn: l.amountNgn, postedAtISO: l.postedAtISO, reference: l.reference, note: l.note })),
+    });
+    if (!res?.ok) throw new Error(`${item.id}: ${res?.error || 'payment request payout failed'}`);
+    audit(item, { ...op, table: 'payment_requests', key: op.requestId }, { table: 'payment_requests', key: op.requestId, lines: op.lines, before: view });
+    return { outcome: 'applied', ...view };
+  }
+  if (op.kind === 'refundRequestCreate') {
+    // A refund REQUEST only (status Pending), requested by the owner through the ERP's insertRefundRequest.
+    // Approval is left to the named approver in the app (never self-approved here); payout is a later item.
+    const qt = db.prepare(`SELECT id, customer_id, customer_name, branch_id FROM quotations WHERE id = ?`).get(op.quotationRef);
+    if (!qt) return { outcome: 'skipped', why: 'quotation not found' };
+    const dup = db
+      .prepare(`SELECT refund_id, status FROM customer_refunds WHERE quotation_ref = ? AND amount_ngn = ? AND reason_category LIKE ? AND status NOT IN ('Cancelled','Rejected')`)
+      .get(op.quotationRef, op.amountNgn, `%${op.category}%`);
+    if (dup) return { outcome: 'skipped', why: `already requested as ${dup.refund_id} (${dup.status})` };
+    const payload = {
+      customerID: qt.customer_id, quotationRef: op.quotationRef, amountNgn: op.amountNgn, reasonCategory: [op.category],
+      calculationLines: [{ label: op.label, amountNgn: op.amountNgn, category: op.category }],
+      payeeName: op.payeeName, product: op.product || '', requestedAtISO: op.requestedAtISO,
+    };
+    let preview = null;
+    try {
+      preview = previewRefundRequest(db, { ...payload, actor: ownerActor });
+    } catch (e) {
+      preview = { ok: false, error: String(e.message || e) };
+    }
+    const view = {
+      customer: `${qt.customer_id} ${qt.customer_name}`,
+      previewOk: preview?.ok !== false,
+      previewError: preview?.ok === false ? preview.error : undefined,
+      suggestedNgn: preview?.suggestedAmountNgn ?? preview?.preview?.suggestedAmountNgn ?? undefined,
+      approver: op.approverNote,
+    };
+    if (!doApply) return { outcome: preview?.ok === false ? 'BLOCKED' : 'would apply', why: view.previewError, ...view };
+    const r = insertRefundRequest(db, payload, ownerActor, qt.branch_id || 'BR-KD');
+    if (!r?.ok) throw new Error(`${item.id}: ${r?.error || 'refund request failed'}`);
+    const id = r.refundID || r.refundId || r.refund?.refund_id || r.id;
+    audit(item, { ...op, table: 'customer_refunds', key: id }, { table: 'customer_refunds', key: id, status: 'Pending', approver: op.approverNote, payload });
+    return { outcome: 'applied', refundId: id, ...view };
+  }
+  if (op.kind === 'apPay') {
+    // Supplier invoice payment from the bank, through the ERP's payAccountsPayable (AP row, PO paid, treasury, GL).
+    const ap = db.prepare(`SELECT * FROM accounts_payable WHERE ap_id = ?`).get(op.apId);
+    if (!ap) return { outcome: 'skipped', why: 'payable not found' };
+    const paid = Math.round(Number(ap.paid_ngn) || 0);
+    const dup = db
+      .prepare(`SELECT id FROM treasury_movements WHERE type = 'AP_PAYMENT' AND source_id = ? AND treasury_account_id = ? AND amount_ngn = ? AND posted_at_iso LIKE ?`)
+      .get(op.apId, op.treasuryAccountId, -op.amountNgn, `${op.postedAtISO.slice(0, 10)}%`);
+    if (dup) return { outcome: 'skipped', why: `already paid as ${dup.id}` };
+    if (paid !== op.expectedPaidBeforeNgn) return { outcome: 'skipped', why: `paid ₦${paid} ≠ planned before ₦${op.expectedPaidBeforeNgn}` };
+    const blocked = lockedPeriodWhy(op.postedAtISO, 'AP payment date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const cap = ap.po_ref ? poSupplierPaymentCapBlock(db, ap.po_ref, '') : null;
+    const view = { supplier: ap.supplier_name, invoiceNgn: Number(ap.amount_ngn), paidBeforeNgn: paid, payNgn: op.amountNgn, outstandingAfterNgn: Number(ap.amount_ngn) - paid - op.amountNgn };
+    if (cap) return { outcome: 'BLOCKED', why: cap.error || 'PO payment cap', ...view };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const r = payAccountsPayable(db, op.apId, {
+      actor: ownerActor, createdBy: approver, amountNgn: op.amountNgn, treasuryAccountId: op.treasuryAccountId, postedAtISO: op.postedAtISO,
+      dateISO: op.postedAtISO.slice(0, 10), paymentMethod: 'Bank Transfer', reference: op.reference, workspaceBranchId: 'BR-KD', workspaceViewAll: true,
+    });
+    if (!r?.ok) throw new Error(`${item.id}: ${r?.error || 'supplier payment failed'}`);
+    audit(item, { ...op, table: 'accounts_payable', key: op.apId }, { table: 'accounts_payable', key: op.apId, before: view, note: op.note });
+    return { outcome: 'applied', ...view };
+  }
+  if (op.kind === 'receiptConfirmedSplit') {
+    // Split receipt: confirm the bank total through the ERP's finance-confirm path, which corrects the largest line.
+    const rec = db.prepare(`SELECT id, amount_ngn, date_iso, quotation_ref FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    if (!rec) return { outcome: 'skipped', why: 'receipt not found' };
+    const tm = db.prepare(`SELECT id, amount_ngn FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (Number(rec.amount_ngn) === op.totalAfterNgn && Number(tm?.amount_ngn) === op.lineAfterNgn) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (Number(rec.amount_ngn) !== op.totalBeforeNgn || Number(tm?.amount_ngn) !== op.lineBeforeNgn) {
+      return { outcome: 'skipped', why: `receipt ₦${rec.amount_ngn} / line ₦${tm?.amount_ngn} ≠ planned ₦${op.totalBeforeNgn} / ₦${op.lineBeforeNgn}` };
+    }
+    const lines = db.prepare(`SELECT id, amount_ngn FROM treasury_movements WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = ? AND type = 'RECEIPT_IN' ORDER BY ABS(amount_ngn) DESC`).all(op.receiptId);
+    if (lines[0]?.id !== op.movementId) return { outcome: 'skipped', why: `largest line is ${lines[0]?.id}, not ${op.movementId}` };
+    const blocked = lockedPeriodWhy(rec.date_iso, 'Receipt date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    if (!doApply) return { outcome: 'would apply', quotation: rec.quotation_ref, lines: lines.map((l) => `${l.id} ₦${l.amount_ngn}`) };
+    const r = applyFinanceConfirmedReceiptBookAmountTx(db, op.receiptId, op.totalAfterNgn, actor, { allowNegativeBalance: true });
+    if (!r?.ok) throw new Error(`${item.id}: ${r?.error}`);
+    const after = db.prepare(`SELECT amount_ngn FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (Number(after?.amount_ngn) !== op.lineAfterNgn) throw new Error(`${item.id}: line is ₦${after?.amount_ngn} after confirm, planned ₦${op.lineAfterNgn}`);
+    audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, before: op.totalBeforeNgn, after: op.totalAfterNgn, line: `${op.movementId} ${op.lineBeforeNgn} → ${op.lineAfterNgn}` });
+    return { outcome: 'applied' };
+  }
+  if (op.kind === 'refundRoundingClose') {
+    // ERP rounding close (no money out) — only within the ERP's own limit.
+    const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    if (!r) return { outcome: 'skipped', why: 'refund not found' };
+    const out = Math.round(Number(buildRefundSettlementSummary(db, r, {}).cashOutstandingNgn) || 0);
+    // CHECK of a close that only exists after an earlier item of the same run (e.g. the payout before it).
+    if (!doApply && op.afterItem && out !== op.expectedRemainderNgn) {
+      return { outcome: 'would apply', why: `remainder ₦${op.expectedRemainderNgn} expected once ${op.afterItem} has posted (now ₦${out})` };
+    }
+    if (out <= 1) return { outcome: 'skipped', why: `nothing outstanding (₦${out})` };
+    if (out !== op.expectedRemainderNgn) return { outcome: 'skipped', why: `outstanding ₦${out} ≠ planned ₦${op.expectedRemainderNgn}` };
+    if (out > PAYOUT_ROUNDING_CLOSE_MAX_NGN) return { outcome: 'BLOCKED', why: `₦${out} is above the ERP rounding limit ₦${PAYOUT_ROUNDING_CLOSE_MAX_NGN}` };
+    if (!doApply) return { outcome: 'would apply', remainderNgn: out };
+    const res = closeRefundUnpaidRemainder(db, op.refundId, ownerActor, 'rounding');
+    if (!res?.ok) throw new Error(`${item.id}: ${res?.error}`);
+    audit(item, { ...op, table: 'customer_refunds', key: op.refundId }, { table: 'customer_refunds', key: op.refundId, remainderClosedNgn: out, after: res.after });
+    return { outcome: 'applied', remainderNgn: out };
+  }
+  if (op.kind === 'refundRemainderWriteOff') {
+    // Owner decision: a small unpaid refund remainder above the rounding limit is written off — a REFUND_CONCESSION
+    // ledger row records it, and remainder_closed_ngn (the ERP's no-money-out close) settles the refund. No cash moves.
+    const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    if (!r) return { outcome: 'skipped', why: 'refund not found' };
+    const dup = db.prepare(`SELECT id FROM ledger_entries WHERE type = 'REFUND_CONCESSION' AND bank_reference = ? AND amount_ngn = ?`).get(op.refundId, op.amountNgn);
+    const out = Math.round(Number(buildRefundSettlementSummary(db, r, {}).cashOutstandingNgn) || 0);
+    if (dup && out <= 1) return { outcome: 'skipped', why: `already written off (${dup.id})` };
+    if (out !== op.amountNgn) return { outcome: 'skipped', why: `outstanding ₦${out} ≠ planned ₦${op.amountNgn}` };
+    const view = { customer: r.customer_name, quotation: r.quotation_ref, approvedNgn: Number(r.approved_amount_ngn), paidNgn: Number(r.paid_amount_ngn), remainderNgn: out };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    if (!dup) {
+      insertLedgerRows(db, [{
+        type: 'REFUND_CONCESSION', customerID: r.customer_id, customerName: r.customer_name, amountNgn: op.amountNgn, quotationRef: r.quotation_ref || '',
+        paymentMethod: null, bankReference: op.refundId, purpose: 'Sales refund payout', note: `Refund ${op.refundId} — ${op.reason} (₦${op.amountNgn}). Phase 2 ${item.id}.`,
+        atISO: new Date().toISOString(), createdByUserId: ownerActor.id, createdByName: approver,
+      }], r.branch_id || 'BR-KD', { allowManagerClearedQuotationRefs: r.quotation_ref ? [r.quotation_ref] : undefined });
+    }
+    const sentence = `${op.reason}: remainder ₦${out.toLocaleString('en-NG')} closed with no money out (owner, ${approvedAtISO.slice(0, 10)}).`;
+    db.prepare(`UPDATE customer_refunds SET remainder_closed_ngn = COALESCE(remainder_closed_ngn, 0) + ?, remainder_closed_reason = ?, payment_note = TRIM(CONCAT(COALESCE(payment_note, ''), ' ', ?)) WHERE refund_id = ?`)
+      .run(out, op.reason, sentence, op.refundId);
+    const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    const status = resolveRefundStatusNow(db, row);
+    if (status && status !== row.status) db.prepare(`UPDATE customer_refunds SET status = ? WHERE refund_id = ?`).run(status, op.refundId);
+    appendAuditLog(db, { actor: ownerActor, action: 'refund.remainder_written_off', entityKind: 'refund', entityId: op.refundId, note: sentence, details: { remainderClosedNgn: out, previousStatus: r.status, status } });
+    audit(item, { ...op, table: 'customer_refunds', key: op.refundId }, { table: 'customer_refunds', key: op.refundId, before: view, status, concessionNgn: op.amountNgn });
+    return { outcome: 'applied', status, ...view };
   }
   if (op.kind === 'expenseGlRepair') {
     // A postExpense cut off after its expense row and treasury line: add what is missing — the expense-payment

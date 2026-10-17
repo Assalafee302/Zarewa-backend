@@ -1020,6 +1020,11 @@ function runOp(item, op) {
       paymentLines: op.lines.map((l) => ({ treasuryAccountId: l.treasuryAccountId, amountNgn: l.amountNgn, postedAtISO: l.postedAtISO, reference: l.reference, note: l.note })),
     });
     if (!res?.ok) throw new Error(`${item.id}: ${res?.error || 'payment request payout failed'}`);
+    if (op.payeeName && !String(p.payee_name || '').trim()) {
+      // Payee named on the bank line, request had none (owner instruction).
+      db.prepare(`UPDATE payment_requests SET payee_name = ? WHERE request_id = ?`).run(op.payeeName, op.requestId);
+      audit(item, { ...op, table: 'payment_requests', key: op.requestId }, { table: 'payment_requests', key: op.requestId, column: 'payee_name', before: p.payee_name || '', after: op.payeeName });
+    }
     audit(item, { ...op, table: 'payment_requests', key: op.requestId }, { table: 'payment_requests', key: op.requestId, lines: op.lines, before: view });
     return { outcome: 'applied', ...view };
   }
@@ -1341,6 +1346,34 @@ function runOp(item, op) {
     }
     audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, ...view, after, relocked: true });
     return { outcome: 'applied', ...view, after, relocked: true };
+  }
+  if (op.kind === 'reconMatchReviewRow') {
+    // One Review bank row → Matched to the ERP line posted earlier in this plan, found by account, type, amount and Lagos
+    // day (and source id when known) and not yet linked anywhere; through the ERP's updateBankReconciliationLine.
+    const row = db.prepare(`SELECT * FROM bank_reconciliation_lines WHERE id = ?`).get(op.rowId);
+    if (!row) return { outcome: 'skipped', why: 'bank row not found' };
+    const f = op.find;
+    const start = new Date(`${f.day}T00:00:00+01:00`).toISOString();
+    const end = new Date(`${f.day}T23:59:59.999+01:00`).toISOString();
+    const cands = db
+      .prepare(`SELECT id, source_id FROM treasury_movements WHERE treasury_account_id = ? AND type = ? AND amount_ngn = ? AND posted_at_iso BETWEEN ? AND ?`)
+      .all(op.treasuryAccountId, f.type, f.amountNgn, start, end)
+      .filter((t) => !f.sourceId || t.source_id === f.sourceId)
+      .filter((t) => !db.prepare(`SELECT id FROM bank_reconciliation_lines WHERE system_match LIKE ? AND id <> ?`).get(`%${t.id}%`, op.rowId));
+    if (row.status === 'Matched' && cands.some((t) => String(row.system_match).startsWith(t.id))) return { outcome: 'skipped', why: 'already matched' };
+    if (row.status !== 'Review') return { outcome: 'skipped', why: `${op.rowId} is ${row.status}` };
+    if (!cands.length) {
+      if (!doApply) return { outcome: 'would apply', why: `after ${op.afterItem} posts the line`, row: op.rowId };
+      return { outcome: 'skipped', why: 'ERP line not found' };
+    }
+    if (cands.length > 1) return { outcome: 'skipped', why: `more than one candidate: ${cands.map((t) => t.id).join(', ')}` };
+    const bankId = (String(row.system_match).match(/MP-[^ ·]+/) || [''])[0];
+    const match = [cands[0].id, bankId, op.note].filter(Boolean).join(' · ');
+    if (!doApply) return { outcome: 'would apply', row: op.rowId, movementId: cands[0].id };
+    const res = updateBankReconciliationLine(db, op.rowId, { systemMatch: match, status: 'Matched' }, ownerActor);
+    if (!res?.ok) throw new Error(`${item.id}: ${op.rowId} — ${res?.error}`);
+    audit(item, { ...op, table: 'bank_reconciliation_lines', key: op.rowId }, { table: 'bank_reconciliation_lines', key: op.rowId, before: row.system_match, after: match });
+    return { outcome: 'applied', row: op.rowId, movementId: cands[0].id };
   }
   if (op.kind === 'refundRoundingClose') {
     // ERP rounding close (no money out) — only within the ERP's own limit.

@@ -649,6 +649,7 @@ import { addMissingPayoutAccountSafe } from './finance/payoutAccountOps.js';
 import { assertBmOmOverride, overQuoteApprovalFromBody } from './finance/managerOverride.js';
 import { receiptDuplicatesWithin24h } from './finance/receiptDuplicateOps.js';
 import { receiptDuplicateRefusal } from '../shared/lib/receiptDuplicateGuard.js';
+import { cancelReceiptForRefundCredit } from './sales/receiptUseRefundCreditOps.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
 import { holdReceiptAwaitingCreditCheck } from './sales/receiptBankCheckHold.js';
 import { setPoTransportPayoutHold } from './procurement/poTransportPayoutHold.js';
@@ -6364,6 +6365,37 @@ export function registerHttpApi(app, db) {
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  /**
+   * Finance Phase A (A6): no bank payment behind this receipt and the customer has refund credit —
+   * cancel the cash receipt (cashier's name, audited) so the credit can be applied to the quotation.
+   */
+  app.post(
+    '/api/sales-receipts/:receiptId/use-refund-credit-instead',
+    requirePermission(['finance.pay', 'finance.post']),
+    (req, res) => {
+      try {
+        const rid = String(req.params.receiptId || '');
+        const rg = assertSalesReceiptIdInWorkspace(db, req, rid);
+        if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
+        const r = cancelReceiptForRefundCredit(
+          db,
+          rid,
+          { note: req.body?.note, branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID },
+          req.user
+        );
+        if (!r.ok) return res.status(400).json(r);
+        const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
+        const bags = { receipts: receipt ? [receipt] : [] };
+        const quotation = r.quotationRef ? getQuotation(db, r.quotationRef) : null;
+        if (quotation) bags.quotations = [quotation];
+        return res.status(200).json(withWriteDelta({ ...r }, bags));
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
       }
     }
   );

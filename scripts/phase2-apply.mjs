@@ -88,7 +88,7 @@ const { tryPostExpensePaymentReversalGlTx } = await imp('server/accountingPostin
 const { buildRefundSettlementSummary, correctRefundPaidAmountNgn, resolveRefundStatus: resolveRefundStatusNow } = await imp('server/sales/refundPayoutStatus.js');
 const { refundHeldNetCashDueNgn } = await imp('server/finance/partnerWalletCredit.js');
 const { refundTillPayableNgn } = await imp('server/refundHandlers.js');
-const { payAccountsPayable, postPurchaseOrderTransport } = await imp('server/writeOps.js');
+const { payAccountsPayable, postPurchaseOrderTransport, syncPurchaseOrderTransportPaymentState } = await imp('server/writeOps.js');
 const { insertRefundRequest, previewRefundRequest } = await imp('server/controlOps.js');
 const { poSupplierPaymentCapBlock } = await imp('server/procurement/poSupplierAdvanceGuard.js');
 const { closeRefundUnpaidRemainder } = await imp('server/sales/payoutRoundingCloseOps.js');
@@ -1177,6 +1177,60 @@ function runOp(item, op) {
     if (after.length !== 1) throw new Error(`${item.id}: ${after.length} lines of ₦${op.amountNgn} after posting`);
     audit(item, { ...op, table: 'treasury_movements', key: after[0].id }, { table: 'treasury_movements', key: after[0].id, po: op.poId, amountNgn: op.amountNgn, before: view });
     return { outcome: 'applied', movementId: after[0].id, ...view };
+  }
+  if (op.kind === 'poHaulageFeeSet') {
+    // Agreed haulage on the PO set to the actual cost on the owner's instruction. The ERP's own path
+    // (agreePoHaulageFeeTx) only lowers a fee; this sets it directly with the same audit action, then lets the ERP
+    // re-derive the PO's transport state (syncPurchaseOrderTransportPaymentState).
+    const po = db.prepare(`SELECT po_id, transport_amount_ngn, transport_paid_ngn FROM purchase_orders WHERE po_id = ?`).get(op.poId);
+    if (!po) return { outcome: 'skipped', why: 'PO not found' };
+    const fee = Math.round(Number(po.transport_amount_ngn) || 0);
+    if (fee === op.after) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (fee !== op.before) return { outcome: 'skipped', why: `fee ₦${fee} ≠ planned before ₦${op.before}` };
+    const paidLines = -Math.round(Number(db.prepare(`SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE source_kind = 'PURCHASE_ORDER' AND source_id = ? AND type = 'TRANSPORT_PAYMENT'`).get(op.poId).s) || 0);
+    if (op.expectedPaidNgn != null && paidLines !== op.expectedPaidNgn) return { outcome: 'skipped', why: `haulage paid ₦${paidLines} ≠ planned ₦${op.expectedPaidNgn}` };
+    const view = { po: op.poId, feeBeforeNgn: fee, feeAfterNgn: op.after, haulagePaidNgn: paidLines };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    db.prepare(`UPDATE purchase_orders SET transport_amount_ngn = ? WHERE po_id = ?`).run(op.after, op.poId);
+    appendAuditLog(db, { actor: ownerActor, action: 'purchase_order.haulage_fee_agreed', entityKind: 'purchase_order', entityId: op.poId, note: op.note, details: { poId: op.poId, previousAmountNgn: fee, agreedAmountNgn: op.after, phase2: item.id } });
+    syncPurchaseOrderTransportPaymentState(db, op.poId, ownerActor);
+    const after = db.prepare(`SELECT transport_amount_ngn, transport_paid_ngn, transport_paid FROM purchase_orders WHERE po_id = ?`).get(op.poId);
+    if (Math.round(Number(after.transport_amount_ngn)) !== op.after) throw new Error(`${item.id}: fee is ₦${after.transport_amount_ngn} after set`);
+    audit(item, { ...op, table: 'purchase_orders', key: op.poId }, { table: 'purchase_orders', key: op.poId, column: 'transport_amount_ngn', before: fee, after: op.after, state: after });
+    return { outcome: 'applied', ...view, state: after };
+  }
+  if (op.kind === 'reconImportBatch') {
+    // Statement lines → bank_reconciliation_lines, one row per bank line (September layout): signed settlement amount,
+    // system_match "<ERP line(s)> · <bank id> · <note>", Matched or Review. A bank id already on file is skipped; an
+    // ERP line already linked to a bank line of another month stops the batch (listed, nothing inserted).
+    const plannedIds = [...new Set(op.rows.flatMap((r) => r.movementIds))];
+    const tms = plannedIds.length ? db.prepare(`SELECT id, treasury_account_id FROM treasury_movements WHERE id IN (${plannedIds.map(() => '?').join(',')})`).all(...plannedIds) : [];
+    const missing = plannedIds.filter((id) => !tms.some((t) => t.id === id && Number(t.treasury_account_id) === op.treasuryAccountId));
+    if (missing.length) return { outcome: 'skipped', why: `ERP line(s) not on account ${op.treasuryAccountId}: ${missing.join(', ')}` };
+    const conflicts = [];
+    for (const id of plannedIds) {
+      const other = db.prepare(`SELECT id, bank_date_iso FROM bank_reconciliation_lines WHERE system_match LIKE ? AND bank_date_iso NOT LIKE ?`).get(`%${id}%`, `${op.month}%`);
+      if (other) conflicts.push(`${id} on ${other.id} (${other.bank_date_iso})`);
+    }
+    if (conflicts.length) return { outcome: 'skipped', why: `already linked in another month: ${conflicts.join('; ')}` };
+    const todo = op.rows.filter((r) => !db.prepare(`SELECT id FROM bank_reconciliation_lines WHERE system_match LIKE ?`).get(`%· ${r.bankId}%`));
+    if (!todo.length) return { outcome: 'skipped', why: 'all bank lines already imported' };
+    const view = { rows: op.rows.length, toInsert: todo.length, matched: todo.filter((r) => r.status === 'Matched').length, review: todo.filter((r) => r.status === 'Review').length };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const last = db.prepare(`SELECT id FROM bank_reconciliation_lines WHERE id LIKE 'BKR-KD-26-%' ORDER BY id DESC LIMIT 1`).get();
+    let n = Number(String(last?.id || '0').replace(/\D+/g, '').slice(-4)) || 0;
+    const ins = db.prepare(
+      `INSERT INTO bank_reconciliation_lines (id, bank_date_iso, description, amount_ngn, system_match, status, branch_id, treasury_account_id) VALUES (?,?,?,?,?,?,?,?)`
+    );
+    const created = [];
+    for (const r of todo) {
+      const id = `BKR-KD-26-${String(++n).padStart(4, '0')}`;
+      const match = [r.movementIds.length ? r.movementIds.join(' + ') : '—', r.bankId, r.note].filter(Boolean).join(' · ');
+      ins.run(id, r.bankDateISO, r.description, r.amountNgn, match, r.status, op.branchId, op.treasuryAccountId);
+      created.push(id);
+    }
+    audit(item, { ...op, rows: undefined, table: 'bank_reconciliation_lines', key: `${created[0]}..${created.at(-1)}` }, { table: 'bank_reconciliation_lines', inserted: created.length, first: created[0], last: created.at(-1), matched: view.matched, review: view.review });
+    return { outcome: 'applied', ...view, first: created[0], last: created.at(-1) };
   }
   if (op.kind === 'refundRoundingClose') {
     // ERP rounding close (no money out) — only within the ERP's own limit.

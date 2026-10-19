@@ -70,7 +70,17 @@ const { capexExpenseAssetMeta } = await imp('shared/expenseCategories.js');
 const { insertTreasuryMovementTx } = await imp('server/writeOps.js');
 const { nextExpenseHumanId } = await imp('server/humanId.js');
 const { tryPostExpensePaymentGlTx } = await imp('server/accountingPostingOps.js');
-const { assertPeriodOpen } = await imp('server/controlOps.js');
+const { assertPeriodOpen: assertPeriodOpenErp } = await imp('server/controlOps.js');
+const { glAccountForExpenseCategory } = await imp('shared/lib/expenseCategoryGlMap.js');
+/**
+ * CHECK inside a withPeriodUnlocked item: that month counts as open (APPLY really unlocks it, so the ERP's own
+ * check passes there). Every other month keeps the ERP's lock check.
+ */
+let checkOpenPeriodKey = '';
+const assertPeriodOpen = (db, dateISO, label) => {
+  if (!doApply && checkOpenPeriodKey && String(dateISO || '').slice(0, 7) === checkOpenPeriodKey) return checkOpenPeriodKey;
+  return assertPeriodOpenErp(db, dateISO, label);
+};
 const { getExpenseCategoryLane } = await imp('shared/expenseCategoryLanes.js');
 const { reclassifyPaidPaymentRequestCategory } = await imp('server/expenseCategoryReclassOps.js');
 const { createInvestigationCase, ensureInvestigationSchema } = await imp('server/office/investigationOps.js');
@@ -1867,6 +1877,118 @@ function runOp(item, op) {
       table: 'treasury_movements', key: r.treasuryMovementId, ...view, unwindAdvanceNgn: r.unwindAdvanceNgn, unwindPayableNgn: r.unwindPayableNgn,
     });
     return { outcome: 'applied', treasuryMovementId: r.treasuryMovementId, ...view };
+  }
+  if (op.kind === 'withPeriodUnlocked') {
+    // Owner-approved posting into a locked month (audited unlock → inner ops on their original dates → relock with
+    // the original reason; the relock runs even when an inner op fails). CHECK treats that month as open.
+    const lock = db.prepare(`SELECT * FROM accounting_period_locks WHERE period_key = ?`).get(op.periodKey);
+    if (!lock) return { outcome: 'skipped', why: `${op.periodKey} is not locked — nothing to unlock (stop: check with the owner)` };
+    const view = { periodKey: op.periodKey, lock: { reason: lock.reason, lockedAt: lock.locked_at_iso, by: lock.locked_by_name } };
+    const inner = [];
+    if (!doApply) {
+      checkOpenPeriodKey = op.periodKey;
+      try {
+        for (const o of op.ops) inner.push({ op: o.kind, ...runOp(item, o) });
+      } finally {
+        checkOpenPeriodKey = '';
+      }
+      const blocked = inner.find((r) => r.outcome === 'BLOCKED');
+      return { outcome: blocked ? 'BLOCKED' : inner.every((r) => r.outcome === 'skipped') ? 'skipped' : 'would apply', why: blocked?.why, ...view, inner };
+    }
+    const un = unlockAccountingPeriod(db, op.periodKey, ownerActor, `${item.id}: ${op.unlockReason}`);
+    if (!un?.ok) throw new Error(`${item.id}: unlock — ${un?.error}`);
+    try {
+      for (const o of op.ops) inner.push({ op: o.kind, ...runOp(item, o) });
+    } finally {
+      const re = lockAccountingPeriod(db, { periodKey: op.periodKey, reason: lock.reason || op.relockReason }, ownerActor);
+      if (!re?.ok) throw new Error(`${item.id}: RELOCK FAILED — ${re?.error}. Lock ${op.periodKey} in the app now.`);
+    }
+    audit(item, { ...op, table: 'accounting_period_locks', key: op.periodKey }, { table: 'accounting_period_locks', key: op.periodKey, ...view, unlockReason: op.unlockReason, inner: inner.map((r) => `${r.op}:${r.outcome}`), relocked: true });
+    return { outcome: inner.some((r) => r.outcome === 'applied') ? 'applied' : 'skipped', ...view, inner, relocked: true };
+  }
+  if (op.kind === 'paymentRequestLegReverse') {
+    // Reverse ONE treasury leg of a paid payment request (PAYMENT_REQUEST_REVERSAL_IN on the leg's own date, like the
+    // ERP's payout reversal) with the inverse expense-payment journal, and reduce the request and its expense by that
+    // leg only. The other legs stay. The audit row keeps the expense / request / legs figures before and after.
+    const tm = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm) return { outcome: 'skipped', why: 'treasury line not found' };
+    const rev = db.prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = ?`).get(op.movementId);
+    if (rev) return { outcome: 'skipped', why: `already reversed by ${rev.id}` };
+    if (tm.type !== 'PAYMENT_REQUEST_OUT' || tm.source_id !== op.requestId || Number(tm.treasury_account_id) !== op.treasuryAccountId || Number(tm.amount_ngn) !== -op.amountNgn) {
+      return { outcome: 'skipped', why: `line is ${tm.type} ${tm.source_id} acct ${tm.treasury_account_id} ₦${tm.amount_ngn}, not as planned` };
+    }
+    const exp = db.prepare(`SELECT * FROM expenses WHERE expense_id = ?`).get(op.expenseId);
+    const pr = db.prepare(`SELECT request_id, expense_id, amount_requested_ngn, paid_amount_ngn, approval_status FROM payment_requests WHERE request_id = ?`).get(op.requestId);
+    if (!exp || !pr || pr.expense_id !== op.expenseId) return { outcome: 'skipped', why: 'expense or payment request not found / not linked' };
+    const legs = db
+      .prepare(`SELECT id, treasury_account_id AS a, amount_ngn AS n FROM treasury_movements WHERE source_id = ? AND type = 'PAYMENT_REQUEST_OUT'`)
+      .all(op.requestId)
+      .filter((l) => !db.prepare(`SELECT 1 FROM treasury_movements WHERE reverses_movement_id = ?`).get(l.id));
+    const figures = {
+      expenseNgn: Math.round(Number(exp.amount_ngn)),
+      requestedNgn: Math.round(Number(pr.amount_requested_ngn)),
+      paidNgn: Math.round(Number(pr.paid_amount_ngn)),
+      liveLegsNgn: -legs.reduce((s, l) => s + Math.round(Number(l.n)), 0),
+      legs: legs.map((l) => `${l.id} acct ${l.a} ₦${l.n}`),
+    };
+    const e = op.expectBefore;
+    if (figures.expenseNgn !== e.expenseNgn || figures.requestedNgn !== e.requestedNgn || figures.paidNgn !== e.paidNgn || figures.liveLegsNgn !== e.liveLegsNgn) {
+      return { outcome: 'skipped', why: `figures now ${JSON.stringify(figures)} ≠ planned ${JSON.stringify(e)}` };
+    }
+    // The original journal must be the expense-payment journal of this leg (Dr the category account / Cr this cash).
+    const cash = ensureTreasuryCashGlAccount(db, op.treasuryAccountId);
+    const catCode = glAccountForExpenseCategory(exp.category || 'Others', { capexAsAsset: true }).accountCode;
+    const jeLines = db
+      .prepare(
+        `SELECT je.id, je.source_kind, je.entry_date_iso, a.code, l.debit_ngn, l.credit_ngn FROM gl_journal_entries je
+         JOIN gl_journal_lines l ON l.journal_id = je.id JOIN gl_accounts a ON a.id = l.account_id WHERE je.source_id = ?`
+      )
+      .all(op.movementId);
+    const jeOk =
+      jeLines.length === 2 &&
+      jeLines.some((l) => l.code === catCode && Number(l.debit_ngn) === op.amountNgn) &&
+      jeLines.some((l) => l.code === cash.accountCode && Number(l.credit_ngn) === op.amountNgn);
+    if (!jeOk || catCode !== op.expectDebitCode) {
+      return { outcome: 'skipped', why: `journal for ${op.movementId} is not Dr ${op.expectDebitCode} / Cr ${cash.accountCode} ₦${op.amountNgn} (category ${exp.category} → ${catCode}; lines ${JSON.stringify(jeLines)})` };
+    }
+    const blocked = lockedPeriodWhy(tm.posted_at_iso, 'Reversal date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const after = { expenseNgn: figures.expenseNgn - op.amountNgn, requestedNgn: figures.requestedNgn - op.amountNgn, paidNgn: figures.paidNgn - op.amountNgn, liveLegsNgn: figures.liveLegsNgn - op.amountNgn };
+    const view = { line: tm.id, postedAt: tm.posted_at_iso, journal: jeLines[0].id, before: figures, after };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const mv = insertTreasuryMovementTx(db, {
+      type: 'PAYMENT_REQUEST_REVERSAL_IN',
+      treasuryAccountId: op.treasuryAccountId,
+      amountNgn: op.amountNgn,
+      postedAtISO: tm.posted_at_iso,
+      reference: tm.reference,
+      counterpartyKind: tm.counterparty_kind,
+      counterpartyId: tm.counterparty_id,
+      counterpartyName: tm.counterparty_name,
+      sourceKind: tm.source_kind,
+      sourceId: tm.source_id,
+      note: `Phase 2 ${item.id}: ${op.reason}. Approved by ${approver}.`.slice(0, 500),
+      createdBy: approver,
+      reversesMovementId: tm.id,
+      branchId: 'BR-KD',
+      allowNegativeBalance: true,
+    });
+    if (!mv?.id) throw new Error(`${item.id}: reversal not created`);
+    const gl = tryPostExpensePaymentReversalGlTx(db, {
+      treasuryAccountId: op.treasuryAccountId, amountNgn: op.amountNgn, entryDateISO: String(tm.posted_at_iso).slice(0, 10), sourceId: mv.id,
+      originalMovementId: tm.id, expenseCategory: exp.category, paymentRequestId: op.requestId, branchId: exp.branch_id || 'BR-KD',
+      createdByUserId: null, memo: `${op.reason} (${op.requestId} / ${op.expenseId}, leg ${tm.id})`,
+    });
+    if (!gl.ok || gl.skipped || gl.duplicate) throw new Error(`${item.id}: reversal journal — ${gl.error || (gl.duplicate ? 'duplicate' : 'skipped')}`);
+    db.prepare(`UPDATE expenses SET amount_ngn = ? WHERE expense_id = ? AND amount_ngn = ?`).run(after.expenseNgn, op.expenseId, figures.expenseNgn);
+    db.prepare(`UPDATE payment_requests SET amount_requested_ngn = ?, paid_amount_ngn = ? WHERE request_id = ? AND paid_amount_ngn = ?`).run(
+      after.requestedNgn, after.paidNgn, op.requestId, figures.paidNgn
+    );
+    audit(item, { ...op, table: 'payment_requests', key: op.requestId }, {
+      table: 'payment_requests', key: op.requestId, expenseId: op.expenseId, reversal: mv.id, journal: gl.id || gl.journalId || null,
+      reversedLeg: tm.id, ...view, note: op.auditNote,
+    });
+    return { outcome: 'applied', reversal: mv.id, journal: gl.id || gl.journalId || null, ...view };
   }
   throw new Error(`${item.id}: unknown operation ${op.kind}`);
 }

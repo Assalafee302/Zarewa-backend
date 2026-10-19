@@ -9438,9 +9438,12 @@ export function reverseRefundTreasuryPayouts(db, refundId, payload = {}, actor =
     db.prepare(
       `DELETE FROM ledger_entries WHERE type IN ('REFUND_ADVANCE', 'REFUND_OVERPAY', 'REFUND_CONCESSION') AND bank_reference = ?`
     ).run(rid);
+    // The GL reversal undoes the cash that actually left (the reversed treasury lines), not paid_amount_ngn,
+    // which also counts credit applied to another quotation and would over-reverse a part-credit refund.
+    const reversedCashNgn = created.reduce((sum, m) => sum + Math.abs(roundMoney(m.amountNgn ?? m.amount_ngn)), 0);
     const glRev = tryPostCustomerRefundPayoutReversalGlTx(db, {
       refundId: rid,
-      reversalAmountNgn: paidAmountNgn,
+      reversalAmountNgn: reversedCashNgn > 0 ? reversedCashNgn : paidAmountNgn,
       reversalMovementIds: created.map((m) => m.id),
       entryDateISO: day,
       branchId: row.branch_id ?? null,
@@ -9461,6 +9464,8 @@ export function reverseRefundTreasuryPayouts(db, refundId, payload = {}, actor =
            END
        WHERE refund_id = ?`
     ).run(note, rid);
+    // Credit already applied stays settled: stored paid_amount / status follow the ledger, not zero.
+    repairRefundPayoutStateTx(db, rid);
     appendAuditLog(db, {
       actor,
       action: 'refund.reverse_treasury_payout',

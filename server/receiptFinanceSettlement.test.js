@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
 import {
   applyFinanceConfirmedReceiptBookAmountTx,
+  patchLedgerReceiptTreasuryMovement,
   patchSalesReceiptFinanceSettlement,
   reapplyFinanceReconciledReceiptAmountsForBranchScope,
   reconcileSalesReceiptMirrorsForQuotation,
@@ -83,6 +84,64 @@ describe('receipt finance settlement aligns paid amount', () => {
     const cash = quotationPaymentCashBreakdown(db, 'QT-146');
     expect(cash.receiptCashNgn).toBe(620_000);
     expect(cash.cashInNgn).toBe(620_000);
+  });
+
+  it('a later correction of a cleared receipt moves the confirmed amount refunds read (entered ≠ confirmed)', () => {
+    // LE-KD-26-2150 shape: confirmed at the entered total, bank later shown to be higher.
+    const fin = { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' };
+    expect(patchSalesReceiptFinanceSettlement(db, 'LE-261', { bankReceivedAmountNgn: 850_000 }, fin).ok).toBe(true);
+    expect(quotationPaymentCashBreakdown(db, 'QT-146').cashInNgn).toBe(850_000);
+
+    const fix = applyFinanceConfirmedReceiptBookAmountTx(db, 'LE-261', 885_000, fin);
+    expect(fix.ok).toBe(true);
+
+    const rec = db
+      .prepare(`SELECT amount_ngn, bank_received_amount_ngn FROM sales_receipts WHERE id = ?`)
+      .get('LE-261');
+    expect(rec.amount_ngn).toBe(885_000);
+    expect(rec.bank_received_amount_ngn).toBe(885_000);
+    expect(db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get('QT-146').paid_ngn).toBe(885_000);
+
+    const cash = quotationPaymentCashBreakdown(db, 'QT-146');
+    expect(cash.cashInNgn).toBe(885_000);
+    const preview = previewRefundRequest(db, { quotationRef: 'QT-146' });
+    expect(preview.ok).toBe(true);
+    expect(preview.preview.quotationCashInNgn).toBe(885_000);
+    expect(preview.preview.overpaymentExcessNgn).toBe(85_000);
+  });
+
+  it('finance correcting a payment line on a cleared receipt flows into receipt, confirmed amount and paid', () => {
+    const fin = { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' };
+    expect(patchSalesReceiptFinanceSettlement(db, 'LE-261', { bankReceivedAmountNgn: 620_000 }, fin).ok).toBe(true);
+
+    const line = patchLedgerReceiptTreasuryMovement(
+      db,
+      'TM-261',
+      { amountNgn: 650_000, treasuryAccountId: 1, note: 'Bank shows ₦650,000' },
+      fin
+    );
+    expect(line.ok).toBe(true);
+
+    const rec = db
+      .prepare(`SELECT amount_ngn, bank_received_amount_ngn FROM sales_receipts WHERE id = ?`)
+      .get('LE-261');
+    expect(rec.amount_ngn).toBe(650_000);
+    expect(rec.bank_received_amount_ngn).toBe(650_000);
+    expect(db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = ?`).get('LE-261').amount_ngn).toBe(650_000);
+    expect(db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get('QT-146').paid_ngn).toBe(650_000);
+    expect(quotationPaymentCashBreakdown(db, 'QT-146').cashInNgn).toBe(650_000);
+  });
+
+  it('correcting a payment line on a pending receipt leaves the receipt to the confirm step', () => {
+    const fin = { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' };
+    expect(patchLedgerReceiptTreasuryMovement(db, 'TM-261', { amountNgn: 420_000, treasuryAccountId: 1 }, fin).ok).toBe(
+      true
+    );
+    const rec = db
+      .prepare(`SELECT amount_ngn, bank_received_amount_ngn FROM sales_receipts WHERE id = ?`)
+      .get('LE-261');
+    expect(rec.amount_ngn).toBe(415_350);
+    expect(rec.bank_received_amount_ngn).toBeNull();
   });
 
   it('finance confirm creates OVERPAY_ADVANCE when sales posted a single full RECEIPT above quote', () => {

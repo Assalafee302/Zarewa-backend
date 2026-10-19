@@ -31,6 +31,7 @@ import {
   tryPostCoilScrapJournal,
   tryPostCoilReturnJournal,
   tryPostInventoryVarianceJournal,
+  refundPayoutGlSourceBase,
 } from './glOps.js';
 import {
   tryPostExpensePaymentGlTx,
@@ -9486,7 +9487,7 @@ export function reverseRefundTreasuryPayouts(db, refundId, payload = {}, actor =
 }
 
 function refundGlTailListsOnlyMovements(sourceId, movementIds) {
-  const parts = String(sourceId || '').split(':');
+  const parts = refundPayoutGlSourceBase(sourceId).split(':');
   const tail = parts.slice(2).join(':');
   if (!tail) return false;
   const ids = [...movementIds].sort((a, b) => b.length - a.length);
@@ -12704,12 +12705,15 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
     (oldAmt !== nextAmt || nextPosted !== String(row.posted_at_iso || '')) &&
     tableExists(db, 'gl_journal_entries')
   ) {
+    // A corrected re-post (`…#<correction id>`) is newer than the reversed original: amend the live one.
+    const key = `${String(row.source_id)}:paid:${mid}`;
     const je = db
       .prepare(
         `SELECT id FROM gl_journal_entries
-         WHERE source_kind = 'CUSTOMER_REFUND_PAYOUT_GL' AND source_id = ?`
+         WHERE source_kind = 'CUSTOMER_REFUND_PAYOUT_GL' AND (source_id = ? OR source_id LIKE ?)
+         ORDER BY created_at_iso DESC, id DESC LIMIT 1`
       )
-      .get(`${String(row.source_id)}:paid:${mid}`);
+      .get(key, `${key}#%`);
     if (je?.id) {
       refundJournal = amendBalancedJournalAmountTx(db, je.id, {
         nextAmountNgn: Math.abs(nextAmt),

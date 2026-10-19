@@ -1,3 +1,4 @@
+import { transportAgentPayoutAccount } from '../shared/lib/payoutAccountGuard.js';
 import {
   companionOverpayNgnByReceiptId,
   firstProductionDateISO,
@@ -1831,17 +1832,33 @@ export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
     )
     .all(...b.args);
   const out = [];
+  // A1: the haulier's payout account lives on the transport agent profile.
+  const agentAccountById = new Map();
+  for (const agent of db.prepare(`SELECT id, profile_json FROM transport_agents`).all()) {
+    let profile = {};
+    try {
+      profile = JSON.parse(agent.profile_json || '{}') || {};
+    } catch {
+      profile = {};
+    }
+    agentAccountById.set(String(agent.id), transportAgentPayoutAccount(profile));
+  }
   for (const row of rows) {
     const total = poTransportQuotedFeeNgn(row);
     const paid = Number(row.transport_paid_ngn) || 0;
     const outstandingNgn = effectiveOutstandingNgn(total, paid);
     if (outstandingNgn <= 0) continue;
+    const agentAccount = agentAccountById.get(String(row.transport_agent_id ?? '').trim()) || {};
     out.push({
       poID: row.po_id,
       supplierName: row.supplier_name ?? '',
       branchId: row.branch_id ?? '',
       status: row.status ?? '',
       procurementKind: String(row.procurement_kind ?? '').trim() || 'coil',
+      transportAgentId: String(row.transport_agent_id ?? '').trim(),
+      payeeName: agentAccount.payeeName || '',
+      payeeBankName: agentAccount.payeeBankName || '',
+      payeeAccountNo: agentAccount.payeeAccountNo || '',
       transportAgentName: row.transport_agent_name ?? '',
       transportReference: row.transport_reference ?? '',
       transportFinanceAdvice: row.transport_finance_advice ?? '',

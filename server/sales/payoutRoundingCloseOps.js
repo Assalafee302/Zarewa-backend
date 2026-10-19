@@ -39,8 +39,10 @@ function appendNote(existing, sentence) {
 
 /**
  * @param {'rounding' | 'cancelled'} kind
+ * @param {{ note?: string, auto?: boolean }} [opts] note replaces the default reason; auto marks a
+ *   system close after a payout (Finance Phase A, A7: "bank fee/rounding").
  */
-export function closeRefundUnpaidRemainder(db, refundId, actor, kind = 'rounding') {
+export function closeRefundUnpaidRemainder(db, refundId, actor, kind = 'rounding', opts = {}) {
   const id = String(refundId || '').trim();
   if (!id) return { ok: false, error: 'Refund id is required.' };
   if (kind !== 'rounding' && kind !== 'cancelled') {
@@ -64,10 +66,11 @@ export function closeRefundUnpaidRemainder(db, refundId, actor, kind = 'rounding
       error: `Remainder ₦${outstanding.toLocaleString('en-NG')} is above ₦${PAYOUT_ROUNDING_CLOSE_MAX_NGN}. It is not a rounding close.`,
     };
   }
+  const reason = String(opts.note || '').trim() || NOTE;
   const sentence =
     kind === 'cancelled'
-      ? `Cancelled unpaid remainder ₦${outstanding.toLocaleString('en-NG')}. No money out. ${NOTE}`
-      : `${ROUNDING_LABEL}. Remainder ₦${outstanding.toLocaleString('en-NG')} closed with no money out. ${NOTE}`;
+      ? `Cancelled unpaid remainder ₦${outstanding.toLocaleString('en-NG')}. No money out. ${reason}`
+      : `${ROUNDING_LABEL}. Remainder ₦${outstanding.toLocaleString('en-NG')} closed with no money out. ${reason}`;
   const nextClosed = roundMoney(before.remainder_closed_ngn) + outstanding;
   let after = null;
   db.transaction(() => {
@@ -95,6 +98,8 @@ export function closeRefundUnpaidRemainder(db, refundId, actor, kind = 'rounding
         previousPaidNgn: roundMoney(before.paid_amount_ngn),
         remainderClosedNgn: outstanding,
         paidAmountUnchanged: true,
+        reason,
+        auto: Boolean(opts.auto),
       },
     });
     after = db.prepare(`SELECT status, approved_amount_ngn, paid_amount_ngn, remainder_closed_ngn, payment_note FROM customer_refunds WHERE refund_id = ?`).get(id);

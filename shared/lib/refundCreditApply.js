@@ -486,13 +486,17 @@ export function unclaimedOverpayCreditNgn({
  * Overpayment already taken off this refund as a real till/wallet payout.
  * Approval-only `paid_amount` with no payout date/actor is ignored (false Paid — still usable as credit).
  * Credit already moved onto another quote is subtracted separately (`creditAppliedOutNgn`).
+ * Mixed refunds (Overpayment + Installation / Transport / …): only the Overpayment line is
+ * consumed, capped by what was paid out — the rest is value-reducing (owner rule, CLAUDE.md).
+ * A paid mixed refund must not leave its overpayment on offer as credit (RF-KD-26-9734).
  * @param {object} refund
  * @param {number} [treasuryPayoutNgn]
  */
 export function refundOverpayConsumedNgn(refund, treasuryPayoutNgn = 0) {
-  if (!refundCategoriesAreOverpaymentOnly(refund?.reasonCategory ?? refund?.reason_category, refund?.calculationLines)) {
-    return 0;
-  }
+  const lines = parseRefundCalculationLines(refund?.calculationLines ?? refund?.calculation_lines_json);
+  const overpayOnly = refundCategoriesAreOverpaymentOnly(refund?.reasonCategory ?? refund?.reason_category, lines);
+  const overpayLineNgn = overpayOnly ? null : refundOverpaymentLineNgn(lines);
+  if (!overpayOnly && !(overpayLineNgn > 0)) return 0;
   const status = String(refund?.status || '').trim().toLowerCase();
   if (status === 'rejected' || status === 'cancelled') return 0;
   const requested = Math.max(0, Math.round(Number(refund?.amountNgn ?? refund?.amount_ngn) || 0));
@@ -503,7 +507,34 @@ export function refundOverpayConsumedNgn(refund, treasuryPayoutNgn = 0) {
   const hasPayoutRecord = Boolean(paidAt || paidBy) || treasury > 0;
   const payout = hasPayoutRecord ? Math.max(paid, treasury) : treasury;
   if (!(payout > 0)) return 0;
-  return requested > 0 ? Math.min(requested, payout) : payout;
+  const consumed = requested > 0 ? Math.min(requested, payout) : payout;
+  return overpayOnly ? consumed : Math.min(overpayLineNgn, consumed);
+}
+
+/** Calculation lines as an array; stored rows carry them as a JSON string (`calculation_lines_json`). */
+function parseRefundCalculationLines(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Sum of the Overpayment lines on a refund's calculation breakdown.
+ * @param {Array<{ category?: string, amountNgn?: unknown, amount_ngn?: unknown }> | string | null | undefined} calculationLines
+ */
+export function refundOverpaymentLineNgn(calculationLines) {
+  const lines = parseRefundCalculationLines(calculationLines);
+  let total = 0;
+  for (const l of lines) {
+    if (!String(l?.category || '').toLowerCase().includes('overpay')) continue;
+    total += Math.max(0, Math.round(Number(l?.amountNgn ?? l?.amount_ngn) || 0));
+  }
+  return total;
 }
 
 /**

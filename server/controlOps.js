@@ -170,7 +170,9 @@ import {
   quotationOverpaymentResidualNgn,
   overpaymentAlreadyRefundedNgn,
   quotationRefundHardCapNgn,
+  quotationRefundableBreakdown,
   quotationRemainingRefundableNgn,
+  refundAboveRefundableMessage,
   sumRefundCalculationLinesByCategoryNgn,
   validateRefundCalculationLinesNgn,
   validateRefundCategorySuggestedCapsNgn,
@@ -3851,7 +3853,14 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       if (amountNgn > lineValidation.hardCapNgn) {
         return {
           ok: false,
-          error: `Refund amount (₦${amountNgn.toLocaleString('en-NG')}) exceeds cash received on this quotation after prior refunds (max ₦${lineValidation.hardCapNgn.toLocaleString('en-NG')}).`,
+          code: 'REFUND_ABOVE_REFUNDABLE',
+          error: refundAboveRefundableMessage({
+            requestedNgn: amountNgn,
+            cashInNgn: elig.cashInNgn,
+            refundsNgn: elig.refundsOnFileNgn,
+            creditOutNgn: elig.creditOutNgn,
+          }),
+          refundable: elig.refundable,
         };
       }
 
@@ -4130,6 +4139,30 @@ export function decideRefundRequest(db, refundID, payload, actor) {
         error: 'Refund approval requires calculation breakdown lines. Open Sales to edit the breakdown.',
       };
     }
+    // Refundable balance first — the clearest rule, with every number — before production and floor checks.
+    // Same balance the request was checked against: other refunds on file plus credit already moved to
+    // another quotation (a raw SUM here ignored that credit, so approval could exceed what create allowed).
+    {
+      const cashInNgn = quotationCashInNgn(db, qrefApprove);
+      const creditOutApproveNgn = roundMoney(quotationUnlinkedOverpayCreditOutNgn(db, qrefApprove));
+      const othersWithCreditNgn = quotationActiveRefundedTotalNgn(db, qrefApprove, refundID);
+      const sumOthersNgn = Math.max(0, othersWithCreditNgn - creditOutApproveNgn);
+      const maxApprovableNgn = quotationRefundHardCapNgn({ cashInNgn, totalRefundedNgn: othersWithCreditNgn });
+      if (approvedAmountNgn > maxApprovableNgn) {
+        return {
+          ok: false,
+          code: 'REFUND_ABOVE_REFUNDABLE',
+          error: refundAboveRefundableMessage({
+            requestedNgn: approvedAmountNgn,
+            cashInNgn,
+            refundsNgn: sumOthersNgn,
+            creditOutNgn: creditOutApproveNgn,
+            what: 'Approved amount',
+          }),
+          refundable: quotationRefundableBreakdown({ cashInNgn, refundsNgn: sumOthersNgn, creditOutNgn: creditOutApproveNgn }),
+        };
+      }
+    }
     const lineSumApprove = sumIncludedRefundCalculationLinesNgn(linesForGuard);
     const lineMatchesApproved =
       Math.abs(lineSumApprove - approvedAmountNgn) <= REFUND_AMOUNT_LINE_TOLERANCE_NGN;
@@ -4213,25 +4246,6 @@ export function decideRefundRequest(db, refundID, payload, actor) {
   let approvalAlignmentAckJson = null;
   let approvalAlignmentOverrideIsNew = false;
   if (status === 'Approved' && qref) {
-    const cashInNgn = quotationCashInNgn(db, qref);
-    const sumRow = db
-      .prepare(
-        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
-         WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled') AND refund_id != ?`
-      )
-      .get(qref, refundID);
-    const sumOthersNgn = roundMoney(sumRow?.s ?? 0);
-    const maxApprovableNgn = quotationRefundHardCapNgn({
-      cashInNgn,
-      totalRefundedNgn: sumOthersNgn,
-    });
-    if (approvedAmountNgn > maxApprovableNgn) {
-      return {
-        ok: false,
-        error: `Approved amount exceeds quotation refundable headroom (max ₦${maxApprovableNgn.toLocaleString('en-NG')} for this request given other open refunds on the same quotation).`,
-      };
-    }
-
     const decisionCats = resolveRefundReasonCategoriesForDecision(row, payload, normalizeRefundReasonCategoriesForApi);
     const storedAlign = parseStoredProductionAlignmentAck(row.production_alignment_ack_json);
     const payloadAck = payload.productionAlignmentAcknowledgedCodes ?? payload.productionAlignmentAcknowledged ?? [];
@@ -5429,8 +5443,10 @@ export function previewRefundRequest(db, payload) {
 
   let remainingRefundableNgn = null;
   let refundHardCapNgn = null;
+  let refundableBreakdown = null;
   if (quotationRef) {
     const el = quotationMeetsRefundEligibility(db, quotationRef);
+    if (el.refundable) refundableBreakdown = el.refundable;
     if (el.ok) {
       refundHardCapNgn = quotationRefundHardCapNgn({
         cashInNgn: cashInNgn,
@@ -5855,6 +5871,8 @@ export function previewRefundRequest(db, payload) {
       creditAppliedOutNgn,
       remainingRefundableNgn,
       refundHardCapNgn,
+      /** cash received − refunds on file − credit moved to other quotations, with the sentence to show. */
+      refundableBreakdown,
       quotedMeters,
       // MD discount ₦/m × produced metres (unproduced shortfall is claimed separately).
       mdDiscountMetres: producedMetersForUnproduced,
@@ -6014,14 +6032,16 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
     };
   }
   const totalRefundedNgn = quotationActiveRefundedTotalNgn(db, ref);
-  const remainingNgn = quotationRefundHardCapNgn({
-    cashInNgn,
-    totalRefundedNgn,
-  });
+  const creditOutNgn = roundMoney(quotationUnlinkedOverpayCreditOutNgn(db, ref));
+  const refundsOnFileNgn = Math.max(0, totalRefundedNgn - creditOutNgn);
+  const refundable = quotationRefundableBreakdown({ cashInNgn, refundsNgn: refundsOnFileNgn, creditOutNgn });
+  const remainingNgn = refundable.refundableNgn;
   if (remainingNgn <= 0) {
     return {
       ok: false,
-      error: 'Refundable balance on this quotation is fully covered by existing refund requests.',
+      code: 'REFUND_NOTHING_REFUNDABLE',
+      error: `Nothing is refundable on this quotation: ${refundable.sentence}.`,
+      refundable,
     };
   }
   const isVoid = String(q.status || '').trim().toLowerCase() === 'void';
@@ -6066,6 +6086,9 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
     cashInNgn,
     quoteTotalNgn,
     totalRefundedNgn,
+    refundsOnFileNgn,
+    creditOutNgn,
+    refundable,
     remainingNgn,
     overpaymentExcessNgn: quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn }),
   };

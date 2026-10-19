@@ -27,6 +27,45 @@ export function quotationRefundHardCapNgn({ cashInNgn, totalRefundedNgn }) {
   return Math.max(0, cashIn - refunded);
 }
 
+const fmtNgn = (v) => `₦${roundRefundMoney(v).toLocaleString('en-NG')}`;
+
+/**
+ * The refundable balance of a quotation with its three parts, for screens and refusal messages.
+ * refundable = cash received − refunds already on file (Pending / Approved / Paid) − credit moved to other quotations.
+ * @param {{ cashInNgn: number, refundsNgn?: number, creditOutNgn?: number }} p
+ */
+export function quotationRefundableBreakdown({ cashInNgn, refundsNgn = 0, creditOutNgn = 0 }) {
+  const cashIn = roundRefundMoney(cashInNgn);
+  const refunds = Math.max(0, roundRefundMoney(refundsNgn));
+  const creditOut = Math.max(0, roundRefundMoney(creditOutNgn));
+  const refundable = quotationRefundHardCapNgn({ cashInNgn: cashIn, totalRefundedNgn: refunds + creditOut });
+  return {
+    cashInNgn: cashIn,
+    refundsNgn: refunds,
+    creditOutNgn: creditOut,
+    refundableNgn: refundable,
+    sentence: `cash received ${fmtNgn(cashIn)} − existing refunds ${fmtNgn(refunds)}${
+      creditOut > 0 ? ` − credit applied to other quotations ${fmtNgn(creditOut)}` : ''
+    } = refundable ${fmtNgn(refundable)}`,
+  };
+}
+
+/**
+ * Refusal text when a request is above the refundable balance: states the rule, every number, and the excess.
+ * e.g. "Refund ₦160,000 is above the refundable balance ₦157,600 by ₦2,400 (cash received ₦2,100,000 −
+ * existing refunds ₦1,913,200 − credit applied to other quotations ₦29,200 = refundable ₦157,600)."
+ * @param {{ requestedNgn: number, cashInNgn: number, refundsNgn?: number, creditOutNgn?: number, what?: string }} p
+ */
+export function refundAboveRefundableMessage({ requestedNgn, cashInNgn, refundsNgn = 0, creditOutNgn = 0, what = 'Refund' }) {
+  const b = quotationRefundableBreakdown({ cashInNgn, refundsNgn, creditOutNgn });
+  const requested = roundRefundMoney(requestedNgn);
+  const over = Math.max(0, requested - b.refundableNgn);
+  if (b.refundableNgn <= 0) {
+    return `${what} ${fmtNgn(requested)} cannot be paid: nothing is refundable on this quotation (${b.sentence}).`;
+  }
+  return `${what} ${fmtNgn(requested)} is above the refundable balance ${fmtNgn(b.refundableNgn)} by ${fmtNgn(over)} (${b.sentence}).`;
+}
+
 /**
  * @deprecated Use {@link quotationRefundHardCapNgn} for total cap; {@link quotationRemainingRefundableNgn} when preview lines exist.
  */
@@ -404,9 +443,17 @@ export function validateRefundCalculationLinesNgn({
   }
 
   if (sum > hardCap) {
+    const creditOut = Math.max(0, roundRefundMoney(creditAppliedOutNgn));
     return {
       ok: false,
-      error: `Included refund lines total ₦${sum.toLocaleString('en-NG')} exceeds cash received on this quotation after prior refunds (max ₦${hardCap.toLocaleString('en-NG')}).`,
+      code: 'REFUND_ABOVE_REFUNDABLE',
+      error: refundAboveRefundableMessage({
+        requestedNgn: sum,
+        cashInNgn: cashIn,
+        refundsNgn: Math.max(0, refunded - Math.min(refunded, creditOut)),
+        creditOutNgn: Math.min(refunded, creditOut),
+        what: 'Included refund lines',
+      }),
     };
   }
 

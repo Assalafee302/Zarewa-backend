@@ -1630,6 +1630,49 @@ function runMigrationsUnlocked(db) {
     console.warn('[migrate] accessory/stone phase1 skipped:', e?.message || e);
   }
   migrateControlsPhase3(db);
+  migrateFinanceGuardrailsPhaseA(db);
+}
+
+/**
+ * Finance Phase A guardrails (2026-10-17). New tables only, no data changes.
+ * - staff_share_payouts (A7): one weekly payout per staff member for refund staff shares under the threshold.
+ * - bank_statement_imports (A8): which treasury account a statement import covers and up to when.
+ */
+function migrateFinanceGuardrailsPhaseA(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS staff_share_payouts (
+      id TEXT PRIMARY KEY,
+      week_key TEXT NOT NULL,
+      branch_id TEXT NOT NULL,
+      party_kind TEXT NOT NULL,
+      party_id TEXT NOT NULL,
+      party_name TEXT,
+      total_ngn INTEGER NOT NULL DEFAULT 0,
+      lines_json TEXT,
+      treasury_account_id INTEGER,
+      reference TEXT,
+      paid_at_iso TEXT NOT NULL,
+      paid_by_user_id TEXT,
+      paid_by_name TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_share_payout_week_party
+      ON staff_share_payouts(week_key, branch_id, party_kind, party_id);
+
+    CREATE TABLE IF NOT EXISTS bank_statement_imports (
+      id TEXT PRIMARY KEY,
+      treasury_account_id INTEGER NOT NULL,
+      branch_id TEXT,
+      statement_to_iso TEXT NOT NULL,
+      statement_to_has_time INTEGER NOT NULL DEFAULT 0,
+      line_count INTEGER NOT NULL DEFAULT 0,
+      imported_at_iso TEXT NOT NULL,
+      imported_by_user_id TEXT,
+      imported_by_name TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_bank_statement_imports_account
+      ON bank_statement_imports(treasury_account_id);
+
+  `);
 }
 
 /** Phase 3 controls (2026-10-14): receipt payer, PO line unit, coil spool. */

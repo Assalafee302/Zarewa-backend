@@ -4102,6 +4102,9 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     approvalDate: row.approval_date,
     approvedBy: row.approved_by,
     approvedByUserId: row.approved_by_user_id ?? null,
+    /** Naira closed without a payout (rounding ≤ ₦200 or a cancelled unpaid remainder). */
+    remainderClosedNgn: Math.max(0, Math.round(Number(row.remainder_closed_ngn) || 0)),
+    remainderClosedReason: String(row.remainder_closed_reason || '').trim() || null,
     approvedAmountNgn: finalApprovedAmountNgn,
     managerComments: row.manager_comments,
     paidAmountNgn: paidAmountForApi,

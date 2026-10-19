@@ -1063,6 +1063,23 @@ function runMigrationsUnlocked(db) {
     }
   }
 
+  // Reports round 2 (C): bank statement opening/closing per account per month, typed by Finance.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bank_statement_balances (
+      id TEXT PRIMARY KEY,
+      treasury_account_id INTEGER NOT NULL,
+      period_key TEXT NOT NULL,
+      opening_kobo INTEGER NOT NULL,
+      closing_kobo INTEGER NOT NULL,
+      note TEXT,
+      entered_by_user_id TEXT,
+      entered_by_name TEXT,
+      entered_at_iso TEXT NOT NULL,
+      branch_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_bank_statement_balances_period ON bank_statement_balances(period_key);
+  `);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS bank_deposits (
       id TEXT PRIMARY KEY,
@@ -1611,6 +1628,52 @@ function runMigrationsUnlocked(db) {
     migrateAccessoryStonePhase1(db);
   } catch (e) {
     console.warn('[migrate] accessory/stone phase1 skipped:', e?.message || e);
+  }
+  migrateControlsPhase3(db);
+}
+
+/** Phase 3 controls (2026-10-14): receipt payer, PO line unit, coil spool. */
+function migrateControlsPhase3(db) {
+  const colsOf = (table) => {
+    try {
+      const rows = db
+        .prepare(
+          `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`
+        )
+        .all(table);
+      if (rows.length) return new Set(rows.map((c) => String(c.column_name ?? c.COLUMN_NAME ?? '').toLowerCase()));
+    } catch {
+      /* sqlite */
+    }
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const add = {
+    sales_receipts: [['paid_by_name', 'TEXT'], ['cashier_note', 'TEXT']],
+    purchase_order_lines: [
+      ['purchase_unit', 'TEXT'],
+      ['meters_ordered', 'REAL'],
+      ['unit_price_per_meter_ngn', 'INTEGER'],
+    ],
+    coil_lots: [
+      ['purchase_unit', 'TEXT'],
+      ['spool_kg', 'REAL'],
+    ],
+  };
+  for (const [table, cols] of Object.entries(add)) {
+    const have = colsOf(table);
+    if (!have.size) continue;
+    for (const [name, typ] of cols) {
+      if (have.has(name)) continue;
+      try {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${typ}`);
+      } catch {
+        /* already present */
+      }
+    }
   }
 }
 

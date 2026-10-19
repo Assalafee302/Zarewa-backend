@@ -8,7 +8,12 @@ import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingToleranc
 import { poTransportQuotedFeeNgn } from '../shared/lib/poTransportFee.js';
 import { sumTransportPaymentsForPo } from './writeOps.js';
 import { findPersistedWorkItemBySource, upsertWorkItemBySource, workRegistryTablesReady, createWorkItem } from './workItems.js';
-import { bankLineFingerprint, loadExplainedIndex, partitionExplained } from './finance/explainedItemsOps.js';
+import {
+  bankLineFingerprint,
+  listLockedExplainedSummaries,
+  loadExplainedIndex,
+  partitionExplained,
+} from './finance/explainedItemsOps.js';
 
 /**
  * Upsert one work item per branch summarising bank lines still in Review or PendingManager.
@@ -27,7 +32,12 @@ export function syncFinanceBankReconExceptionWorkItem(db, branchId, actor) {
       fingerprintOf: (l) => bankLineFingerprint(l.bankDateISO, l.amountNgn, l.description),
     }
   );
-  const explainedNote = explained.length ? ` ${explained.map((e) => e.label).join('; ')}.` : '';
+  // Locked register records are named once, whether their lines are still in Review or already excluded.
+  const explainedLabels = new Set([
+    ...explained.map((e) => e.label),
+    ...listLockedExplainedSummaries(db, bid).map((e) => e.label),
+  ]);
+  const explainedNote = explainedLabels.size ? ` ${[...explainedLabels].join('; ')}.` : '';
 
   const uid = String(actor?.id ?? '').trim();
   const disp = String(actor?.displayName ?? actor?.username ?? 'System').trim();

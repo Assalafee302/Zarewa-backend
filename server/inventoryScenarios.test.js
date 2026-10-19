@@ -269,6 +269,7 @@ describe('Inventory scenarios (simulated flows)', () => {
           lineKey: 'L-OVER',
           productID: 'COIL-ALU',
           qtyReceived: 1500,
+          weightKg: 1500,
           coilNo: 'CL-INV-OVER',
           location: 'Bay',
         },

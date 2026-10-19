@@ -35,6 +35,9 @@ import {
 } from '../shared/lib/materialTransactionReportCore.js';
 import { buildConversionSummaryReport } from './conversionSummaryReport.js';
 import { buildPurchaseRegisterReport } from './procurement/purchaseRegisterSourceOps.js';
+import { buildBankReconStatementReport } from './finance/bankReconStatementSourceOps.js';
+import { buildTreasuryCashBookReport } from './finance/treasuryCashBookSourceOps.js';
+import { listStatementBalances, upsertStatementBalance } from './finance/bankStatementBalanceOps.js';
 import {
   arAsAtReportRows,
   receiptsRegisterReportRows,
@@ -1099,6 +1102,9 @@ import { registerCashierTillTruthRoutes } from './http/cashierTillTruthRoutes.js
 import { registerReceiptBulkUnconfirmRoutes } from './http/receiptBulkUnconfirmRoutes.js';
 import { registerCoilNumberCorrectionRoutes } from './http/coilNumberCorrectionRoutes.js';
 import { registerInvestigationRoutes } from './http/investigationRoutes.js';
+import { registerControlsPhase3Routes } from './http/controlsPhase3Routes.js';
+import { receiptAdvanceRepeats } from './controlsPhase3Ops.js';
+import { OVERRIDE_REASON_MIN_LEN, receiptPaidByName } from '../shared/lib/controlsPhase3.js';
 
 export function registerHttpApi(app, db) {
   registerMobileApi(app, db);
@@ -1178,6 +1184,7 @@ export function registerHttpApi(app, db) {
   registerCashierTillTruthRoutes(app, db);
   registerReceiptBulkUnconfirmRoutes(app, db);
   registerCoilNumberCorrectionRoutes(app, db);
+  registerControlsPhase3Routes(app, db);
   registerInvestigationRoutes(app, db);
   registerWorkspaceChatRoutes(app, db);
 
@@ -5233,6 +5240,84 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/treasury/statement-balances', requireManagementReportsView, (req, res) => {
+    try {
+      const periodKey = String(req.query.periodKey || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json({ ok: true, periodKey, balances: listStatementBalances(db, { periodKey, branchScope }) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load statement balances.' });
+    }
+  });
+
+  app.put('/api/treasury/statement-balances', requirePermission('finance.post'), (req, res) => {
+    try {
+      const r = upsertStatementBalance(db, req.body || {}, req.user, {
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
+      });
+      return res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save the statement balance.' });
+    }
+  });
+
+  app.get('/api/reports/bank-recon-statement', requireManagementReportsView, async (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+        return res.status(400).json({ ok: false, error: 'Valid startDate and endDate are required.' });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const report = await buildBankReconStatementReport(db, {
+        branchScope,
+        startDate,
+        endDate,
+        bankOpening: String(req.query.bankOpening || ''),
+        bankClosing: String(req.query.bankClosing || ''),
+      });
+      return res.json({ ok: true, startDate, endDate, branchScope, report });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not build bank reconciliation statement.' });
+    }
+  });
+
+  // Treasury account statement — cash-book layout (one account, date range; SELECT only).
+  app.get('/api/reports/treasury-cash-book', requireManagementReportsView, async (req, res) => {
+    try {
+      const accountId = Number(req.query.accountId);
+      if (!accountId) {
+        // No account chosen: list the branch's treasury accounts to choose from.
+        const scope = resolveBootstrapBranchScope(req);
+        const accounts = db
+          .prepare(`SELECT id, name, bank_name, type FROM treasury_accounts ${scope && scope !== 'ALL' ? 'WHERE branch_id = ?' : ''} ORDER BY id`)
+          .all(...(scope && scope !== 'ALL' ? [scope] : []));
+        return res.json({ ok: true, accounts: accounts.map((a) => ({ id: a.id, name: a.name, bankName: a.bank_name || '', type: a.type })) });
+      }
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const endAtISO = String(req.query.endAt || '').trim();
+      if (!accountId || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+        return res.status(400).json({ ok: false, error: 'accountId and a valid startDate / endDate are required.' });
+      }
+      if (endAtISO && !Number.isFinite(Date.parse(endAtISO))) {
+        return res.status(400).json({ ok: false, error: 'endAt must be an ISO date-time.' });
+      }
+      // Confirmed movements by default (the balance of record); ?mode=all prints receipts awaiting confirmation too.
+      const mode = String(req.query.mode || '').trim().toLowerCase() === 'all' ? 'all' : 'confirmed';
+      const r = await buildTreasuryCashBookReport(db, { accountId, startDate, endDate, endAtISO, mode, branchScope: resolveBootstrapBranchScope(req) });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ok: true, startDate, endDate, book: r.book });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not build the treasury account statement.' });
+    }
+  });
+
   app.get('/api/reports/purchases', requireManagementReportsView, (req, res) => {
     try {
       const cut = String(req.query.cut || 'received').toLowerCase();
@@ -8213,7 +8298,7 @@ export function registerHttpApi(app, db) {
         supplierID,
         supplierName,
         req.workspaceBranchId || DEFAULT_BRANCH_ID,
-        { allowConversionMismatch: allowMismatch, actor: req.user }
+        { allowConversionMismatch: allowMismatch, actor: req.user, backdateReason: req.body?.backdateReason }
       );
       if (r.ok && allowMismatch) {
         appendAuditLog(db, {
@@ -13705,6 +13790,25 @@ export function registerHttpApi(app, db) {
           code: 'MISSING_REFERENCE',
         });
       }
+      // Phase 3: every payment line names the treasury account the money went into.
+      const rawPaymentLines = Array.isArray(req.body?.paymentLines) ? req.body.paymentLines : [];
+      if (rawPaymentLines.some((l) => Math.round(Number(l?.amountNgn) || 0) > 0 && !Number(l?.treasuryAccountId))) {
+        return res.status(400).json({
+          ok: false,
+          code: 'TREASURY_ACCOUNT_REQUIRED',
+          error: 'Choose the treasury account (bank / till) for every payment line.',
+        });
+      }
+      // Phase 3: "Paid by" = name on the bank alert / teller; defaults to the customer, cannot be blanked.
+      const paidByTyped = req.body?.paidByName ?? req.body?.paidBy ?? req.body?.payerName;
+      if (paidByTyped != null && !String(paidByTyped).trim()) {
+        return res.status(400).json({
+          ok: false,
+          code: 'PAID_BY_REQUIRED',
+          error: 'Enter "Paid by" (the name on the bank alert or teller).',
+        });
+      }
+      const paidByName = receiptPaidByName(req.body || {}, cust.name || customerName);
       const duplicateSignals = recentReceiptDuplicateSignals(db, {
         customerID,
         quotationId,
@@ -13830,6 +13934,25 @@ export function registerHttpApi(app, db) {
         return;
       }
 
+      // Phase 3 (TM-KD-26-1499) warning: a line repeats an unapplied advance already in treasury. The cashier
+      // confirms with a reason (audit-logged below) — usually the advance should be applied instead.
+      const advanceRepeats = receiptAdvanceRepeats(db, {
+        customerID,
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+        lines: treasuryLines,
+      });
+      const advanceRepeatReason = String(req.body?.advanceRepeatOverrideReason ?? '').trim();
+      if (advanceRepeats.length > 0 && advanceRepeatReason.length < OVERRIDE_REASON_MIN_LEN) {
+        const first = advanceRepeats[0];
+        return res.status(409).json({
+          ok: false,
+          warning: true,
+          code: 'ADVANCE_REPEAT_CONFIRM_REQUIRED',
+          error: `Warning: ₦${first.amountNgn.toLocaleString('en-NG')} matches advance ${first.movementId} (${first.postedAtISO}) already in treasury and not yet applied. Usually the advance should be applied to this quotation instead. To post anyway, confirm with a reason (at least ${OVERRIDE_REASON_MIN_LEN} characters).`,
+          advanceRepeats,
+        });
+      }
+
       const amendSalesReceiptId = String(
         req.body?.amendSalesReceiptId ?? req.body?.amend_sales_receipt_id ?? ''
       ).trim();
@@ -13870,6 +13993,11 @@ export function registerHttpApi(app, db) {
         for (const row of posted) {
           if (row.type === 'RECEIPT') {
             write.upsertSalesReceiptForLedgerEntry(db, row, qtSynced, wb);
+            db.prepare(`UPDATE sales_receipts SET paid_by_name = ? WHERE id = ? OR ledger_entry_id = ?`).run(
+              paidByName,
+              row.id,
+              row.id
+            );
           }
         }
         const clearanceReopen = write.reopenQuotationManagerClearanceAfterReceipt(db, quotationId);
@@ -13942,8 +14070,22 @@ export function registerHttpApi(app, db) {
             unlinkedBankOverride: forceUnlinkedBankPost
               ? { forced: true, reason: String(unlinkedBankOverrideReason || '').trim() }
               : null,
+            paidByName,
+            advanceRepeatOverride: advanceRepeats.length
+              ? { reason: advanceRepeatReason, repeats: advanceRepeats }
+              : null,
           },
         });
+        if (advanceRepeats.length) {
+          appendAuditLog(db, {
+            actor: req.user,
+            action: 'ledger.receipt_advance_repeat_confirmed',
+            entityKind: 'quotation',
+            entityId: quotationId,
+            note: `Cashier confirmed a receipt line matching unapplied advance ${advanceRepeats.map((a) => a.movementId).join(', ')}: ${advanceRepeatReason}`,
+            details: { receiptEntryId: parsed.receipt?.id ?? '', reason: advanceRepeatReason, advanceRepeats },
+          });
+        }
         write.syncQuotationPaidFromLedger(db, quotationId);
         return {
           saved: posted,

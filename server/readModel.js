@@ -5,6 +5,7 @@ import {
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { jobTotalOutputMetres } from '../shared/lib/jobOutputMetres.js';
+import { coilNetKg, poLinePricePerMetreNgn, poLinePurchaseUnit } from '../shared/lib/controlsPhase3.js';
 import { quotationUnderInvestigation } from './office/investigationLock.js';
 import {
   effectiveOutstandingNgn,
@@ -1664,6 +1665,10 @@ function mapPurchaseOrderLine(l) {
     qtyOrdered: l.qty_ordered,
     qtyReceived: l.qty_received,
   };
+  // Phase 3: explicit purchase unit (kg | metre); legacy lines fall back to the Phase 1 detection rule.
+  line.purchaseUnit = poLinePurchaseUnit(l);
+  line.metersOrdered = line.purchaseUnit === 'metre' ? Number(l.meters_ordered ?? l.qty_ordered) || 0 : null;
+  line.unitPricePerMeterNgn = line.purchaseUnit === 'metre' ? poLinePricePerMetreNgn(l) : null;
   const lineValueNgn = poLineOrderedValueNgn(line);
   return { ...line, lineValueNgn, amountNgn: lineValueNgn };
 }
@@ -2175,6 +2180,21 @@ function mapCoilLotRow(db, row, masterData) {
     stockHold: hasColumn(db, 'coil_lots', 'stock_hold') ? String(row.stock_hold || '') : '',
     landedCostNgn: row.landed_cost_ngn != null ? Number(row.landed_cost_ngn) : null,
     unitCostNgnPerKg: row.unit_cost_ngn_per_kg != null ? Number(row.unit_cost_ngn_per_kg) : null,
+    ...coilSpoolFields(row),
+  };
+}
+
+/** Phase 3: spool recorded at receipt and kg net of it (coils received before Phase 3 have no spool recorded). */
+function coilSpoolFields(row) {
+  const spoolKg = row.spool_kg != null && row.spool_kg !== '' ? Number(row.spool_kg) : null;
+  const kg =
+    row.current_weight_kg != null && row.current_weight_kg !== '' && Number.isFinite(Number(row.current_weight_kg))
+      ? Number(row.current_weight_kg)
+      : Number(row.qty_remaining) || 0;
+  return {
+    purchaseUnit: row.purchase_unit || '',
+    spoolKg,
+    netWeightKg: coilNetKg(kg, spoolKg ?? 0),
   };
 }
 
@@ -2659,6 +2679,8 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
       status: row.status,
       handledBy: row.handled_by,
       ledgerEntryId: row.ledger_entry_id ?? null,
+      paidByName: row.paid_by_name ?? '',
+      cashierNote: row.cashier_note ?? '',
       bankConfirmedAtISO: row.bank_confirmed_at_iso ?? null,
       bankConfirmedByUserId: row.bank_confirmed_by_user_id ?? null,
       bankConfirmedBy,

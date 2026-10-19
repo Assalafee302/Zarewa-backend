@@ -78,3 +78,24 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - Plug EXP-KD-26-0404 not touched. After round 2 the 31 Aug gaps it covers: Taj −11,198,060.01, Moniepoint −8,164,579.24, Cash Office 0.
 - Round 3 (August bank links, applied 2026-10-15, approver Abdulrahman Uthman Sali): `phase2-aug-read3.mjs` (SELECT only) → `phase2-aug-plan3.mjs` (owner's Aug2026_bank_to_ERP_links.xlsx, writes the plan in 3 parts) → `phase2-apply.mjs`. New ops: reconLinkUpsert (one Matched BKR per bank line, bank id in the match text, fee in variance; charge groups CHG-TAJ-AUG / CHG-MP-AUG / FEE-MP-AUG / POS-MP-AUG), reversePhantomInflow (RECEIPT_REVERSAL_OUT on the original day + refund-fund GL unwind + method "Refund fund"; the 13 phantom inflows of bug b50d502 less TM-KD-26-2178, held), relabelReceiptMethod.
 - After round 3: 370 Aug BKR rows; Taj 51/51, Moniepoint 591/638. Four Aug lines whose ERP lines are already on Sept BKR rows stay unlinked (`exports/phase2-aug/sept-link-conflicts.csv`) until September is reopened. 31 Aug gaps the plug covers: Taj −11,198,060.01, Moniepoint −12,264,347.24, Cash Office −52,260.
+
+## Next data round (owner, 2026-10-15) — recorded, NOT run
+
+- Treasury stored balances: recompute `balance` for treasury accounts 2, 3, 4 from opening + movements with the ERP's own integrity routine (treasury_balance_integrity_runs), with audit. Taj (2) differs by ₦8,533,781 (= 21,401,720 − 12,867,939) from the round-2 opening-balance change. Not inside the 7am window.
+- Bank statement lines not in the ERP: round 3 imported links only. Import the 43 unlinked Aug Moniepoint statement lines (owner workbook `Aug2026_bank_to_ERP_links.xlsx`, sheet "Unlinked bank lines") as Review lines, and find the 4 workbook-linked lines missing from bank_reconciliation_lines (Aug Moniepoint statement gap ₦85,300.41). Until then the recon shows them only as the statement gap.
+- Seed Aug 2026 statement balances after the round-2 deploy: `node scripts/seed-statement-balances-2026-08.mjs` (dry run), then `--apply`.
+- Link Farouq TM-KD-26-2178 (₦31,030, 20 Aug, credit receipt LE-KD-26-1465) to Moniepoint MP-0348 "payment for Zink additional". Then Aug Kaduna receipts register cash = ₦119,042,095 (credit-receipt rule keeps a bank-linked line in cash).
+- Refund paid amounts: set customer_refunds.paid_amount_ngn to the treasury REFUND_PAYOUT total for RF-KD-26-9500 (₦15,350, was ₦113,100) and RF-KD-26-9501 (₦2,080, was ₦99,840); scan every refund for paid_amount_ngn ≠ payout total (the 19 Aug pay step wrote the approved amount). The app already reads paid from payouts; the column is what's wrong.
+
+## Reports round 2 — owner decisions (2026-10-15)
+
+- Credit receipts: a zero-value credit receipt's treasury line is left out of cash unless a bank-statement line links it (`creditLineLeftOutOfCash`, shared/lib/salesAccrualCore.js).
+- August 2026 Kaduna goods produced accepted at ₦97,347,894 (ERP accrual engine, quotation by quotation). The accounts-book bridge figure ₦97,522,284 differs only by provisional 31 Jul balances and the Tahir RF-KD-26-9250 timing.
+- No live-DB connection from this PC until the owner confirms the 7am lock-down is done.
+
+## Reports round 2 — release checklist additions
+
+- fix/reports-round2 is NOT in the 7am deploy; merge only after the owner reviews the August PDFs.
+- DB-backed test to run against a real MySQL: `server/finance/bankStatementBalanceOps.test.js` (skips without MySQL).
+- `PRODUCTION_GATE_REQUIRES_CONFIRMED` (default off): owner switches it on Monday 19 Oct 2026 after the memo; set in the server env and restart.
+

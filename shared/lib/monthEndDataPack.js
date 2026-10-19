@@ -5,7 +5,7 @@
  * Frontend copies via sync into src/shared/lib/monthEndDataPack.js.
  */
 
-import { isStaffLoanExpenseCategory } from '../expenseCategories.js';
+import { isLoanRepaymentExpenseCategory, isStaffLoanExpenseCategory } from '../expenseCategories.js';
 import { netKgFromGrossClosing } from './stockRegisterCore.js';
 
 const FACTORY = new Set(['Wages', 'Fuel & lubricant', 'Outside corrugation', 'Maintenance']);
@@ -154,12 +154,16 @@ export function classifyBookExpense(line) {
   const forklift = FORKLIFT.test(text);
   const refund = REFUND_WORD.test(description);
   const iou = IOU_WORD.test(description) || isStaffLoanExpenseCategory(category);
+  const loanRepayment = isLoanRepaymentExpenseCategory(category);
   const washer = /washer/i.test(description);
   const interest = category === 'Interest' || /^\s*interest\b/i.test(description);
   let bucket = 'reclassify';
   let suggested = 'Confirm what this payment was for';
   let bookCategory = category;
-  if (asset) {
+  if (loanRepayment) {
+    bucket = 'reclassify';
+    suggested = 'Loan repayment — liability, not an expense';
+  } else if (asset) {
     bucket = 'asset';
     suggested = 'Fixed asset';
   } else if (refund) {
@@ -182,7 +186,7 @@ export function classifyBookExpense(line) {
     bookCategory = interest ? 'Interest' : category;
     suggested = bookCategory;
   }
-  return { bucket, suggested, asset, forklift, refund, iou, category: bookCategory };
+  return { bucket, suggested, asset, forklift, refund, iou, loanRepayment, category: bookCategory };
 }
 
 function lineOf(row) {

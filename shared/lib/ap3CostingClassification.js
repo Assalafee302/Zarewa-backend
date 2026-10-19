@@ -6,7 +6,7 @@ import {
   isAllowedExpenseCategory,
 } from '../expenseCategories.js';
 
-/** @typedef {'production_labour'|'diesel_fuel'|'production_repairs_maintenance'|'factory_consumables'|'stock_accessories'|'carriage_inward'|'transport_landing'|'admin_office'|'selling_marketing'|'finance_bank'|'owner_drawings'|'unclassified'} CostingExpenseBucket */
+/** @typedef {'production_labour'|'diesel_fuel'|'production_repairs_maintenance'|'factory_consumables'|'stock_accessories'|'carriage_inward'|'transport_landing'|'admin_office'|'selling_marketing'|'finance_bank'|'owner_drawings'|'loan_principal'|'unclassified'} CostingExpenseBucket */
 
 export const COSTING_EXPENSE_BUCKET_LABELS = Object.freeze({
   production_labour: 'Production labour',
@@ -20,6 +20,7 @@ export const COSTING_EXPENSE_BUCKET_LABELS = Object.freeze({
   selling_marketing: 'Selling / marketing',
   finance_bank: 'Finance / bank charges',
   owner_drawings: 'Owner drawings',
+  loan_principal: 'Loan principal (not a cost)',
   unclassified: 'Unclassified',
 });
 
@@ -52,6 +53,7 @@ const CANONICAL_TO_BUCKET = Object.freeze({
   HQ: 'admin_office',
   'Chairman withdrawal': 'owner_drawings',
   'Chairman loan': 'finance_bank',
+  'Loan repayment — BOI': 'loan_principal',
   'Truck & mining': 'transport_landing',
   'Staff loan': 'finance_bank',
   Others: 'unclassified',
@@ -95,7 +97,7 @@ export function ap3CostingHintForCategory(category) {
     canonical,
     mapped,
     isUnclassified: bucket === 'unclassified',
-    affectsCostPerMetre: bucket !== 'unclassified' && bucket !== 'owner_drawings',
+    affectsCostPerMetre: bucket !== 'unclassified' && bucket !== 'owner_drawings' && bucket !== 'loan_principal',
   };
 }
 

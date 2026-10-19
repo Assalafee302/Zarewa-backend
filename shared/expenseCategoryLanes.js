@@ -92,6 +92,7 @@ const CATEGORY_TO_LANE = Object.freeze({
   'IOU / staff loan': 'special',
   'Chairman withdrawal': 'special',
   'Chairman loan': 'special',
+  'Loan repayment — BOI': 'special',
   'Closing stock': 'special',
   Sales: 'revenue',
   Refund: 'revenue',

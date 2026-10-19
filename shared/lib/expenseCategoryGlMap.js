@@ -36,6 +36,7 @@ const CATEGORY_TO_GL = Object.freeze({
   'IOU / staff loan': '1200',
   'Chairman withdrawal': '3200',
   'Chairman loan': '1200',
+  'Loan repayment — BOI': '2600',
   Depreciation: '6100',
   Sales: '4000',
   Refund: '2500',

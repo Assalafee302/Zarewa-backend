@@ -122,6 +122,7 @@ function describe(m, ctx) {
       const lines = ctx.refundPayoutLines?.[sid] || [];
       const part = lines.length > 1 ? ` – part ${lines.indexOf(m.id) + 1} of ${lines.length}` : '';
       const qt = ref?.quotationRef ? ` (QT-${lastDigits(ref.quotationRef, 4)})` : '';
+      // Owner layout (17 Oct): the description names the customer; who was actually paid goes in the remark.
       return `${ref?.customerName || m.counterpartyName || 'Customer'} refund${qt}${part}${amount > 0 ? ' – reversal' : ''}`;
     }
     case 'REFUND_COMPANY_CUT_PAYOUT':
@@ -170,6 +171,14 @@ function remark(m, ctx) {
   }
   if ((m.type === 'RECEIPT_IN' || m.type === 'ADVANCE_IN') && (rec?.pos || /\bPURCHASE FOR\b/i.test(ctx.bankNarrations?.[m.id] || ''))) parts.push('POS');
   if (m.type === 'REFUND_PAYOUT' && ref?.staffShare) parts.push('staff share 80%');
+  // Payout line booked against a payee who is not the customer (staff share, nominee account): say who was paid.
+  if ((m.type === 'REFUND_PAYOUT' || m.type === 'REFUND_PAYOUT_REVERSAL_IN') && ref?.customerName && m.counterpartyName) {
+    const payee = String(m.counterpartyName).trim();
+    const viaStaff = staffViaRemark([payee], ctx.staffAccounts);
+    if (payee && payee.toLowerCase() !== String(ref.customerName).trim().toLowerCase() && !viaStaff) {
+      parts.push(`paid to ${payee}`);
+    }
+  }
   if (m.type === 'INTERNAL_TRANSFER_OUT' || m.type === 'INTERNAL_TRANSFER_IN') parts.push('Internal transfer');
   if (m.type === 'RECEIPT_REVERSAL_OUT' && m.note) parts.push(m.note);
   // ERP correction tags stay out of the printed remark (owner, 17 Oct); the XLSX carries the movement number.

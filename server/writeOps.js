@@ -10400,6 +10400,45 @@ export function payAccountsPayable(db, apId, payload) {
   }
 }
 
+/**
+ * Who the payout line is booked against. Explicit payee from the pay dialog wins; a refund with one
+ * payee line uses that line; otherwise the quotation customer.
+ * @param {{ payeeName?: unknown, payeeBankName?: unknown, payeeAccountNo?: unknown, payeeKind?: unknown }} payload
+ * @param {{ cashierPayoutLines?: Array<{ payeeName?: string, payeeBankName?: string, payeeAccountNo?: string, staffShare?: boolean, tillDueNgn?: number }> } | null} settlement
+ * @param {{ customer_name?: unknown, payee_name?: unknown }} refundRow
+ */
+export function resolveRefundPayoutCounterparty(payload, settlement, refundRow) {
+  const explicit = String(payload?.payeeName ?? '').trim();
+  if (explicit) {
+    return {
+      name: explicit,
+      bankName: String(payload?.payeeBankName ?? '').trim(),
+      accountNo: String(payload?.payeeAccountNo ?? '').trim(),
+      kind: String(payload?.payeeKind ?? '').trim() || 'customer',
+      source: 'dialog',
+    };
+  }
+  const lines = Array.isArray(settlement?.cashierPayoutLines) ? settlement.cashierPayoutLines : [];
+  const due = lines.filter((l) => roundMoney(l?.tillDueNgn) > 0);
+  const only = due.length === 1 ? due[0] : lines.length === 1 ? lines[0] : null;
+  if (only && String(only.payeeName || '').trim()) {
+    return {
+      name: String(only.payeeName).trim(),
+      bankName: String(only.payeeBankName || '').trim(),
+      accountNo: String(only.payeeAccountNo || '').trim(),
+      kind: only.staffShare ? 'staff' : 'customer',
+      source: 'single_payee_line',
+    };
+  }
+  return {
+    name: String(refundRow?.customer_name ?? '').trim(),
+    bankName: '',
+    accountNo: '',
+    kind: 'customer',
+    source: 'customer',
+  };
+}
+
 export function payRefundEntry(db, refundId, payload) {
   const holdBlock = refundPayoutHoldBlock(db, refundId);
   if (holdBlock) return holdBlock;
@@ -10706,6 +10745,10 @@ export function payRefundEntry(db, refundId, payload) {
         throw new Error('Payout exceeds the approved refund balance.');
       }
 
+      // The treasury line names the person actually paid: the payee the cashier picked, else the only
+      // payee on this refund, else the quotation customer. A staff share was booked under the customer's
+      // name before (TM-KD-26-3203, ₦138,352 to Abdulrahman shown as "Yunusa Driver").
+      const payoutPayee = resolveRefundPayoutCounterparty(payload, payoutFresh, fresh);
       const movements = insertTreasurySplitTx(
         db,
         paymentLines.map((line) => ({
@@ -10720,7 +10763,7 @@ export function payRefundEntry(db, refundId, payload) {
           postedAtISO: payoutLinePostedAtISO({ dateISO: paidAtISO }, defaultPaidDay, normalizeIsoTimestamp),
           counterpartyKind: 'CUSTOMER',
           counterpartyId: payload.payeeCustomerId || fresh.customer_id,
-          counterpartyName: payload.payeeName || fresh.customer_name,
+          counterpartyName: payoutPayee.name,
           sourceKind: 'REFUND',
           sourceId: refundId,
           reference: payload.reference || refundId,

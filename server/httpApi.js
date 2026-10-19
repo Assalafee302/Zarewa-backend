@@ -402,6 +402,7 @@ import {
 import { registerAiProviderRoutes } from './aiProviders/index.js';
 import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
+import { acknowledgeDualControlWarning, listDualControlAcknowledgements } from './dualControlAckOps.js';
 import { buildExecutiveDashboard, resolveExecDashboardBranchScope, resolveExecDashboardPeriod } from './execDashboardOps.js';
 import { buildExecCustomerBrief, buildMdCustomerIntelPack } from './mdCustomerIntelOps.js';
 import { buildMdTracePack } from './mdTraceOps.js';
@@ -3028,6 +3029,38 @@ export function registerHttpApi(app, db) {
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Failed to load management attention inbox.' });
+      }
+    }
+  );
+
+  // Same-person refund warnings: MD/CEO "Acknowledge with note" (audited). Role check lives in the op.
+  app.post('/api/management/dual-control/acknowledge', requirePermission(['audit.view', 'refunds.approve']), (req, res) => {
+    try {
+      const r = acknowledgeDualControlWarning(db, {
+        refundId: req.body?.refundId,
+        kind: req.body?.kind,
+        note: req.body?.note,
+        user: req.user,
+      });
+      if (!r.ok) return res.status(r.status || 400).json({ ok: false, error: r.error });
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not record the acknowledgement.' });
+    }
+  });
+
+  app.get(
+    '/api/management/dual-control/acknowledgements',
+    requirePermission(['audit.view', 'refunds.approve', 'sales.manage', 'quotations.manage', 'finance.view']),
+    (req, res) => {
+      try {
+        const refundId = String(req.query?.refundId || '').trim();
+        const acks = listDualControlAcknowledgements(db, refundId ? { refundIds: [refundId] } : {});
+        res.json({ ok: true, items: [...acks.values()] });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load acknowledgements.' });
       }
     }
   );

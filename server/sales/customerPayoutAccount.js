@@ -5,6 +5,7 @@
  */
 import { decryptBankAccount, storedBankToMasked } from '../hrBankCrypto.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
+import { normalizeSwappedPayeeFields } from '../../shared/lib/refundPayeeAccount.js';
 import {
   ensureStaffSalesCustomer,
   getStaffSalesCustomerId,
@@ -96,9 +97,13 @@ export function savedCustomerPayoutAccount(db, customerId) {
     };
   }
 
-  const bankAccountNo = trim(cust.bank_account_no);
   const bankName = trim(cust.bank_name);
-  const bankAccountName = trim(cust.bank_account_name);
+  const fixed = normalizeSwappedPayeeFields({
+    payeeName: cust.bank_account_name,
+    payeeAccountNo: cust.bank_account_no,
+  });
+  const bankAccountNo = fixed.payeeAccountNo;
+  const bankAccountName = fixed.payeeName;
   if (!bankAccountNo || !bankName) return null;
 
   return {
@@ -109,6 +114,7 @@ export function savedCustomerPayoutAccount(db, customerId) {
     payeeAccountNo: bankAccountNo,
     payeeBankName: bankName,
     source: 'customer',
+    ...(fixed.swapped ? { payeeFieldsSwappedOnProfile: true } : {}),
   };
 }
 

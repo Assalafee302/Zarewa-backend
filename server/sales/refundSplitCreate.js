@@ -5,7 +5,7 @@
  */
 import { claimingStaffPayeeForUserId, savedCustomerPayoutAccount } from './customerPayoutAccount.js';
 import { saveRefundPayoutBank } from './refundPayoutBankOps.js';
-import { payeeAccountRejection } from '../../shared/lib/refundPayeeAccount.js';
+import { normalizeSwappedPayeeFields, payeeAccountRejection } from '../../shared/lib/refundPayeeAccount.js';
 import { REFUND_AMOUNT_LINE_TOLERANCE_NGN } from '../../shared/refundConstants.js';
 
 const CLAIMING_KIND = new Set([
@@ -187,9 +187,10 @@ function savedAssociatedStaffPayoutAccount(db, staffId) {
     .get(id);
   if (!row) return null;
   if (String(row.status || 'Active').trim().toLowerCase() !== 'active') return null;
-  const bankAccountNo = trim(row.bank_account_no);
+  const fixed = normalizeSwappedPayeeFields({ payeeName: row.bank_account_name, payeeAccountNo: row.bank_account_no });
+  const bankAccountNo = fixed.payeeAccountNo;
   const bankName = trim(row.bank_name);
-  const bankAccountName = trim(row.bank_account_name);
+  const bankAccountName = fixed.payeeName;
   if (!bankAccountNo || !bankName) return null;
   return {
     partyKind: 'associated_staff',
@@ -199,6 +200,7 @@ function savedAssociatedStaffPayoutAccount(db, staffId) {
     payeeAccountNo: bankAccountNo,
     payeeBankName: bankName,
     staffType: trim(row.staff_type),
+    ...(fixed.swapped ? { payeeFieldsSwappedOnProfile: true } : {}),
   };
 }
 

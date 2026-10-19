@@ -87,3 +87,20 @@ export function effectiveRefundOpenCreditNgn({ ledgerOpenCreditNgn = 0, quotatio
 export function refundExceedsOpenCredit(_args = {}) {
   return '';
 }
+
+/**
+ * A saved bank record whose name is all digits and whose account number has letters was typed the wrong way
+ * round (associated staff AS-001: bank_account_name '0636783237', bank_account_no 'Ahmed Ibrahim' — on seven paid
+ * refunds). Returns the two fields the right way round plus `swapped` so the screen can say so.
+ * @param {{ payeeName?: unknown, payeeAccountNo?: unknown }} p
+ */
+export function normalizeSwappedPayeeFields({ payeeName, payeeAccountNo } = {}) {
+  const name = String(payeeName ?? '').trim();
+  const acct = String(payeeAccountNo ?? '').trim();
+  const nameLooksLikeAccount = /^[\d\s-]{8,}$/.test(name) && payeeAccountDigits(name).length >= 10;
+  const acctLooksLikeName = /[a-z]/i.test(acct) && !/\d{6,}/.test(acct);
+  if (nameLooksLikeAccount && acctLooksLikeName) {
+    return { payeeName: acct, payeeAccountNo: name.replace(/\s+/g, ''), swapped: true };
+  }
+  return { payeeName: name, payeeAccountNo: acct, swapped: false };
+}

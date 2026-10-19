@@ -142,12 +142,17 @@ export function creditCompanyRetentionFromRefundTx(db, {
   const amt = roundMoney(amountNgn);
   if (!rid || amt <= 0) return { ok: true, skipped: true, reason: 'no_amount' };
 
+  // One company-cut credit per refund. Match on refund_id as well as source_id: RF-KD-26-9737 was credited
+  // twice (₦8,738 + ₦8,738) because a script wrote its first credit with another refund's source_id and the
+  // backfill then found no row for the refund.
   const existing = db
     .prepare(
       `SELECT id FROM refund_company_retention_entries
-       WHERE entry_type = 'credit' AND source_kind = 'REFUND_COMPANY_CUT' AND source_id = ?`
+       WHERE entry_type = 'credit' AND source_kind = 'REFUND_COMPANY_CUT'
+         AND (source_id = ? OR refund_id = ?)
+       LIMIT 1`
     )
-    .get(rid);
+    .get(rid, rid);
   if (existing?.id) return { ok: true, skipped: true, reason: 'already_credited' };
 
   const bid = trim(branchId) || DEFAULT_BRANCH_ID;

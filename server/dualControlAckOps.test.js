@@ -54,6 +54,11 @@ describe.skipIf(!mysqlOk)('Acknowledge with note — DB', () => {
   });
   beforeEach(() => {
     db = createDatabase(':memory:', { seed: false });
+    db.prepare(`INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-1', 'Test Customer', ?)`).run(DEFAULT_BRANCH_ID);
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-DC-1', 'CUS-1', 'Test Customer', 1500000, 1500000, 'Paid', 'Approved', '{}', '2026-10-01', '${DEFAULT_BRANCH_ID}');
+    `);
     db.exec(`
       INSERT INTO customer_refunds (
         refund_id, customer_id, customer_name, quotation_ref, product, reason_category, reason,

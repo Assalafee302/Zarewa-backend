@@ -48,7 +48,8 @@ if (live) {
   }
 }
 const { mysqlConfigFromEnv, createMysqlDatabase, databaseLabel } = await imp('server/mysqlDatabase.js');
-const cfg = { ...mysqlConfigFromEnv(), database };
+// CHECK: one pooled connection, so SET SESSION TRANSACTION READ ONLY (below) covers every statement.
+const cfg = { ...mysqlConfigFromEnv(), database, ...(doApply ? {} : { connectionLimit: 1 }) };
 const localHost = /^(localhost|127\.0\.0\.1|::1)$/i.test(cfg.host);
 const rehearsalName = /rehearsal|fixture|test/i.test(database);
 if (!live && (!localHost || !rehearsalName)) {
@@ -97,6 +98,7 @@ const { PAYOUT_ROUNDING_CLOSE_MAX_NGN } = await imp('shared/lib/payoutRoundingCl
 const { nextTreasuryTransferBatchHumanId } = await imp('server/humanId.js');
 const { syncQuotationPaidFromReceipts } = await imp('server/writeOps.js');
 const { refundStaffAllocationDeductionAmounts } = await imp('shared/lib/refundStaffAllocationDeduction.js');
+const { supplierCashPosition, recordSupplierOverpaymentReversal } = await imp('server/finance/supplierOverpaymentOps.js');
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
 // --only <item id>: run one item of the plan (one short connection per item — the live host resets long ones).
@@ -108,6 +110,7 @@ if (opt('only')) {
   }
 }
 const db = createMysqlDatabase(cfg, { reset: false, bootstrap: false });
+if (!doApply) db.exec('SET SESSION TRANSACTION READ ONLY');
 const actor = {
   id: null,
   displayName: approver,
@@ -1697,6 +1700,56 @@ function runOp(item, op) {
     if (!gl.ok || gl.skipped || gl.duplicate) throw new Error(`${item.id}: payout journal not posted (${gl.error || (gl.duplicate ? `duplicate of ${gl.journalId}` : 'skipped')})`);
     audit(item, { ...op, table: 'gl_journal_entries', key: gl.id || gl.journalId }, { table: 'gl_journal_entries', key: gl.id || gl.journalId, refundId: op.refundId, amountNgn: op.amountNgn, payDate: op.payDate, repairOf: op.repairOf });
     return { outcome: 'applied', journal: gl.id || gl.journalId };
+  }
+  if (op.kind === 'supplierOverpaymentReversal') {
+    // Supplier sends back money paid above the PO (e.g. a duplicate payment): the ERP's own reversal
+    // (recordSupplierOverpaymentReversal — PO supplier_paid down, treasury SUPPLIER_OVERPAYMENT_REVERSAL, GL Dr cash /
+    // Cr 1400 or 2000, stock-movement note, audit). Only when PO paid still equals the planned "before" and the
+    // duplicate payment lines are still on the books.
+    const pos = supplierCashPosition(db, op.poId);
+    if (!pos.ok) return { outcome: 'skipped', why: pos.error };
+    const dup = db
+      .prepare(`SELECT id FROM treasury_movements WHERE source_kind = 'SUPPLIER_OVERPAYMENT_REVERSAL' AND source_id = ? AND reference = ? AND amount_ngn = ?`)
+      .get(op.poId, op.reference, op.amountNgn);
+    if (dup) return { outcome: 'skipped', why: `already posted as ${dup.id}` };
+    if (pos.supplierPaidNgn !== op.expectedPaidBeforeNgn) {
+      return { outcome: 'skipped', why: `PO paid ₦${pos.supplierPaidNgn} ≠ planned before ₦${op.expectedPaidBeforeNgn}` };
+    }
+    for (const id of op.duplicateMovementIds || []) {
+      const tm = db.prepare(`SELECT id, amount_ngn, treasury_account_id FROM treasury_movements WHERE id = ?`).get(id);
+      if (!tm || Math.round(Number(tm.amount_ngn)) !== -op.amountNgn || Number(tm.treasury_account_id) !== op.treasuryAccountId) {
+        return { outcome: 'skipped', why: `duplicate payment line ${id} not found as −₦${op.amountNgn} on account ${op.treasuryAccountId}` };
+      }
+    }
+    if (op.amountNgn > pos.excessNgn) return { outcome: 'skipped', why: `only ₦${pos.excessNgn} is above the PO value` };
+    const blocked = lockedPeriodWhy(op.date, 'Supplier overpayment reversal date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const view = {
+      po: `${op.poId} ${pos.supplierName}`,
+      poValueNgn: pos.obligationNgn,
+      paidBeforeNgn: pos.supplierPaidNgn,
+      paidAfterNgn: pos.supplierPaidNgn - op.amountNgn,
+      excessAfterNgn: pos.excessNgn - op.amountNgn,
+    };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const r = recordSupplierOverpaymentReversal(db, op.poId, {
+      amountNgn: op.amountNgn,
+      treasuryAccountId: op.treasuryAccountId,
+      reference: op.reference,
+      note: op.note,
+      reason: 'supplier_refund',
+      dateISO: op.date,
+      actor: ownerActor,
+      workspaceBranchId: op.branchId,
+      workspaceViewAll: false,
+      createdBy: approver,
+    });
+    if (!r.ok) throw new Error(`${item.id}: ${r.error}`);
+    if (r.duplicate) return { outcome: 'skipped', why: `already posted as ${r.treasuryMovementId}` };
+    audit(item, { ...op, table: 'treasury_movements', key: r.treasuryMovementId }, {
+      table: 'treasury_movements', key: r.treasuryMovementId, ...view, unwindAdvanceNgn: r.unwindAdvanceNgn, unwindPayableNgn: r.unwindPayableNgn,
+    });
+    return { outcome: 'applied', treasuryMovementId: r.treasuryMovementId, ...view };
   }
   throw new Error(`${item.id}: unknown operation ${op.kind}`);
 }

@@ -95,6 +95,8 @@ const { poSupplierPaymentCapBlock } = await imp('server/procurement/poSupplierAd
 const { closeRefundUnpaidRemainder } = await imp('server/sales/payoutRoundingCloseOps.js');
 const { PAYOUT_ROUNDING_CLOSE_MAX_NGN } = await imp('shared/lib/payoutRoundingClose.js');
 const { nextTreasuryTransferBatchHumanId } = await imp('server/humanId.js');
+const { syncQuotationPaidFromReceipts } = await imp('server/writeOps.js');
+const { refundStaffAllocationDeductionAmounts } = await imp('shared/lib/refundStaffAllocationDeduction.js');
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
 // --only <item id>: run one item of the plan (one short connection per item — the live host resets long ones).
@@ -150,6 +152,42 @@ const accountBalanceAt = (accountId, cutISO) => {
   const a = db.prepare(`SELECT opening_balance_ngn AS o FROM treasury_accounts WHERE id = ?`).get(accountId);
   const s = db.prepare(`SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE treasury_account_id = ? AND posted_at_iso < ?`).get(accountId, cutISO);
   return Math.round(Number(a?.o || 0) + Number(s?.s || 0));
+};
+/** Live RECEIPT_IN lines of a receipt (not reversed). */
+const receiptLinesTotalNgn = (receiptId) =>
+  Math.round(
+    Number(
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(tm.amount_ngn), 0) AS s FROM treasury_movements tm
+           WHERE tm.source_kind = 'LEDGER_RECEIPT' AND tm.type = 'RECEIPT_IN' AND tm.source_id = ?
+             AND (tm.reverses_movement_id IS NULL OR TRIM(tm.reverses_movement_id) = '')
+             AND NOT EXISTS (SELECT 1 FROM treasury_movements r WHERE r.reverses_movement_id = tm.id)`
+        )
+        .get(receiptId)?.s
+    ) || 0
+  );
+/**
+ * A cleared receipt must carry one amount in three places: receipt book (amount_ngn), confirmed field
+ * (bank_received_amount_ngn — what refunds, credit caps and quotation paid read) and its live treasury lines.
+ * Returns '' when aligned, else the mismatch text. (R2–R4 corrections left the confirmed field behind, 19 Oct.)
+ */
+const confirmedFieldMismatch = (receiptId) => {
+  const sr = db
+    .prepare(`SELECT amount_ngn, bank_received_amount_ngn, status, finance_reconciliation_saved_at_iso AS saved FROM sales_receipts WHERE id = ?`)
+    .get(receiptId);
+  if (!sr || sr.bank_received_amount_ngn == null || /reversed/i.test(String(sr.status || ''))) return '';
+  // Partial split confirms are not finished yet; only a cleared receipt must agree everywhere.
+  if (!/^(cleared|confirmed)$/i.test(String(sr.status || '').trim()) && !String(sr.saved || '').trim()) return '';
+  const book = Math.round(Number(sr.amount_ngn));
+  const confirmed = Math.round(Number(sr.bank_received_amount_ngn));
+  const lines = receiptLinesTotalNgn(receiptId);
+  if (book === confirmed && (lines === confirmed || confirmed === 0)) return '';
+  return `${receiptId}: receipt ₦${book} / confirmed field ₦${confirmed} / treasury lines ₦${lines} do not agree`;
+};
+const assertConfirmedFieldAligned = (item, receiptId) => {
+  const why = confirmedFieldMismatch(receiptId);
+  if (why) throw new Error(`${item.id}: ${why}`);
 };
 const audit = (item, op, details) =>
   appendAuditLog(db, {
@@ -928,6 +966,98 @@ function runOp(item, op) {
     audit(item, { ...op, table: 'treasury_movements', key: batchId }, { table: 'treasury_movements', key: batchId, out: out.id, in: inn.id, amountNgn: op.amountNgn, date: op.date });
     return { outcome: 'applied', batchId, movements: [out.id, inn.id] };
   }
+  if (op.kind === 'receiptConfirmedField') {
+    // Cleared receipt whose book amount and treasury lines were corrected but whose confirmed field
+    // (bank_received_amount_ngn, read by refunds / credit caps / quotation paid) kept the old figure.
+    // Only when book and live lines already equal the planned after, and the field still equals the planned before.
+    const rec = db.prepare(`SELECT * FROM sales_receipts WHERE id = ?`).get(op.receiptId);
+    if (!rec) return { outcome: 'skipped', why: 'receipt not found' };
+    const cur = rec.bank_received_amount_ngn == null ? null : Math.round(Number(rec.bank_received_amount_ngn));
+    if (cur === op.afterNgn) return { outcome: 'skipped', why: 'already at the planned value' };
+    if (cur !== op.beforeNgn) return { outcome: 'skipped', why: `confirmed field ₦${cur} ≠ planned before ₦${op.beforeNgn}` };
+    const book = Math.round(Number(rec.amount_ngn));
+    const lines = receiptLinesTotalNgn(op.receiptId);
+    if (book !== op.afterNgn || lines !== op.afterNgn) {
+      return { outcome: 'skipped', why: `receipt ₦${book} / treasury lines ₦${lines} ≠ planned after ₦${op.afterNgn}` };
+    }
+    if (String(rec.quotation_ref || '') !== op.quotationRef) return { outcome: 'skipped', why: `receipt is on ${rec.quotation_ref}, not ${op.quotationRef}` };
+    const blocked = lockedPeriodWhy(rec.date_iso, 'Receipt date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const paidBefore = Math.round(Number(db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(op.quotationRef)?.paid_ngn || 0));
+    const view = { quotation: op.quotationRef, paidBefore, paidAfterExpected: paidBefore + op.afterNgn - op.beforeNgn };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    // One transaction: field, quotation paid, audit — a failed check leaves nothing behind.
+    return db.transaction(() => {
+      db.prepare(`UPDATE sales_receipts SET bank_received_amount_ngn = ? WHERE id = ? AND bank_received_amount_ngn = ?`).run(op.afterNgn, op.receiptId, op.beforeNgn);
+      syncQuotationPaidFromReceipts(db, op.quotationRef);
+      const paidAfter = Math.round(Number(db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(op.quotationRef)?.paid_ngn || 0));
+      if (paidAfter !== view.paidAfterExpected) throw new Error(`${item.id}: quotation paid ₦${paidAfter} after sync, expected ₦${view.paidAfterExpected}`);
+      assertConfirmedFieldAligned(item, op.receiptId);
+      audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, {
+        table: 'sales_receipts', key: op.receiptId, column: 'bank_received_amount_ngn', before: op.beforeNgn, after: op.afterNgn,
+        quotationRef: op.quotationRef, quotationPaidBefore: paidBefore, quotationPaidAfter: paidAfter,
+      });
+      return { outcome: 'applied', ...view, paidAfter };
+    })();
+  }
+  if (op.kind === 'refundRecalc') {
+    // Unpaid refund recalculated on the corrected cash, keeping its number: calculation lines, split gross per payee
+    // (each split keeps its own company-cut rate), amount (and approved amount when already approved), snapshot.
+    const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    if (!r) return { outcome: 'skipped', why: 'refund not found' };
+    const total = op.lines.reduce((s, l) => s + l.amountNgn, 0);
+    const splits = JSON.parse(r.split_distributions_json || '[]');
+    const nextSplits = splits.map((s) => {
+      const gross = op.splitGrossByRecipient[String(s.recipientCustomerID || s.recipientAssociatedStaffID || '')];
+      if (gross == null) throw new Error(`${item.id}: no planned gross for split ${s.recipientCustomerID || s.recipientAssociatedStaffID}`);
+      const calc = refundStaffAllocationDeductionAmounts(gross, Number(s.deductionRate) || 0);
+      return { ...s, amountNgn: gross, companyDeductionNgn: calc.companyDeductionNgn, netPayoutNgn: calc.netPayoutNgn };
+    });
+    const splitTotal = nextSplits.reduce((s, x) => s + x.amountNgn, 0);
+    if (splitTotal !== total) throw new Error(`${item.id}: splits ₦${splitTotal} ≠ lines ₦${total}`);
+    const netOf = (list) => list.reduce((s, x) => s + Math.round(Number(x.netPayoutNgn ?? x.amountNgn) || 0), 0);
+    const view = {
+      status: r.status, amountBefore: Number(r.amount_ngn), amountAfter: total,
+      approvedBefore: Number(r.approved_amount_ngn), paid: Number(r.paid_amount_ngn),
+      payableBefore: netOf(splits) - Number(r.paid_amount_ngn), payableAfter: netOf(nextSplits) - Number(r.paid_amount_ngn),
+      splitsAfter: nextSplits.map((s) => `${s.recipientCustomerID} gross ₦${s.amountNgn} cut ₦${s.companyDeductionNgn} net ₦${s.netPayoutNgn}`),
+    };
+    if (Number(r.amount_ngn) === total) return { outcome: 'skipped', why: 'already at the planned value', ...view };
+    const e = op.expect;
+    if (r.status !== e.status || Number(r.amount_ngn) !== e.amountNgn || Number(r.approved_amount_ngn) !== e.approvedNgn || Number(r.paid_amount_ngn) !== e.paidNgn) {
+      return { outcome: 'skipped', why: `refund ${r.status} ₦${r.amount_ngn} approved ₦${r.approved_amount_ngn} paid ₦${r.paid_amount_ngn} ≠ planned before`, ...view };
+    }
+    const prev = previewRefundRequest(db, { quotationRef: op.quotationRef });
+    const p = prev?.preview || {};
+    view.previewCashInNgn = p.quotationCashInNgn;
+    view.previewOverpaymentResidualNgn = p.overpaymentResidualNgn;
+    // CHECK runs before the confirmed-field items are posted, so the preview may still show the old cash.
+    if (!doApply) return { outcome: 'would apply', ...view, previewNote: `after the confirmed-field fix the preview must show cash ₦${op.expectPreview.cashInNgn}` };
+    if (!prev?.ok || Number(p.quotationCashInNgn) !== op.expectPreview.cashInNgn) {
+      throw new Error(`${item.id}: refund preview cash ₦${p.quotationCashInNgn} ≠ planned ₦${op.expectPreview.cashInNgn} — post the confirmed-field item first`);
+    }
+    const overLine = op.lines.filter((l) => l.category === 'Overpayment').reduce((s, l) => s + l.amountNgn, 0);
+    if (overLine > Math.round(Number(p.overpaymentResidualNgn ?? p.overpaymentExcessNgn) || 0)) {
+      throw new Error(`${item.id}: Overpayment ₦${overLine} above the preview's refundable ₦${p.overpaymentResidualNgn}`);
+    }
+    const snapOld = (() => { try { return JSON.parse(r.preview_snapshot_json || '{}'); } catch { return {}; } })();
+    const snap = { ...snapOld, ...p, capturedAtISO: approvedAtISO, recalculatedFromNgn: Number(r.amount_ngn), recalculatedReason: item.reason };
+    const approvedAfter = r.status === 'Approved' ? total : Number(r.approved_amount_ngn);
+    return db.transaction(() => {
+    db.prepare(
+      `UPDATE customer_refunds SET amount_ngn = ?, approved_amount_ngn = ?, calculation_lines_json = ?, split_distributions_json = ?, preview_snapshot_json = ?
+       WHERE refund_id = ? AND amount_ngn = ? AND paid_amount_ngn = ?`
+    ).run(total, approvedAfter, JSON.stringify(op.lines), JSON.stringify(nextSplits), JSON.stringify(snap).slice(0, 120_000), op.refundId, e.amountNgn, e.paidNgn);
+    const after = db.prepare(`SELECT amount_ngn, approved_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    if (Number(after.amount_ngn) !== total) throw new Error(`${item.id}: refund is ₦${after.amount_ngn} after update, planned ₦${total}`);
+    audit(item, { ...op, table: 'customer_refunds', key: op.refundId }, {
+      table: 'customer_refunds', key: op.refundId,
+      before: { amountNgn: e.amountNgn, approvedNgn: e.approvedNgn, lines: JSON.parse(r.calculation_lines_json || '[]'), splits: splits.map((s) => ({ id: s.recipientCustomerID, gross: s.amountNgn, net: s.netPayoutNgn })) },
+      after: { amountNgn: total, approvedNgn: approvedAfter, lines: op.lines, splits: nextSplits.map((s) => ({ id: s.recipientCustomerID, gross: s.amountNgn, net: s.netPayoutNgn })) },
+    });
+    return { outcome: 'applied', ...view, approvedAfter };
+    })();
+  }
   if (op.kind === 'receiptConfirmedAmount') {
     // Receipt booked below the bank amount: the ERP's finance-confirm path (receipt / overpay split, sales receipt,
     // treasury line, quotation paid, receipt.finance_amount_sync audit). Only when the current amount is the planned before.
@@ -946,6 +1076,7 @@ function runOp(item, op) {
     if (!r?.ok) throw new Error(`${item.id}: ${r?.error}`);
     const after = db.prepare(`SELECT amount_ngn FROM treasury_movements WHERE id = ?`).get(op.movementId);
     if (Number(after?.amount_ngn) !== op.amountNgn) throw new Error(`${item.id}: treasury line is ₦${after?.amount_ngn} after confirm, planned ₦${op.amountNgn}`);
+    assertConfirmedFieldAligned(item, op.receiptId);
     audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, before: op.expectedNgn, after: op.amountNgn, movementId: op.movementId });
     return { outcome: 'applied' };
   }
@@ -1108,6 +1239,7 @@ function runOp(item, op) {
     if (!r?.ok) throw new Error(`${item.id}: ${r?.error}`);
     const after = db.prepare(`SELECT amount_ngn FROM treasury_movements WHERE id = ?`).get(op.movementId);
     if (Number(after?.amount_ngn) !== op.lineAfterNgn) throw new Error(`${item.id}: line is ₦${after?.amount_ngn} after confirm, planned ₦${op.lineAfterNgn}`);
+    assertConfirmedFieldAligned(item, op.receiptId);
     audit(item, { ...op, table: 'sales_receipts', key: op.receiptId }, { table: 'sales_receipts', key: op.receiptId, before: op.totalBeforeNgn, after: op.totalAfterNgn, line: `${op.movementId} ${op.lineBeforeNgn} → ${op.lineAfterNgn}` });
     return { outcome: 'applied' };
   }
@@ -1651,6 +1783,13 @@ if (perItem) {
       const gapAfter = after[id].stored - after[id].ledger;
       if (gapAfter !== gapBefore) mismatch.push(`account ${id}: stored − ledger was ₦${gapBefore}, now ₦${gapAfter}`);
     }
+    // Every receipt the item posted to: book amount, confirmed field and treasury lines agree.
+    if (doApply && posted) {
+      for (const rid of new Set(item.ops.map((o) => o.receiptId).filter(Boolean))) {
+        const why = confirmedFieldMismatch(rid);
+        if (why) mismatch.push(why);
+      }
+    }
     progress({ event: 'item', item: item.id, outcomes: itemResults.map((r) => `${r.op}:${r.outcome}${r.why ? ` (${r.why})` : ''}`), expectDeltaNgn: item.expectDeltaNgn, itemDelta: delta, concurrent, before, after, mismatch });
     if (mismatch.length) {
       failed = { item: item.id, error: mismatch.join('; ') };
@@ -1668,6 +1807,7 @@ for (const group of perItem ? [] : ['A', 'D', 'C', 'B', 'E']) {
     const run = () => {
       for (const item of items) {
         for (const op of item.ops) groupResults.push({ id: item.id, group, record: item.record, field: item.field, op: op.kind, ...runOp(item, op) });
+        if (doApply) for (const rid of new Set(item.ops.map((o) => o.receiptId).filter(Boolean))) assertConfirmedFieldAligned(item, rid);
       }
     };
     if (doApply) db.transaction(run)();

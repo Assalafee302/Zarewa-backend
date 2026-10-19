@@ -1,0 +1,266 @@
+{
+ "createdAtISO": "2026-10-19",
+ "source": "OM 19 Oct 2026: confirmed-field sync for R2–R4 receipts + refunds on the stale value. --per-item. Account 4 must not move.",
+ "items": [
+  {
+   "id": "CF-9",
+   "group": "A",
+   "record": "LE-KD-26-2150 Adam suleiman (QT-KD-26-1818) — corrected in R3-9",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-2150",
+     "quotationRef": "QT-KD-26-1818",
+     "beforeNgn": 1679000,
+     "afterNgn": 1714000
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-10",
+   "group": "B",
+   "record": "RF-KD-26-9796 Adam Suleiman (QT-KD-26-1818), Pending",
+   "field": "refund recalculated on confirmed ₦1,714,000",
+   "reason": "Recalculate on confirmed ₦1,714,000 (bank 1,250,000 + 464,000, 14 Oct); extra ₦35,000 overpayment is the customer’s (100%); staff part unchanged, 20% company cut; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "refundRecalc",
+     "refundId": "RF-KD-26-9796",
+     "quotationRef": "QT-KD-26-1818",
+     "expect": {
+      "status": "Pending",
+      "amountNgn": 268120,
+      "approvedNgn": 0,
+      "paidNgn": 0
+     },
+     "lines": [
+      {
+       "label": "Overpayment on QT-KD-26-1818",
+       "amountNgn": 274960,
+       "category": "Overpayment"
+      },
+      {
+       "label": "Price above floor (quoted ₦/m minus workbook floor ₦/m × produced metres at quoted gauge): ₦28,160",
+       "amountNgn": 28160,
+       "category": "Customer commission"
+      }
+     ],
+     "splitGrossByRecipient": {
+      "CUS-KD-26-1157": 251000,
+      "CUS-KD-26-0951": 52120
+     },
+     "expectPreview": {
+      "cashInNgn": 1714000
+     }
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-1",
+   "group": "A",
+   "record": "LE-KD-26-1968 NUHU SHITTU (QT-KD-26-1705) — corrected in R2-C1",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-1968",
+     "quotationRef": "QT-KD-26-1705",
+     "beforeNgn": 22000,
+     "afterNgn": 42000
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-2",
+   "group": "A",
+   "record": "LE-KD-26-1986 aliyu mohd (QT-KD-26-1720) — corrected in R4-B5-A41",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-1986",
+     "quotationRef": "QT-KD-26-1720",
+     "beforeNgn": 204880,
+     "afterNgn": 204980
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-3",
+   "group": "A",
+   "record": "LE-KD-26-2026 shamsudeen (QT-KD-26-1755) — corrected in R4-B5-A84",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-2026",
+     "quotationRef": "QT-KD-26-1755",
+     "beforeNgn": 43428,
+     "afterNgn": 43450
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-4",
+   "group": "A",
+   "record": "LE-KD-26-2042 HAKIMI (QT-KD-26-1763) — corrected in R2-C2",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-2042",
+     "quotationRef": "QT-KD-26-1763",
+     "beforeNgn": 942700,
+     "afterNgn": 965000
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-5",
+   "group": "A",
+   "record": "LE-KD-26-2044 mohammed haruna (QT-KD-26-1764) — corrected in R3-5",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-2044",
+     "quotationRef": "QT-KD-26-1764",
+     "beforeNgn": 1351540,
+     "afterNgn": 1001540
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-6",
+   "group": "A",
+   "record": "LE-KD-26-2092 HAKIMI (QT-KD-26-1791) — corrected in R4-B5-A148",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-2092",
+     "quotationRef": "QT-KD-26-1791",
+     "beforeNgn": 4000,
+     "afterNgn": 4015
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-7",
+   "group": "A",
+   "record": "LE-KD-26-2093 ENGR ATTAH NICHOLAS (QT-KD-26-1792) — corrected in R4-B5-A2",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-2093",
+     "quotationRef": "QT-KD-26-1792",
+     "beforeNgn": 353184,
+     "afterNgn": 353000
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-8",
+   "group": "A",
+   "record": "LE-KD-26-2094 IBRAHIM WELDER (QT-KD-26-1793) — corrected in R4-A149",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "reason": "sync confirmed amount; R2–R4 correction omitted field; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "receiptConfirmedField",
+     "receiptId": "LE-KD-26-2094",
+     "quotationRef": "QT-KD-26-1793",
+     "beforeNgn": 142550,
+     "afterNgn": 146250
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "CF-11",
+   "group": "B",
+   "record": "RF-KD-26-9785 ENGR ATTAH NICHOLAS (QT-KD-26-1792), Approved, unpaid",
+   "field": "refund recalculated on confirmed ₦353,000",
+   "reason": "Order cancellation capped at cash that reached the bank: ₦353,000 (R4-B5-A2), not ₦353,184; OM instruction 19 Oct",
+   "ops": [
+    {
+     "kind": "refundRecalc",
+     "refundId": "RF-KD-26-9785",
+     "quotationRef": "QT-KD-26-1792",
+     "expect": {
+      "status": "Approved",
+      "amountNgn": 353184,
+      "approvedNgn": 353184,
+      "paidNgn": 0
+     },
+     "lines": [
+      {
+       "label": "Order cancellation (capped after economic floor)",
+       "amountNgn": 353000,
+       "category": "Order cancellation"
+      }
+     ],
+     "splitGrossByRecipient": {
+      "CUS-KD-26-0758": 353000
+     },
+     "expectPreview": {
+      "cashInNgn": 353000
+     }
+    }
+   ],
+   "expectDeltaNgn": {
+    "4": 0
+   },
+   "expectTypes": []
+  }
+ ]
+}

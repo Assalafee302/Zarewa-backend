@@ -8,8 +8,10 @@
  *   T1-6  receipts with no open quotation → customer advances (Yunusa Ahmed ₦49,000 1 Oct + ₦9,800 19 Oct;
  *         Muhammad Haruna Abdullahi ₦35,000 9 Oct → HARUNA MOHD CUS-KD-26-0973, the same payer name as LE-KD-26-2023).
  *   T1-8  Taj October charges as daily BC lines (stamp duty ₦50 + NIP fee ₦53.75 per transfer, Sept SMS ₦979.20).
- * Report-only: 2 (BOI loan — no loan-repayment category), 5 (RF-KD-26-9752 ₦33,950 — no bank line anywhere),
- * 7 (HOLD: Twenty percent / Balance, Aluzinc LINK).
+ *   T1-2  6 Oct ₦3,386,836 BOI loan repayment (category "Loan repayment — BOI" → GL 2600 Loans payable, not an expense).
+ *   T1-5  RF-KD-26-9752 ₦33,950 staff share (Mal Amadu Ibrahim) on Taj 9 Oct: no bank line anywhere → payout line reversed.
+ *   T1-7b 15 Oct "Aluzinc LINK" −₦11,536,200 = PO-KD-26-0090 Abomec: supplier payment from Taj.
+ * HOLD (OM names the supplier): 12 Oct "Twenty percent" −₦11,729,440 / 14 Oct "Balance" +₦1,874,640.
  *
  *   node scripts/taj-oct-plan-r1.mjs  →  exports/phase2-taj-oct/taj-round1-2026-10-19.plan.json
  */
@@ -34,6 +36,20 @@ const items = [
       paymentMethod: 'Bank', reference: 'BANK-TAJ-2026-10-05-CHAIRMAN', treasuryAccountId: TAJ, branchId: BR,
     }],
     expectDeltaNgn: d(-4000000),
+    expectTypes: ['EXPENSE'],
+  },
+  {
+    id: 'T1-2',
+    group: 'A',
+    record: 'Taj 2026-10-06 −₦3,386,889.75 "NIP Loan repayment INTER BANK TRANSFE"',
+    field: 'new expense row (Loan repayment — BOI → GL 2600, not an expense)',
+    reason: 'OM 19 Oct: BOI loan repayment — company loan; the accounts book carries the loan, the ERP records the money out (fee + stamp duty in the 6 Oct BC line)',
+    ops: [{
+      kind: 'postExpense', date: '2026-10-06', amountNgn: 3386836, category: 'Loan repayment — BOI',
+      expenseType: 'BOI loan repayment — company loan (accounts book carries the loan) — OM 19 Oct',
+      paymentMethod: 'Bank', reference: 'BANK-TAJ-2026-10-06-BOI', treasuryAccountId: TAJ, branchId: BR,
+    }],
+    expectDeltaNgn: d(-3386836),
     expectTypes: ['EXPENSE'],
   },
   {
@@ -64,6 +80,19 @@ const items = [
     expectDeltaNgn: d(0),
     expectTypes: [],
   })),
+  {
+    id: 'T1-5',
+    group: 'A',
+    record: 'TM-KD-26-3188 RF-KD-26-9752 Ibrahim Zaria −₦33,950 Taj 9 Oct (associated staff share, Mal Amadu Ibrahim, GT Bank)',
+    field: 'refund payout line reversal (REFUND_PAYOUT_REVERSAL_IN)',
+    reason: 'OM 19 Oct: not paid — no bank line on Taj, Moniepoint or Cash. The staff share returns to unpaid.',
+    ops: [{
+      kind: 'refundPayoutLineReverse', movementId: 'TM-KD-26-3188', refundId: 'RF-KD-26-9752', expectedNgn: 33950, treasuryAccountId: TAJ,
+      expectedPaidBeforeNgn: 460790, reason: 'not paid — no bank line on Taj, Moniepoint or Cash (OM 19 Oct)',
+    }],
+    expectDeltaNgn: d(33950),
+    expectTypes: ['REFUND_PAYOUT_REVERSAL_IN'],
+  },
   ...[
     ['T1-6a', null, 'Yunusa Ahmed', 49000, '2026-10-01', 'NIP FRM YUNUSA AHMED MOBUTOZAPS ALUMINIU'],
     ['T1-6b', null, 'Yunusa Ahmed', 9800, '2026-10-19', 'NIP FRM YUNUSA AHMED Col'],
@@ -82,6 +111,19 @@ const items = [
     expectDeltaNgn: d(amountNgn),
     expectTypes: ['ADVANCE_IN', 'RECEIPT_IN'],
   })),
+  {
+    id: 'T1-7b',
+    group: 'A',
+    record: 'Taj 2026-10-15 −₦11,536,253.75 "NIP Aluzinc INTER BANK TRANSFER LINK"',
+    field: 'supplier payment (AP-PO-PO-KD-26-0090)',
+    reason: 'OM 19 Oct: PO-KD-26-0090 Abomec Abuja (₦11,536,200 = 3,316 kg + 3,470 kg × ₦1,700); fee + stamp duty in the 15 Oct BC line',
+    ops: [{
+      kind: 'apPay', apId: 'AP-PO-PO-KD-26-0090', amountNgn: 11536200, expectedPaidBeforeNgn: 0, treasuryAccountId: TAJ,
+      postedAtISO: '2026-10-15T12:00:00.000Z', reference: 'BANK-TAJ-2026-10-15-LINK', note: 'Taj 15 Oct "NIP Aluzinc INTER BANK TRANSFER LINK" — OM 19 Oct',
+    }],
+    expectDeltaNgn: d(-11536200),
+    expectTypes: ['AP_PAYMENT'],
+  },
 ];
 
 // T1-8 — Taj October charges, one line per day (stamp duty ₦50 per debit, NIP fee ₦53.75 per outward transfer,
@@ -116,5 +158,5 @@ if (posted !== 1913) throw new Error(`Taj daily bank charges total ₦${posted},
 const dir = path.join(process.cwd(), 'exports/phase2-taj-oct');
 fs.mkdirSync(dir, { recursive: true });
 const out = path.join(dir, 'taj-round1-2026-10-19.plan.json');
-fs.writeFileSync(out, JSON.stringify({ createdAtISO: '2026-10-19', source: 'OM 19 Oct 2026: Taj round 1 (items 1, 3, 4, 6, 8). --per-item.', items }, null, 1));
+fs.writeFileSync(out, JSON.stringify({ createdAtISO: '2026-10-19', source: 'OM 19 Oct 2026: Taj round 1 (items 1, 2, 3, 4, 5, 6, 7b, 8). --per-item.', items }, null, 1));
 console.log(`wrote ${out} — ${items.length} items; Taj net ₦${items.reduce((s, i) => s + i.expectDeltaNgn[TAJ], 0).toLocaleString('en-NG')}`);

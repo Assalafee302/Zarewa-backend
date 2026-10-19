@@ -99,6 +99,7 @@ const { nextTreasuryTransferBatchHumanId } = await imp('server/humanId.js');
 const { syncQuotationPaidFromReceipts } = await imp('server/writeOps.js');
 const { refundStaffAllocationDeductionAmounts } = await imp('shared/lib/refundStaffAllocationDeduction.js');
 const { supplierCashPosition, recordSupplierOverpaymentReversal } = await imp('server/finance/supplierOverpaymentOps.js');
+const { tryPostCustomerRefundPayoutReversalGlTx } = await imp('server/glOps.js');
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
 // --only <item id>: run one item of the plan (one short connection per item — the live host resets long ones).
@@ -1700,6 +1701,61 @@ function runOp(item, op) {
     if (!gl.ok || gl.skipped || gl.duplicate) throw new Error(`${item.id}: payout journal not posted (${gl.error || (gl.duplicate ? `duplicate of ${gl.journalId}` : 'skipped')})`);
     audit(item, { ...op, table: 'gl_journal_entries', key: gl.id || gl.journalId }, { table: 'gl_journal_entries', key: gl.id || gl.journalId, refundId: op.refundId, amountNgn: op.amountNgn, payDate: op.payDate, repairOf: op.repairOf });
     return { outcome: 'applied', journal: gl.id || gl.journalId };
+  }
+  if (op.kind === 'refundPayoutLineReverse') {
+    // ONE refund payout line that no bank shows (the ERP's reverseRefundTreasuryPayouts reverses every payout of the
+    // refund): REFUND_PAYOUT_REVERSAL_IN on the line's own date linked to it, the ERP's payout-reversal journal for
+    // that amount (Dr cash / Cr the payout's debit account), refund paid down and status re-resolved, audit.
+    const tm = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(op.movementId);
+    if (!tm) return { outcome: 'skipped', why: 'treasury line not found' };
+    const rev = db.prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = ?`).get(tm.id);
+    if (rev) return { outcome: 'skipped', why: `already reversed by ${rev.id}` };
+    const amt = -Math.round(Number(tm.amount_ngn));
+    if (tm.type !== 'REFUND_PAYOUT' || tm.source_kind !== 'REFUND' || tm.source_id !== op.refundId) {
+      return { outcome: 'skipped', why: `${tm.id} is ${tm.type} ${tm.source_kind} ${tm.source_id}, not a payout of ${op.refundId}` };
+    }
+    if (amt !== op.expectedNgn || Number(tm.treasury_account_id) !== op.treasuryAccountId) {
+      return { outcome: 'skipped', why: `line −₦${amt} on account ${tm.treasury_account_id} ≠ planned −₦${op.expectedNgn} on ${op.treasuryAccountId}` };
+    }
+    const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    const paidBefore = Math.round(Number(r?.paid_amount_ngn) || 0);
+    if (paidBefore !== op.expectedPaidBeforeNgn) return { outcome: 'skipped', why: `${op.refundId} paid ₦${paidBefore} ≠ planned ₦${op.expectedPaidBeforeNgn}` };
+    const blocked = lockedPeriodWhy(tm.posted_at_iso, 'Payout date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const approvedAmt = Math.round(Number(r.approved_amount_ngn ?? r.amount_ngn) || 0);
+    const paidAfter = paidBefore - amt;
+    const statusAfter = paidAfter <= 0 ? 'Approved' : paidAfter >= approvedAmt ? r.status : 'Partially paid';
+    const view = { line: `${tm.id} ${tm.posted_at_iso.slice(0, 10)} −₦${amt}`, refund: op.refundId, paidBeforeNgn: paidBefore, paidAfterNgn: paidAfter, statusBefore: r.status, statusAfter };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const created = insertTreasuryMovementTx(db, {
+      type: 'REFUND_PAYOUT_REVERSAL_IN',
+      treasuryAccountId: tm.treasury_account_id,
+      amountNgn: amt,
+      postedAtISO: tm.posted_at_iso,
+      reference: tm.reference,
+      counterpartyKind: tm.counterparty_kind,
+      counterpartyId: tm.counterparty_id,
+      counterpartyName: tm.counterparty_name,
+      sourceKind: 'REFUND',
+      sourceId: op.refundId,
+      note: op.reason,
+      createdBy: approver,
+      reversesMovementId: tm.id,
+      branchId: r.branch_id || 'BR-KD',
+      allowNegativeBalance: true,
+    });
+    const gl = tryPostCustomerRefundPayoutReversalGlTx(db, {
+      refundId: op.refundId, reversalAmountNgn: amt, reversalMovementIds: [created.id], entryDateISO: tm.posted_at_iso.slice(0, 10),
+      branchId: r.branch_id ?? null, createdByUserId: null,
+    });
+    if (!gl.ok && !gl.skipped && !gl.duplicate) throw new Error(`${item.id}: GL — ${gl.error}`);
+    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = ?, status = ? WHERE refund_id = ?`).run(paidAfter, statusAfter, op.refundId);
+    appendAuditLog(db, {
+      actor, action: 'refund.reverse_treasury_payout', entityKind: 'refund', entityId: op.refundId, note: op.reason,
+      details: { reversalMovementIds: [created.id], reversedMovementId: tm.id, priorPaidNgn: paidBefore, paidAfterNgn: paidAfter },
+    });
+    audit(item, { ...op, table: 'treasury_movements', key: created.id }, { table: 'treasury_movements', key: created.id, ...view, glJournal: gl.id || gl.journalId || null });
+    return { outcome: 'applied', created: created.id, ...view };
   }
   if (op.kind === 'supplierOverpaymentReversal') {
     // Supplier sends back money paid above the PO (e.g. a duplicate payment): the ERP's own reversal

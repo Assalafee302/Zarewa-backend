@@ -7,6 +7,7 @@ import {
 import { assertInvestigationAllowsMutation } from './office/investigationLock.js';
 import { heldReceiptClearanceBlock } from './sales/receiptClearanceHold.js';
 import { receiptInvestigationClearanceBlock } from './sales/receiptInvestigationClearance.js';
+import { syncReceiptConfirmedBankAmountTx } from './sales/receiptConfirmedAmountSync.js';
 import { poTransportPayoutHoldBlock } from './procurement/poTransportPayoutHold.js';
 import { poTransportDuplicatePaymentBlock } from './procurement/poTransportDuplicateGuard.js';
 import { poSupplierPaymentCapBlock } from './procurement/poSupplierAdvanceGuard.js';
@@ -226,7 +227,7 @@ import {
   listSalesReceipts,
   listCoilLots,
 } from './readModel.js';
-import { RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE } from '../shared/lib/receiptClearance.js';
+import { RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE, isReceiptCleared } from '../shared/lib/receiptClearance.js';
 import { advanceInRemainingNgnByIdFromEntries } from '../shared/lib/customerLedgerCore.js';
 import {
   effectiveOutstandingNgn,
@@ -12382,6 +12383,31 @@ export function zeroUnbackedReceiptInflowTx(db, movementId, payload, actor = nul
 }
 
 /**
+ * After a payment line on an already-cleared receipt is corrected, the confirmed amount is the
+ * sum of its live treasury lines. Receipt book amount, ledger split, confirmed field and quotation
+ * paid follow it, so refunds and open credit see the corrected cash. Pending receipts are left
+ * to the confirm step.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {object | null} actor
+ */
+function realignClearedReceiptToTreasuryLinesTx(db, movementId, actor) {
+  const mv = db.prepare(`SELECT source_id FROM treasury_movements WHERE id = ?`).get(String(movementId || '').trim());
+  const sourceId = String(mv?.source_id || '').trim();
+  if (!sourceId) return { ok: true, skipped: true };
+  const rec = db
+    .prepare(`SELECT * FROM sales_receipts WHERE ledger_entry_id = ? OR id = ? ORDER BY id LIMIT 1`)
+    .get(sourceId, sourceId);
+  if (!rec || !isReceiptCleared(rec)) return { ok: true, skipped: true };
+  const lines = listReceiptTreasurySplitMovementsDb(db, String(rec.id));
+  if (!lines.length) return { ok: true, skipped: true };
+  const linesTotal = lines.reduce((s, m) => s + roundMoney(m.amount_ngn), 0);
+  return applyFinanceConfirmedReceiptBookAmountTx(db, String(rec.id), linesTotal, actor, {
+    skipTreasurySync: true,
+  });
+}
+
+/**
  * Finance: correct a single LEDGER_RECEIPT treasury split (per payment line; updates cash/bank books).
  * @param {import('better-sqlite3').Database} db
  * @param {string} movementId
@@ -12396,6 +12422,12 @@ export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, acto
       result = r;
       if (!r.ok) {
         throw new Error(r.error || 'Correction failed.');
+      }
+      if (!r.noOp) {
+        const realign = realignClearedReceiptToTreasuryLinesTx(db, movementId, actor);
+        if (!realign.ok) {
+          throw new Error(realign.error || 'Could not align the cleared receipt with the corrected line.');
+        }
       }
     })();
   } catch (e) {
@@ -13360,6 +13392,8 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
         allowNegativeBalance: Boolean(options.allowNegativeBalance),
       });
     }
+    // Book already matches; the confirmed field may still carry an older figure (refunds read it).
+    syncReceiptConfirmedBankAmountTx(db, rec, confirmed);
     const qrefEarly = String(rec.quotation_ref || '').trim();
     if (qrefEarly) syncQuotationPaidFromReceipts(db, qrefEarly);
     return { ok: true, changed: false, confirmedAmountNgn: confirmed, previousAmountNgn: bookAmt };
@@ -13406,6 +13440,9 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
     display,
     id
   );
+  // A cleared receipt's confirmed amount moves with the book amount — refund cash-in,
+  // open credit and quotation paid read bank_received_amount_ngn, not amount_ngn.
+  const confirmedField = syncReceiptConfirmedBankAmountTx(db, rec, confirmed);
 
   if (!options.skipTreasurySync) {
     syncTreasuryMovementsToConfirmedReceiptAmountTx(db, id, ledgerId, confirmed, actor, {
@@ -13427,6 +13464,7 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
       quotationRef: qref || null,
       receiptLedgerNgn: newRec,
       overpayLedgerNgn: newOver,
+      ...(confirmedField.changed ? { previousBankReceivedNgn: confirmedField.previousNgn } : {}),
     },
   });
 

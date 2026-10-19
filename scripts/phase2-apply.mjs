@@ -100,6 +100,8 @@ const { syncQuotationPaidFromReceipts } = await imp('server/writeOps.js');
 const { refundStaffAllocationDeductionAmounts } = await imp('shared/lib/refundStaffAllocationDeduction.js');
 const { supplierCashPosition, recordSupplierOverpaymentReversal } = await imp('server/finance/supplierOverpaymentOps.js');
 const { tryPostCustomerRefundPayoutReversalGlTx } = await imp('server/glOps.js');
+const { resolveCreditTargets } = await imp('server/finance/partnerWalletCredit.js');
+const { raiseOpenCompanyRetentionCreditTx } = await imp('server/finance/refundCompanyRetentionLedger.js');
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
 // --only <item id>: run one item of the plan (one short connection per item — the live host resets long ones).
@@ -1702,6 +1704,65 @@ function runOp(item, op) {
     audit(item, { ...op, table: 'gl_journal_entries', key: gl.id || gl.journalId }, { table: 'gl_journal_entries', key: gl.id || gl.journalId, refundId: op.refundId, amountNgn: op.amountNgn, payDate: op.payDate, repairOf: op.repairOf });
     return { outcome: 'applied', journal: gl.id || gl.journalId };
   }
+  if (op.kind === 'refundApprovalRestore') {
+    // An approval made from a stale screen wrote back the old approved amount and calculation lines (the ERP reviews
+    // Pending refunds only, so it cannot be re-approved in the app). Restore the approved amount + lines, the
+    // settlement note, and raise the untouched company-cut retention credit to the ERP's cut at the restored amount.
+    const r = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(op.refundId);
+    if (!r) return { outcome: 'skipped', why: 'refund not found' };
+    const approved = Math.round(Number(r.approved_amount_ngn) || 0);
+    if (approved === op.approvedAfterNgn) return { outcome: 'skipped', why: 'already at the planned value' };
+    const paid = Math.round(Number(r.paid_amount_ngn) || 0);
+    if (r.status !== 'Approved' || paid !== 0 || approved !== op.approvedBeforeNgn || Math.round(Number(r.amount_ngn)) !== op.approvedAfterNgn) {
+      return { outcome: 'skipped', why: `${r.status} paid ₦${paid} approved ₦${approved} requested ₦${r.amount_ngn} ≠ planned Approved / 0 / ₦${op.approvedBeforeNgn} / ₦${op.approvedAfterNgn}` };
+    }
+    const ret = db.prepare(`SELECT id, amount_ngn, open_ngn FROM refund_company_retention_entries WHERE entry_type = 'credit' AND source_kind = 'REFUND_COMPANY_CUT' AND source_id = ?`).get(op.refundId);
+    if (!ret || Math.round(Number(ret.amount_ngn)) !== op.cutBeforeNgn || Math.round(Number(ret.open_ngn)) !== op.cutBeforeNgn) {
+      return { outcome: 'skipped', why: `retention credit ${ret ? `${ret.id} ₦${ret.amount_ngn} open ₦${ret.open_ngn}` : 'missing'} ≠ planned untouched ₦${op.cutBeforeNgn}` };
+    }
+    const cutAfter = resolveCreditTargets(db, { ...r, approved_amount_ngn: op.approvedAfterNgn }, op.approvedAfterNgn)
+      .reduce((s, t) => s + Math.round(Number(t.companyDeductionNgn) || 0), 0);
+    if (cutAfter !== op.cutAfterNgn) return { outcome: 'skipped', why: `ERP cut at ₦${op.approvedAfterNgn} is ₦${cutAfter}, planned ₦${op.cutAfterNgn}` };
+    const blocked = lockedPeriodWhy(r.approval_date || new Date().toISOString(), 'Approval date');
+    if (blocked) return blockedOrThrow(item, blocked);
+    const note = `Settled at approval: company cut ₦${cutAfter.toLocaleString('en-NG')} → retention ledger.`;
+    const view = { approvedBeforeNgn: approved, approvedAfterNgn: op.approvedAfterNgn, cutBeforeNgn: op.cutBeforeNgn, cutAfterNgn: cutAfter, retention: ret.id, linesAfter: op.lines.map((l) => `${l.category} ₦${l.amountNgn}`) };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const upd = db.prepare(`UPDATE customer_refunds SET approved_amount_ngn = ?, calculation_lines_json = ?, payment_note = ? WHERE refund_id = ? AND approved_amount_ngn = ? AND paid_amount_ngn = 0`)
+      .run(op.approvedAfterNgn, JSON.stringify(op.lines), note, op.refundId, op.approvedBeforeNgn);
+    if (!upd?.changes) throw new Error(`${item.id}: refund changed under the update`);
+    const raised = raiseOpenCompanyRetentionCreditTx(db, { refundId: op.refundId, nextAmountNgn: cutAfter, note: `raised to ₦${cutAfter.toLocaleString('en-NG')} (approval restored to ₦${op.approvedAfterNgn.toLocaleString('en-NG')}, Phase 2 ${item.id})` });
+    if (!raised?.ok) throw new Error(`${item.id}: retention — ${raised?.error}`);
+    appendAuditLog(db, {
+      actor, action: 'refund.approval_restore', entityKind: 'refund', entityId: op.refundId, note: op.reason,
+      details: { before: { approvedNgn: approved, lines: r.calculation_lines_json, paymentNote: r.payment_note }, after: { approvedNgn: op.approvedAfterNgn, lines: op.lines, paymentNote: note }, retention: { id: ret.id, before: op.cutBeforeNgn, after: cutAfter } },
+    });
+    audit(item, { ...op, table: 'customer_refunds', key: op.refundId }, { table: 'customer_refunds', key: op.refundId, ...view });
+    return { outcome: 'applied', ...view };
+  }
+  if (op.kind === 'syncStoredBalance') {
+    // Stored balance = ledger (opening + movements), the way the ERP's balance rebuild does it, for ONE account: the
+    // stored − ledger gap must still be the planned one; stored moves by exactly −gap (cashier lines posted meanwhile
+    // move both and are kept). treasury_account.balance_rebuilt audit + Phase 2 audit.
+    const a = db.prepare(`SELECT id, name, balance, opening_balance_ngn FROM treasury_accounts WHERE id = ?`).get(op.treasuryAccountId);
+    if (!a) return { outcome: 'skipped', why: 'treasury account not found' };
+    const sum = Math.round(Number(db.prepare(`SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE treasury_account_id = ?`).get(a.id).s));
+    const ledger = Math.round(Number(a.opening_balance_ngn)) + sum;
+    const stored = Math.round(Number(a.balance));
+    const gap = stored - ledger;
+    if (gap === 0) return { outcome: 'skipped', why: 'stored already equals ledger' };
+    if (gap !== op.expectedGapNgn) return { outcome: 'skipped', why: `stored − ledger ₦${gap} ≠ planned ₦${op.expectedGapNgn}` };
+    const view = { account: `${a.id} ${a.name}`, storedBeforeNgn: stored, ledgerNgn: ledger, gapNgn: gap, storedAfterNgn: stored - gap };
+    if (!doApply) return { outcome: 'would apply', ...view };
+    const upd = db.prepare(`UPDATE treasury_accounts SET balance = balance - ? WHERE id = ?`).run(gap, a.id);
+    if (!upd?.changes) throw new Error(`${item.id}: balance not updated`);
+    appendAuditLog(db, {
+      actor, action: 'treasury_account.balance_rebuilt', entityKind: 'treasury_account', entityId: String(a.id), note: item.reason.slice(0, 900),
+      details: { accountName: a.name, previousBalanceNgn: stored, nextBalanceNgn: stored - gap, deltaNgn: -gap },
+    });
+    audit(item, { ...op, table: 'treasury_accounts', key: String(a.id) }, { table: 'treasury_accounts', key: a.id, column: 'balance', ...view });
+    return { outcome: 'applied', ...view };
+  }
   if (op.kind === 'refundPayoutLineReverse') {
     // ONE refund payout line that no bank shows (the ERP's reverseRefundTreasuryPayouts reverses every payout of the
     // refund): REFUND_PAYOUT_REVERSAL_IN on the line's own date linked to it, the ERP's payout-reversal journal for
@@ -1891,7 +1952,9 @@ if (perItem) {
       // Stored balance must move with the ledger (Taj has a known pre-existing stored ≠ ledger gap: keep it unchanged).
       const gapBefore = before[id].stored - before[id].ledger;
       const gapAfter = after[id].stored - after[id].ledger;
-      if (gapAfter !== gapBefore) mismatch.push(`account ${id}: stored − ledger was ₦${gapBefore}, now ₦${gapAfter}`);
+      // An item that closes the gap on purpose (syncStoredBalance) says by how much: expectStoredGapChangeNgn.
+      const gapWant = doApply && posted ? Number(item.expectStoredGapChangeNgn?.[id] || 0) : 0;
+      if (gapAfter - gapBefore !== gapWant) mismatch.push(`account ${id}: stored − ledger was ₦${gapBefore}, now ₦${gapAfter} (expected change ₦${gapWant})`);
     }
     // Every receipt the item posted to: book amount, confirmed field and treasury lines agree.
     if (doApply && posted) {

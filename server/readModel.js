@@ -922,7 +922,9 @@ export function listManagementItems(db, branchScope = 'ALL') {
     pendingPriceExceptions = db
       .prepare(
         `SELECT id, customer_name, total_ngn, paid_ngn, date_iso, branch_id,
-                price_exception_md_review_required
+                price_exception_md_review_required${
+                  hasColumn(db, 'quotations', 'md_price_exception_snapshot_json') ? ', md_price_exception_snapshot_json' : ''
+                }
          FROM quotations
          WHERE ${SQL_PENDING_BELOW_FLOOR_EXCEPTION}
            AND IFNULL(paid_ngn, 0) > 0

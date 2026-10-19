@@ -25,6 +25,7 @@ import {
   summarizeExecWorkTrayApprovalTiers,
 } from '../shared/lib/execApprovalTier.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
+import { explainAttentionItem } from '../shared/lib/attentionRules.js';
 import { buildMdCockpitPulses, buildChampionCustomerSnippet } from './mdCockpitOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
@@ -607,6 +608,11 @@ function mapAttentionToWorkTray(db, attention, user, readOnly) {
       amountNgn: it.amountNgn != null ? Math.round(Number(it.amountNgn) || 0) : null,
       requestedBy: String(requestedBy).slice(0, 80),
       ageLabel: daysSinceLabel(it.atIso),
+      atIso: it.atIso || null,
+      integrityKind: it.integrityKind || undefined,
+      refundId: it.refundId || undefined,
+      jobId: it.jobId || undefined,
+      attention: it.attention,
       status: 'Approval Pending',
       route: workItemRoute(kind, it),
       quotationRef: String(it.quotationRef || it.row?.id || it.row?.quotation_ref || '').trim() || undefined,
@@ -665,6 +671,7 @@ function listExecutiveExtras(db, branchScope) {
         amountNgn: null,
         requestedBy: 'HR',
         ageLabel: daysSinceLabel(r.created_at_iso),
+        atIso: r.created_at_iso || null,
         status: 'MD sign-off required',
         route: '/exec?tab=decide',
         reviewContext: {
@@ -699,6 +706,7 @@ function listExecutiveExtras(db, branchScope) {
         amountNgn: Math.round(Number(r.principal_ngn) || 0),
         requestedBy: 'Treasury',
         ageLabel: daysSinceLabel(r.created_at_iso),
+        atIso: r.created_at_iso || null,
         status: String(r.status || 'Pending'),
         route: '/exec?tab=decide',
         reviewContext: {
@@ -740,6 +748,7 @@ function listExecutiveExtras(db, branchScope) {
         amountNgn: Math.round(Number(r.total_ngn) || 0),
         requestedBy: 'Sales / branch',
         ageLabel: daysSinceLabel(r.date_iso),
+        atIso: r.date_iso || null,
         status: 'BM or MD approval required',
         route: `/exec`,
         quotationRef: r.id,
@@ -885,6 +894,7 @@ function appendExecutiveWorkTraySources(db, branchScope, user, readOnly, baseIte
       amountNgn: null,
       requestedBy: 'Office',
       ageLabel: daysSinceLabel(t.updatedAtIso),
+      atIso: t.updatedAtIso || null,
       status: String(t.status || 'open'),
       route: '/office',
       reviewContext: { threadId: t.id, relatedWorkItemId: t.relatedWorkItemId || '', subject: t.subject || '' },
@@ -920,6 +930,7 @@ function appendExecutiveWorkTraySources(db, branchScope, user, readOnly, baseIte
       amountNgn: it.amountNgn != null ? Math.round(Number(it.amountNgn) || 0) : null,
       requestedBy: it.senderOfficeLabel || it.officeLabel || '—',
       ageLabel: daysSinceLabel(it.updatedAtIso || it.createdAtIso),
+      atIso: it.updatedAtIso || it.createdAtIso || null,
       status: String(it.status || 'Pending'),
       route: it.routePath || it.route || '/office',
       settlementId: settlementId || undefined,
@@ -1598,6 +1609,13 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
   workTrayItems = sortExecWorkTrayByApprovalTier(
     annotateExecWorkTrayApprovalTiers(workTrayItems, governanceLimits)
   );
+  // Rows from outside the attention inbox (payroll, loans, memos, work items) get the same shared sentence.
+  const attentionNowIso = new Date().toISOString();
+  for (const row of workTrayItems) {
+    if (!row.attention && !row.summaryOnly) {
+      row.attention = explainAttentionItem(row, { limits: governanceLimits, nowIso: attentionNowIso });
+    }
+  }
 
   const debtPreloaded = {
     quotations: sourceSlices.quotations,

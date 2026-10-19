@@ -38,7 +38,8 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
   if (readFinanceFeatureFlags().enforceDualControlPayments) {
     const rows = db
       .prepare(
-        `SELECT refund_id, customer_name, quotation_ref, amount_ngn, approved_amount_ngn, requested_by_user_id, approved_by_user_id, requested_by, approved_by, paid_by_user_id, paid_by, status, branch_id
+        `SELECT refund_id, customer_name, quotation_ref, amount_ngn, approved_amount_ngn, requested_by_user_id, approved_by_user_id, requested_by, approved_by, paid_by_user_id, paid_by, status, branch_id,
+                requested_at_iso, approval_date, paid_at_iso
          FROM customer_refunds
          WHERE TRIM(COALESCE(LOWER(status), '')) IN ('approved', 'paid')
          ${bRef.sql}`
@@ -49,6 +50,7 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
         dualControlWarnings.push({
           kind: 'same_requester_approver',
           refundId: r.refund_id,
+          atIso: r.approval_date || r.requested_at_iso || '',
           message: 'Requester and approver are the same user.',
           customerName: r.customer_name || '',
           quotationRef: r.quotation_ref || '',
@@ -64,6 +66,7 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
         dualControlWarnings.push({
           kind: 'same_approver_payer',
           refundId: r.refund_id,
+          atIso: r.paid_at_iso || r.approval_date || '',
           message: 'Approver and payer are the same user.',
           customerName: r.customer_name || '',
           quotationRef: r.quotation_ref || '',

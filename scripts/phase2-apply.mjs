@@ -1027,7 +1027,8 @@ function runOp(item, op) {
     if (r.status !== e.status || Number(r.amount_ngn) !== e.amountNgn || Number(r.approved_amount_ngn) !== e.approvedNgn || Number(r.paid_amount_ngn) !== e.paidNgn) {
       return { outcome: 'skipped', why: `refund ${r.status} ₦${r.amount_ngn} approved ₦${r.approved_amount_ngn} paid ₦${r.paid_amount_ngn} ≠ planned before`, ...view };
     }
-    const prev = previewRefundRequest(db, { quotationRef: op.quotationRef });
+    // Leave the refund being recalculated out, else its own lines count as already refunded.
+    const prev = previewRefundRequest(db, { quotationRef: op.quotationRef, excludeRefundId: op.refundId });
     const p = prev?.preview || {};
     view.previewCashInNgn = p.quotationCashInNgn;
     view.previewOverpaymentResidualNgn = p.overpaymentResidualNgn;

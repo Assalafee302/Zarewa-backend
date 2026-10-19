@@ -6,6 +6,7 @@ import { REFUND_MD_APPROVAL_THRESHOLD_NGN } from '../shared/workspaceGovernance.
 import { refundPayableQuotationWhereSql } from '../shared/lib/quotationRefundsBlocked.js';
 import { metreVarianceExceedsThreshold } from '../shared/lib/productionMetreVariance.js';
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
+import { dualControlAckKey, listDualControlAcknowledgements } from './dualControlAckOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -81,6 +82,18 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
     }
   }
 
+  // MD/CEO "Acknowledge with note": acknowledged warnings leave the attention list, kept with who/when/note.
+  const dualControlAcknowledged = [];
+  if (dualControlWarnings.length > 0) {
+    const acks = listDualControlAcknowledgements(db, {
+      refundIds: [...new Set(dualControlWarnings.map((w) => w.refundId))],
+    });
+    for (let i = dualControlWarnings.length - 1; i >= 0; i -= 1) {
+      const ack = acks.get(dualControlAckKey(dualControlWarnings[i].refundId, dualControlWarnings[i].kind));
+      if (ack) dualControlAcknowledged.unshift({ ...dualControlWarnings.splice(i, 1)[0], acknowledgement: ack });
+    }
+  }
+
   let adminTrialRows = [];
   try {
     adminTrialRows = db
@@ -126,6 +139,7 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
       submittedAwaitingApproval: mgmt.pendingMaterialIncidents || [],
     },
     dualControlWarnings,
+    dualControlAcknowledged,
     adminTrialBypasses: adminTrialRows,
     totals: {
       pendingApprovalCount,

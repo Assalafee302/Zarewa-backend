@@ -68,6 +68,12 @@ banner; BM → `/manager?...&attention=<id>`.
 | 26 | Quotation AR | quote `paidNgn` ≠ receipts + applied credit | "Quotation paid amount differs from receipts + applied advance" | `quotation_paid_mismatch` — "QT-… shows ₦150,000 paid but receipts + applied credit come to ₦100,000 — ₦50,000 more on the quote" |
 | 27 | Receipt/treasury | receipt vs treasury line mismatch | issue text | `receipt_treasury_mismatch` — "<ref> (<customer>): <issue> — ₦D difference" |
 
+## E2. Reports — Pending approvals (operations)
+
+| # | Table | Rule | Row before | Now |
+|---|---|---|---|---|
+| 28 | Approved refunds awaiting payment | refund `approved`, payable | `RF-… ₦amount · Approved by …` | `refund_unpaid` — "Refund ₦1,408,453 approved 16 Oct is still unpaid — 3 days" |
+
 ## F. Found, not converted on this branch (and why)
 
 | Where | What | Why not |
@@ -76,7 +82,6 @@ banner; BM → `/manager?...&attention=<id>`.
 | Operations → Inventory attention panel | stuck planned/running jobs, coil spec mismatch, WIP, partial POs, loads in transit | operations/storekeeper hygiene counts, not a person-to-clear queue; next pass |
 | Finance trial exceptions panel | counts by role | counts only |
 | BM health strip / aged counts | aged attention counts | counts only (now consistent with the same items) |
-| Pending approvals ops report — approved-unpaid refunds | "hanging" approved refunds list | rule `refund_unpaid` is defined and tested; that report table is not wired yet |
 | Printed reports (bank recon, refund report, receipts register, accrual statement) | line class `exception` / `review` | printed report classifications with their own note column, not attention queues |
 | HR (discipline "under investigation", my-HR next step) | HR workflow states | out of scope |
 | "Stale statement" | — | no such flag exists in the app today (the bank recon print shows a statement gap only) |
@@ -88,7 +93,11 @@ banner; BM → `/manager?...&attention=<id>`.
   on one tap from the banner. "Assign Branch Manager" goes to Team & access.
 - The opened record highlights the offending field (`data-attention-field`: amount, paid, conversion).
 - A record with several flags (e.g. refund pending **and** approver = payer) lists all of them in one banner.
-- Approver = payer / requester = approver warnings have **no clearing action in the ERP**: they stay on the list for
-  as long as the refund exists. Needs an owner decision (acknowledge step → Phase 3 controls).
-- The quotation clearance panel shows `% paid` capped at 100% (₦140,000 of ₦100,000 shows "100%"), which hides
-  overpayment; the banner now states it. Fixing the panel's percentage is a separate small change.
+- Approver = payer / requester = approver (owner decision 2026-10-19): **Acknowledge with note** — MD/CEO only,
+  note of at least 10 characters, written to `audit_log` (action `refund.dual_control.acknowledged`, entity
+  `customer_refund/<id>`, details `{ kind, note }`). An acknowledged warning leaves the attention list
+  (`buildPendingApprovalsReport` → `dualControlAcknowledged`) and stays on the refund record (Sales refund view,
+  cashier refund detail, MD/BM review windows) with who, when and the note. No new table.
+- Quotation clearance panel: `% paid` is the real figure (₦140,000 of ₦100,000 shows 140%, in red) with
+  "Overpaid ₦40,000" in red under it (owner decision 2026-10-19).
+- Stock attention panel and HR flags: later, separate branch (owner decision 2026-10-19).

@@ -198,6 +198,7 @@ describe('refunds', () => {
       { label: 'Paid by', value: 'Abdulrahman', tone: 'bad' },
     ]);
     expect(a.links.manager).toBe('/manager?inbox=cash_out&refundId=RF-2&attention=dual_control%3ARF-2%3Asame_approver_payer');
+    expect(a.flags[0].actions.map((x) => x.label)).toEqual(['Acknowledge with note', 'Open record']);
 
     const b = explain({
       id: 'dual_control:RF-3:same_requester_approver',

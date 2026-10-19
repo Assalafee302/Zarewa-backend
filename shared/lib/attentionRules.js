@@ -125,6 +125,7 @@ export const ATTENTION_ACTIONS = {
   flag: { label: 'Flag', kind: 'decide' },
   override: { label: 'Allow production', kind: 'decide' },
   sign_off: { label: 'Sign off', kind: 'decide' },
+  acknowledge: { label: 'Acknowledge with note', kind: 'decide' },
   fix: { label: 'Fix', kind: 'link' },
   assign: { label: 'Assign Branch Manager', kind: 'link' },
   open: { label: 'Open record', kind: 'link' },
@@ -348,7 +349,7 @@ export const ATTENTION_RULES = {
       { label: 'Approved amount', value: attentionNgn(f.amountNgn) },
       { label: 'Approved on', value: attentionDay(f.atIso, f.nowIso) || '—' },
       { label: 'Approved by', value: f.approvedBy || '—' },
-      { label: 'Paid', value: attentionNgn(f.paidNgn || 0), tone: 'bad' },
+      ...(f.paidNgn != null ? [{ label: 'Paid', value: attentionNgn(f.paidNgn), tone: 'bad' }] : []),
     ],
   },
   customer_open_refund: {
@@ -394,7 +395,7 @@ export const ATTENTION_RULES = {
     label: 'Requested and approved by the same person',
     severity: 'critical',
     focus: 'people',
-    actions: ['open'],
+    actions: ['acknowledge', 'open'],
     message: (f) =>
       `Refund ${f.refundId} ${attentionNgn(f.amountNgn)} was requested and approved by the same person (${f.approvedBy || f.requestedBy || 'unknown'})`,
     evidence: (f) => [
@@ -408,7 +409,7 @@ export const ATTENTION_RULES = {
     label: 'Approved and paid by the same person',
     severity: 'critical',
     focus: 'people',
-    actions: ['open'],
+    actions: ['acknowledge', 'open'],
     message: (f) =>
       `Refund ${f.refundId} ${attentionNgn(f.amountNgn)} was approved and paid by the same person (${f.paidBy || f.approvedBy || 'unknown'})`,
     evidence: (f) => [

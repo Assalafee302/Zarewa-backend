@@ -13,6 +13,7 @@ import {
   normalizeRefundReasonCategoriesForApi,
   refundCategoriesRequireMdApproval,
 } from '../shared/refundConstants.js';
+import { explainAttentionItem } from '../shared/lib/attentionRules.js';
 
 function daysSince(iso) {
   const s = String(iso || '').trim();
@@ -317,7 +318,7 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       title: w.refundId,
       subtitle: w.customerName ? `${w.customerName} · ${w.message}` : (w.message || 'Dual-control segregation warning'),
       amountNgn: w.amountNgn || null,
-      atIso: null,
+      atIso: w.atIso || null,
       branchId: w.branchId || '',
       reasons: ['Dual-control segregation', w.kind === 'same_requester_approver' ? 'Requester = approver' : 'Approver = payer'],
       row: w,
@@ -375,6 +376,12 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
   }
 
   items.sort((a, b) => b.priority - a.priority || String(b.atIso || '').localeCompare(String(a.atIso || '')));
+
+  // One sentence per flag from the shared rule (row, banner, bell and counts all read this).
+  const nowIso = new Date().toISOString();
+  for (const it of items) {
+    it.attention = explainAttentionItem(it, { limits, nowIso });
+  }
 
   const summary = {
     total: items.length,

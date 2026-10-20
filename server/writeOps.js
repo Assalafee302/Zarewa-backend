@@ -11,6 +11,9 @@ import { syncReceiptConfirmedBankAmountTx } from './sales/receiptConfirmedAmount
 import { poTransportPayoutHoldBlock } from './procurement/poTransportPayoutHold.js';
 import { poTransportDuplicatePaymentBlock } from './procurement/poTransportDuplicateGuard.js';
 import { poSupplierPaymentCapBlock } from './procurement/poSupplierAdvanceGuard.js';
+import { orderedValueFromLines } from './ap2ReceivedBasisOps.js';
+import { overQuoteExcessNote, overQuoteRefusal, overQuoteSplit } from '../shared/lib/overQuotePayout.js';
+import { poTransportQuotedFeeNgn as poTransportQuotedFeeForCapNgn } from '../shared/lib/poTransportFee.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import {
   validateSpecialLaneTreasuryPayout,
@@ -2180,6 +2183,7 @@ function postPurchaseOrderTransportTx(db, poID, row, opts, treasuryAccountId, am
     workspaceBranchId: opts.workspaceBranchId,
     workspaceViewAll: opts.workspaceViewAll,
     actor: opts.actor,
+    ...(opts.batchId ? { batchId: opts.batchId } : {}),
   });
   appendMovementTx(db, {
     type: 'PO_TRANSPORT_POSTED',
@@ -2235,9 +2239,40 @@ export function postPurchaseOrderTransport(db, poID, opts = {}) {
   const dateISO = String(opts.dateISO || '').trim() || new Date().toISOString().slice(0, 10);
   const reference = String(opts.reference ?? row.transport_reference ?? poID).trim() || poID;
   const note = String(opts.note ?? '').trim() || 'PO transport / haulage';
+  // Finance Phase A (A5): above the quoted fee needs BM/OM approval; the excess posts as its own line.
+  const split = overQuoteSplit({
+    capNgn: poTransportQuotedFeeForCapNgn(row),
+    alreadyPaidNgn: sumTransportPaymentsForPo(db, poID),
+    payNgn: amountNgn,
+  });
+  const approval = opts.overQuoteApproval;
+  if (split.excessNgn > 0 && !approval) {
+    if (opts.overQuoteApprovalError) return { ...opts.overQuoteApprovalError, ...split };
+    return overQuoteRefusal(split, { what: 'Haulage', ref: poID, capLabel: 'quoted fee' });
+  }
   try {
-    const runCore = () =>
-      postPurchaseOrderTransportTx(db, poID, row, opts, treasuryAccountId, amountNgn, dateISO, reference, note);
+    const runCore = () => {
+      if (split.excessNgn <= 0) {
+        postPurchaseOrderTransportTx(db, poID, row, opts, treasuryAccountId, amountNgn, dateISO, reference, note);
+        return;
+      }
+      const batchId = `OVQ-${poID}-${Date.now()}`;
+      const lineOpts = { ...opts, batchId };
+      if (split.withinNgn > 0) {
+        postPurchaseOrderTransportTx(db, poID, row, lineOpts, treasuryAccountId, split.withinNgn, dateISO, reference, note);
+      }
+      const excessNote = overQuoteExcessNote({ ...approval, capLabel: 'quoted fee' });
+      postPurchaseOrderTransportTx(db, poID, row, lineOpts, treasuryAccountId, split.excessNgn, dateISO, `${reference} (above quote)`, excessNote);
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'purchase_order.haulage_above_quote',
+        entityKind: 'purchase_order',
+        entityId: poID,
+        status: 'flagged',
+        note: `[ABOVE QUOTE] Haulage ${poID}: ${excessNote}`,
+        details: { ...split, batchId, approval },
+      });
+    };
     if (opts.skipInnerTransaction) {
       runCore();
     } else {
@@ -2263,8 +2298,26 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
   if (Number.isNaN(amt) || amt <= 0) return { ok: false, error: 'Invalid amount.' };
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false, error: 'PO not found.' };
-  const cap = poSupplierPaymentCapBlock(db, poID, opts.mdNote);
-  if (cap) return cap;
+  // Finance Phase A (A5): above the PO value needs BM/OM approval (replaces the MD-note cap here);
+  // the approved excess posts as its own treasury line with the reason.
+  const split = overQuoteSplit({
+    capNgn: orderedValueFromLines(db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID) || []),
+    alreadyPaidNgn: row.supplier_paid_ngn,
+    payNgn: amt,
+  });
+  const approval = opts.overQuoteApproval;
+  if (split.excessNgn > 0 && !approval) {
+    if (opts.overQuoteApprovalError) return { ...opts.overQuoteApprovalError, ...split };
+    return overQuoteRefusal(split, { what: 'Supplier payment', ref: poID, capLabel: 'purchase order value' });
+  }
+  const supplierLines =
+    split.excessNgn > 0
+      ? [
+          ...(split.withinNgn > 0 ? [{ amountNgn: split.withinNgn, note: note || 'Supplier settlement' }] : []),
+          { amountNgn: split.excessNgn, note: overQuoteExcessNote({ ...approval, capLabel: 'purchase order value' }), excess: true },
+        ]
+      : [{ amountNgn: amt, note: note || 'Supplier settlement' }];
+  const supplierBatchId = split.excessNgn > 0 ? `OVQ-${poID}-${Date.now()}` : '';
   try {
     assertPeriodOpen(db, opts.dateISO || new Date().toISOString().slice(0, 10), 'Supplier payment date');
     db.transaction(() => {
@@ -2277,27 +2330,28 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
         ref: poID,
         detail: `${amt}${note ? ` — ${note}` : ''}`,
       });
-      if (opts.treasuryAccountId) {
+      if (opts.treasuryAccountId) for (const line of supplierLines) {
         const tm = insertTreasuryMovementTx(db, {
           type: 'SUPPLIER_PAYMENT',
           treasuryAccountId: opts.treasuryAccountId,
-          amountNgn: -amt,
+          amountNgn: -line.amountNgn,
           postedAtISO: opts.dateISO,
-          reference: opts.reference || note || poID,
+          reference: `${opts.reference || note || poID}${line.excess ? ' (above PO value)' : ''}`,
           counterpartyKind: 'SUPPLIER',
           counterpartyId: row.supplier_id,
           counterpartyName: row.supplier_name,
           sourceKind: 'PURCHASE_ORDER',
           sourceId: poID,
-          note: note || 'Supplier settlement',
+          note: line.note,
           createdBy: opts.createdBy ?? 'Procurement',
           workspaceBranchId: opts.workspaceBranchId,
           workspaceViewAll: opts.workspaceViewAll,
           actor: opts.actor,
+          ...(supplierBatchId ? { batchId: supplierBatchId } : {}),
         });
         const glPay = tryPostSupplierPaymentGlTx(db, {
           treasuryAccountId: opts.treasuryAccountId,
-          amountNgn: amt,
+          amountNgn: line.amountNgn,
           entryDateISO: String(opts.dateISO || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
           sourceKind: 'SUPPLIER_PAYMENT_GL',
           sourceId: tm.id,
@@ -2319,7 +2373,7 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
           poId: poID,
           supplierId: row.supplier_id,
           supplierName: row.supplier_name,
-          amountNgn: amt,
+          amountNgn: line.amountNgn,
           paidAtISO: tm.postedAtISO || opts.dateISO,
           paidByUserId: opts.actor?.id,
           paidByName: opts.actor?.displayName || opts.createdBy,
@@ -2334,6 +2388,17 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
         note: note || 'Supplier settlement recorded',
         details: { amountNgn: amt, treasuryAccountId: opts.treasuryAccountId ?? null },
       });
+      if (split.excessNgn > 0) {
+        appendAuditLog(db, {
+          actor: opts.actor,
+          action: 'purchase_order.supplier_payment_above_value',
+          entityKind: 'purchase_order',
+          entityId: poID,
+          status: 'flagged',
+          note: `[ABOVE PO VALUE] ${poID}: ${supplierLines[supplierLines.length - 1].note}`,
+          details: { ...split, batchId: supplierBatchId, approval },
+        });
+      }
       syncAccountsPayableFromPurchaseOrder(db, poID);
     })();
     return { ok: true };

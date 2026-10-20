@@ -1,0 +1,4 @@
+type,reference,date,amount,explanation
+orders,QT-KD-26-0343,2026-05-26,42900,"QT-KD-26-0343: ₦34,000 paid of ₦42,900 (79%) and not yet cleared by a manager — 147 days"
+orders,QT-KD-26-0874,2026-07-14,178601,"QT-KD-26-0874: ₦177,500 paid of ₦178,601 (99%) and not yet cleared by a manager — 98 days"
+stock review,BR-KD 2026-05,2026-05-30,,Monthly stock review 2026-05 is waiting for manager sign-off.

@@ -1578,9 +1578,13 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
   const extras = listExecutiveExtras(db, branchScope);
   const useQueueSummary = !canAccessAttentionInbox(user);
   let workTrayItems = [];
+  let attentionFromDate = '';
+  let hiddenOlderCount = 0;
   if (canAccessAttentionInbox(user)) {
     try {
       const attention = listMdAttentionInbox(db, branchScope);
+      attentionFromDate = attention.attentionFromDate || '';
+      hiddenOlderCount = Number(attention.hiddenOlderCount) || 0;
       workTrayItems = mapAttentionToWorkTray(db, attention, user, readOnlyExecutiveView);
     } catch {
       workTrayItems = buildQueueSummaryTray(scopedCounts);
@@ -1782,6 +1786,8 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
           acc[it.kind] = (acc[it.kind] || 0) + 1;
           return acc;
         }, {}),
+        attentionFromDate,
+        hiddenOlderCount,
       },
       readOnlyForActor: readOnlyExecutiveView,
     },

@@ -45,6 +45,8 @@ export const EXPENSE_CATEGORY_OPTIONS = Object.freeze([
   'Truck & mining',
   'Staff loan',
   'IOU / staff loan',
+  // Company loan principal repaid (GL 2600 Loans payable) — money out, not an expense (owner, 19 Oct 2026).
+  'Loan repayment — BOI',
   'Others',
   'Miscellaneous',
   // Fixed assets (capex / allocations — classify per policy)
@@ -75,6 +77,14 @@ export function isCapexExpenseCategory(category) {
 export function isStaffLoanExpenseCategory(category) {
   const c = String(category || '').trim();
   return c === 'Staff loan' || c === 'IOU / staff loan';
+}
+
+/**
+ * Company loan repayment (principal): reduces Loans payable (GL 2600). Not an expense — left out of expense totals;
+ * the accounts book carries the loan itself, the ERP only records the money out.
+ */
+export function isLoanRepaymentExpenseCategory(category) {
+  return /^loan repayment\b/i.test(String(category || '').trim());
 }
 
 /**

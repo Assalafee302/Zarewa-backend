@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T12:54:16.142Z",
+ "plan": "taj-round1-post-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "T1-7b",
+   "record": "Taj 2026-10-15 −₦11,536,253.75 \"NIP Aluzinc INTER BANK TRANSFER LINK\"",
+   "field": "supplier payment (AP-PO-PO-KD-26-0090)",
+   "op": "apPay",
+   "outcome": "applied",
+   "supplier": "Abomec Abuja",
+   "invoiceNgn": 11536200,
+   "paidBeforeNgn": 0,
+   "payNgn": 11536200,
+   "outstandingAfterNgn": 0
+  }
+ ]
+}

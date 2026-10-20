@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T13:51:53.469Z",
+ "plan": "taj-round2-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-4",
+   "record": "Taj (treasury account 2) stored balance ₦11,793,393 vs ledger ₦3,259,612",
+   "field": "treasury_accounts.balance (stored = opening + movements)",
+   "op": "syncStoredBalance",
+   "outcome": "applied",
+   "account": "2 Zaps Aluminum Enterprises",
+   "storedBeforeNgn": 11793393,
+   "ledgerNgn": 3259612,
+   "gapNgn": 8533781,
+   "storedAfterNgn": 3259612
+  }
+ ]
+}

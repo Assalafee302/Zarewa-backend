@@ -1,0 +1,17 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T12:50:16.675Z",
+ "plan": "taj-round1-post-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "T1-4a",
+   "record": "TM-KD-26-3111 (LE-KD-26-1989 jonnatan client ₦6,427,220)",
+   "field": "treasury posting date",
+   "op": "redateTreasury",
+   "outcome": "applied"
+  }
+ ]
+}

@@ -1,0 +1,419 @@
+{
+ "createdAtISO": "2026-10-19",
+ "source": "OM 19 Oct 2026: Taj round 1 (items 1, 2, 3, 4, 5, 6, 7b, 8). --per-item. Posting set: T1-2 held until the Loan repayment — BOI category is deployed.",
+ "items": [
+  {
+   "id": "T1-1",
+   "group": "A",
+   "record": "Taj 2026-10-05 −₦4,000,053.75 \"NIP Chairman zap INTER BANK TRANSFER\"",
+   "field": "new expense (Chairman withdrawal)",
+   "reason": "OM 19 Oct: Chairman personal request — chairman drawings (fee ₦53.75 + stamp duty ₦50 in the 5 Oct BC line)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-05",
+     "amountNgn": 4000000,
+     "category": "Chairman withdrawal",
+     "expenseType": "Chairman drawings — payee Chairman — Chairman personal request — OM 19 Oct",
+     "paymentMethod": "Bank",
+     "reference": "BANK-TAJ-2026-10-05-CHAIRMAN",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": -4000000,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "T1-3",
+   "group": "A",
+   "record": "Taj 2026-10-07 +₦5,920,240 \"NIP FRM STORM SHIELD NIG LIMITED Refund\"",
+   "field": "supplier overpayment reversal (PO-KD-26-0079)",
+   "reason": "OM 19 Oct: Storm Shield refunded the duplicate 11 Sep payment (TM-KD-26-2570 AP payment + TM-KD-26-2997 duplicate, each −₦5,920,240 on Taj)",
+   "ops": [
+    {
+     "kind": "supplierOverpaymentReversal",
+     "poId": "PO-KD-26-0079",
+     "amountNgn": 5920240,
+     "expectedPaidBeforeNgn": 11620330,
+     "duplicateMovementIds": [
+      "TM-KD-26-2570",
+      "TM-KD-26-2997"
+     ],
+     "date": "2026-10-07",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD",
+     "reference": "BANK-TAJ-2026-10-07-STORM",
+     "note": "Storm Shield refund of the duplicate 11 Sep payment (TM-KD-26-2997) — Taj 7 Oct, OM 19 Oct"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 5920240,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "SUPPLIER_OVERPAYMENT_REVERSAL"
+   ]
+  },
+  {
+   "id": "T1-4a",
+   "group": "A",
+   "record": "TM-KD-26-3111 (LE-KD-26-1989 jonnatan client ₦6,427,220)",
+   "field": "treasury posting date",
+   "reason": "Bank date: Taj 1 Oct \"NIP FRM SAMAILA ALIYU MOBILE TRF TO TAJ\" ₦6,427,220",
+   "ops": [
+    {
+     "kind": "redateTreasury",
+     "movementId": "TM-KD-26-3111",
+     "before": "2026-10-05",
+     "after": "2026-10-01",
+     "note": "Bank date 2026-10-01 (Taj 1 Oct \"NIP FRM SAMAILA ALIYU MOBILE TRF TO TAJ\" ₦6,427,220) — OM 19 Oct"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "T1-4b",
+   "group": "A",
+   "record": "TM-KD-26-3151 (LE-KD-26-2020 shuaibu roofer ₦715,000)",
+   "field": "treasury posting date",
+   "reason": "Bank date: Taj 5 Oct \"NIP FRM IBRAHIM AUWAL YAHAYA\" ₦715,000",
+   "ops": [
+    {
+     "kind": "redateTreasury",
+     "movementId": "TM-KD-26-3151",
+     "before": "2026-10-07",
+     "after": "2026-10-05",
+     "note": "Bank date 2026-10-05 (Taj 5 Oct \"NIP FRM IBRAHIM AUWAL YAHAYA\" ₦715,000) — OM 19 Oct"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "T1-5",
+   "group": "A",
+   "record": "TM-KD-26-3188 RF-KD-26-9752 Ibrahim Zaria −₦33,950 Taj 9 Oct (associated staff share, Mal Amadu Ibrahim, GT Bank)",
+   "field": "refund payout line reversal (REFUND_PAYOUT_REVERSAL_IN)",
+   "reason": "OM 19 Oct: not paid — no bank line on Taj, Moniepoint or Cash. The staff share returns to unpaid.",
+   "ops": [
+    {
+     "kind": "refundPayoutLineReverse",
+     "movementId": "TM-KD-26-3188",
+     "refundId": "RF-KD-26-9752",
+     "expectedNgn": 33950,
+     "treasuryAccountId": 2,
+     "expectedPaidBeforeNgn": 460790,
+     "reason": "not paid — no bank line on Taj, Moniepoint or Cash (OM 19 Oct)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 33950,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "REFUND_PAYOUT_REVERSAL_IN"
+   ]
+  },
+  {
+   "id": "T1-6a",
+   "group": "A",
+   "record": "Taj 2026-10-01 +₦49,000 \"NIP FRM YUNUSA AHMED MOBUTOZAPS ALUMINIU\"",
+   "field": "customer advance (no open quotation)",
+   "reason": "OM 19 Oct: customer purchase; no open quotation for the payer → customer advance",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerName": "Yunusa Ahmed",
+     "amountNgn": 49000,
+     "date": "2026-10-01",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD",
+     "paymentMethod": "Bank — Zaps Aluminum Enterprises",
+     "bankReference": "NIP FRM YUNUSA AHMED MOBUTOZAPS ALUMINIU ₦49,000 Taj 2026-10-01",
+     "note": "Taj 2026-10-01 \"NIP FRM YUNUSA AHMED MOBUTOZAPS ALUMINIU\" — no open quotation; advance raised by OM 19 Oct (handler Muhammad Ibrahim Bakari)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 49000,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "ADVANCE_IN",
+    "RECEIPT_IN"
+   ]
+  },
+  {
+   "id": "T1-6b",
+   "group": "A",
+   "record": "Taj 2026-10-19 +₦9,800 \"NIP FRM YUNUSA AHMED Col\"",
+   "field": "customer advance (no open quotation)",
+   "reason": "OM 19 Oct: customer purchase; no open quotation for the payer → customer advance",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerName": "Yunusa Ahmed",
+     "amountNgn": 9800,
+     "date": "2026-10-19",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD",
+     "paymentMethod": "Bank — Zaps Aluminum Enterprises",
+     "bankReference": "NIP FRM YUNUSA AHMED Col ₦9,800 Taj 2026-10-19",
+     "note": "Taj 2026-10-19 \"NIP FRM YUNUSA AHMED Col\" — no open quotation; advance raised by OM 19 Oct (handler Muhammad Ibrahim Bakari)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 9800,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "ADVANCE_IN",
+    "RECEIPT_IN"
+   ]
+  },
+  {
+   "id": "T1-6c",
+   "group": "A",
+   "record": "Taj 2026-10-09 +₦35,000 \"NIP FRM MUHAMMAD HARUNA ABDULLAHI DGBNK2\"",
+   "field": "customer advance (no open quotation)",
+   "reason": "OM 19 Oct: customer purchase; no open quotation for the payer → customer advance",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerId": "CUS-KD-26-0973",
+     "customerName": "HARUNA MOHD",
+     "amountNgn": 35000,
+     "date": "2026-10-09",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD",
+     "paymentMethod": "Bank — Zaps Aluminum Enterprises",
+     "bankReference": "NIP FRM MUHAMMAD HARUNA ABDULLAHI DGBNK2 ₦35,000 Taj 2026-10-09",
+     "note": "Taj 2026-10-09 \"NIP FRM MUHAMMAD HARUNA ABDULLAHI DGBNK2\" — no open quotation; advance raised by OM 19 Oct (handler Muhammad Ibrahim Bakari)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 35000,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "ADVANCE_IN",
+    "RECEIPT_IN"
+   ]
+  },
+  {
+   "id": "T1-7b",
+   "group": "A",
+   "record": "Taj 2026-10-15 −₦11,536,253.75 \"NIP Aluzinc INTER BANK TRANSFER LINK\"",
+   "field": "supplier payment (AP-PO-PO-KD-26-0090)",
+   "reason": "OM 19 Oct: PO-KD-26-0090 Abomec Abuja (₦11,536,200 = 3,316 kg + 3,470 kg × ₦1,700); fee + stamp duty in the 15 Oct BC line",
+   "ops": [
+    {
+     "kind": "apPay",
+     "apId": "AP-PO-PO-KD-26-0090",
+     "amountNgn": 11536200,
+     "expectedPaidBeforeNgn": 0,
+     "treasuryAccountId": 2,
+     "postedAtISO": "2026-10-15T12:00:00.000Z",
+     "reference": "BANK-TAJ-2026-10-15-LINK",
+     "note": "Taj 15 Oct \"NIP Aluzinc INTER BANK TRANSFER LINK\" — OM 19 Oct"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": -11536200,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "AP_PAYMENT"
+   ]
+  },
+  {
+   "id": "T1-8-10-02",
+   "group": "A",
+   "record": "Taj 2026-10-02 ₦104",
+   "field": "new expense (Bank charges)",
+   "reason": "Taj charges 2026-10-02 ₦103.75 (Nails payment: NIP fee ₦53.75 + stamp duty ₦50); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-02",
+     "amountNgn": 104,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Taj",
+     "paymentMethod": "Bank",
+     "reference": "BC-TAJ-2026-10-02",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": -104,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "T1-8-10-05",
+   "group": "A",
+   "record": "Taj 2026-10-05 ₦207",
+   "field": "new expense (Bank charges)",
+   "reason": "Taj charges 2026-10-05 ₦207.5 (Aluminium EAS + Chairman zap: 2 × NIP fee ₦53.75 + 2 × stamp duty ₦50); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-05",
+     "amountNgn": 207,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Taj",
+     "paymentMethod": "Bank",
+     "reference": "BC-TAJ-2026-10-05",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": -207,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "T1-8-10-06",
+   "group": "A",
+   "record": "Taj 2026-10-06 ₦104",
+   "field": "new expense (Bank charges)",
+   "reason": "Taj charges 2026-10-06 ₦103.75 (Loan repayment: NIP fee ₦53.75 + stamp duty ₦50); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-06",
+     "amountNgn": 104,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Taj",
+     "paymentMethod": "Bank",
+     "reference": "BC-TAJ-2026-10-06",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": -104,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "T1-8-10-09",
+   "group": "A",
+   "record": "Taj 2026-10-09 ₦979",
+   "field": "new expense (Bank charges)",
+   "reason": "Taj charges 2026-10-09 ₦979.2 (SMS charges for September 2026 ₦979.20); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-09",
+     "amountNgn": 979,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Taj",
+     "paymentMethod": "Bank",
+     "reference": "BC-TAJ-2026-10-09",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": -979,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "T1-8-10-12",
+   "group": "A",
+   "record": "Taj 2026-10-12 ₦311",
+   "field": "new expense (Bank charges)",
+   "reason": "Taj charges 2026-10-12 ₦311.25 (Aluzinc GCC + Aluminium E-Best + Twenty percent: 3 × NIP fee ₦53.75 + 3 × stamp duty ₦50); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-12",
+     "amountNgn": 311,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Taj",
+     "paymentMethod": "Bank",
+     "reference": "BC-TAJ-2026-10-12",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": -311,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "T1-8-10-15",
+   "group": "A",
+   "record": "Taj 2026-10-15 ₦208",
+   "field": "new expense (Bank charges)",
+   "reason": "Taj charges 2026-10-15 ₦207.5 (Aluzinc LINK + Aluzinc CHIN: 2 × NIP fee ₦53.75 + 2 × stamp duty ₦50); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-15",
+     "amountNgn": 208,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Taj",
+     "paymentMethod": "Bank",
+     "reference": "BC-TAJ-2026-10-15",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": -208,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  }
+ ]
+}

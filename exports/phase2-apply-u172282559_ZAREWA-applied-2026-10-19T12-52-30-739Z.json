@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T12:52:30.739Z",
+ "plan": "taj-round1-post-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "T1-6b",
+   "record": "Taj 2026-10-19 +₦9,800 \"NIP FRM YUNUSA AHMED Col\"",
+   "field": "customer advance (no open quotation)",
+   "op": "customerAdvance",
+   "outcome": "applied",
+   "ledgerEntryId": "LE-KD-26-2189",
+   "customer": "CUS-KD-26-1165",
+   "treasuryMovementIds": [
+    "TM-KD-26-3401"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,63 @@
+{
+ "takenAt": "2026-10-19T13:31:15.140Z",
+ "res": [
+  {
+   "id": "R2-1",
+   "op": "refundApprovalRestore",
+   "expect": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "outcome": "would apply",
+   "approved": "268120 → 303120",
+   "cut": "RCR-KD-26-0150 9220 → 10424",
+   "lines": [
+    274960,
+    28160
+   ]
+  },
+  {
+   "id": "R2-2a",
+   "op": "refundPay",
+   "expect": {
+    "2": 0,
+    "3": 0,
+    "4": -140000
+   },
+   "outcome": "would apply",
+   "status": "Approved",
+   "approved": 140000,
+   "cashOutstandingNgn": 140000,
+   "held": 0,
+   "tillPayableNgn": 140000,
+   "payNgn": 140000,
+   "at": "2026-10-14T17:47:00.000Z"
+  },
+  {
+   "id": "R2-2b",
+   "op": "reconMatchReviewRow",
+   "expect": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "outcome": "would apply",
+   "why": "after R2-2a posts the line",
+   "row": "BKR-KD-26-1711 -140020 — · MP-TRF|2MPTjxi41|2110427288462176256_DEBIT_0"
+  },
+  {
+   "id": "R2-4",
+   "op": "syncStoredBalance",
+   "expect": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "outcome": "would apply",
+   "stored": "11793393 → 3259612",
+   "ledger": 3259612,
+   "gap": 8533781
+  }
+ ]
+}

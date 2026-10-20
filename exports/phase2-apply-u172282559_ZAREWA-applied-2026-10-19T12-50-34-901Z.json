@@ -1,0 +1,17 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T12:50:34.901Z",
+ "plan": "taj-round1-post-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "T1-4b",
+   "record": "TM-KD-26-3151 (LE-KD-26-2020 shuaibu roofer ₦715,000)",
+   "field": "treasury posting date",
+   "op": "redateTreasury",
+   "outcome": "applied"
+  }
+ ]
+}

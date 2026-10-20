@@ -1,0 +1,227 @@
+{
+ "takenAt": "2026-10-19T12:25:54.521Z",
+ "ledgerNow": 12749735,
+ "stored": 21283516,
+ "results": [
+  {
+   "id": "T1-1",
+   "record": "Taj 2026-10-05 −₦4,000,053.75 \"NIP Chairman zap INTER BANK TRANSFER\"",
+   "op": "postExpense",
+   "expectTaj": -4000000,
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "T1-2",
+   "record": "Taj 2026-10-06 −₦3,386,889.75 \"NIP Loan repayment INTER BANK TRANSFE\"",
+   "op": "postExpense",
+   "expectTaj": -3386836,
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "T1-3",
+   "record": "Taj 2026-10-07 +₦5,920,240 \"NIP FRM STORM SHIELD NIG LIMITED Refund\"",
+   "op": "supplierOverpaymentReversal",
+   "expectTaj": 5920240,
+   "outcome": "would apply",
+   "po": "PO-KD-26-0079 Storm Sheiled Nig. Ltd",
+   "poValueNgn": 5700080,
+   "paidBeforeNgn": 11620330,
+   "paidAfterNgn": 5700090,
+   "excessAfterNgn": 10,
+   "duplicateLines": [
+    "TM-KD-26-2570 AP_PAYMENT ₦-5920240",
+    "TM-KD-26-2997 SUPPLIER_OVERPAYMENT ₦-5920240"
+   ]
+  },
+  {
+   "id": "T1-4a",
+   "record": "TM-KD-26-3111 (LE-KD-26-1989 jonnatan client ₦6,427,220)",
+   "op": "redateTreasury",
+   "expectTaj": 0,
+   "outcome": "would apply",
+   "amountNgn": 6427220,
+   "from": "2026-10-05T12:00:00.000Z",
+   "to": "2026-10-01T12:00:00.000Z"
+  },
+  {
+   "id": "T1-4b",
+   "record": "TM-KD-26-3151 (LE-KD-26-2020 shuaibu roofer ₦715,000)",
+   "op": "redateTreasury",
+   "expectTaj": 0,
+   "outcome": "would apply",
+   "amountNgn": 715000,
+   "from": "2026-10-07T12:00:00.000Z",
+   "to": "2026-10-05T12:00:00.000Z"
+  },
+  {
+   "id": "T1-5",
+   "record": "TM-KD-26-3188 RF-KD-26-9752 Ibrahim Zaria −₦33,950 Taj 9 Oct (associated staff share, Mal Amadu Ibrahim, GT Bank)",
+   "op": "refundPayoutLineReverse",
+   "expectTaj": 33950,
+   "outcome": "would apply",
+   "line": "TM-KD-26-3188 2026-10-09 −₦33950",
+   "payoutJournal": "JE-KD-26-4666 2026-10-09",
+   "paidBeforeNgn": 460790,
+   "paidAfterNgn": 426840,
+   "statusBefore": "Paid",
+   "statusAfter": "Partially paid"
+  },
+  {
+   "id": "T1-6a",
+   "record": "Taj 2026-10-01 +₦49,000 \"NIP FRM YUNUSA AHMED MOBUTOZAPS ALUMINIU\"",
+   "op": "customerAdvance",
+   "expectTaj": 49000,
+   "outcome": "would apply",
+   "customer": "new customer \"Yunusa Ahmed\""
+  },
+  {
+   "id": "T1-6b",
+   "record": "Taj 2026-10-19 +₦9,800 \"NIP FRM YUNUSA AHMED Col\"",
+   "op": "customerAdvance",
+   "expectTaj": 9800,
+   "outcome": "would apply",
+   "customer": "new customer \"Yunusa Ahmed\""
+  },
+  {
+   "id": "T1-6c",
+   "record": "Taj 2026-10-09 +₦35,000 \"NIP FRM MUHAMMAD HARUNA ABDULLAHI DGBNK2\"",
+   "op": "customerAdvance",
+   "expectTaj": 35000,
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-0973 HARUNA MOHD"
+  },
+  {
+   "id": "T1-7b",
+   "record": "Taj 2026-10-15 −₦11,536,253.75 \"NIP Aluzinc INTER BANK TRANSFER LINK\"",
+   "op": "apPay",
+   "expectTaj": -11536200,
+   "outcome": "would apply",
+   "supplier": "Abomec Abuja",
+   "invoiceNgn": 11536200,
+   "paidBeforeNgn": 0,
+   "payNgn": 11536200,
+   "outstandingAfterNgn": 0,
+   "orderedNgn": 11536200
+  },
+  {
+   "id": "T1-8-10-02",
+   "record": "Taj 2026-10-02 ₦104",
+   "op": "postExpense",
+   "expectTaj": -104,
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "T1-8-10-05",
+   "record": "Taj 2026-10-05 ₦207",
+   "op": "postExpense",
+   "expectTaj": -207,
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "T1-8-10-06",
+   "record": "Taj 2026-10-06 ₦104",
+   "op": "postExpense",
+   "expectTaj": -104,
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "T1-8-10-09",
+   "record": "Taj 2026-10-09 ₦979",
+   "op": "postExpense",
+   "expectTaj": -979,
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "T1-8-10-12",
+   "record": "Taj 2026-10-12 ₦311",
+   "op": "postExpense",
+   "expectTaj": -311,
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "T1-8-10-15",
+   "record": "Taj 2026-10-15 ₦208",
+   "op": "postExpense",
+   "expectTaj": -208,
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  }
+ ],
+ "recon": [
+  {
+   "cut": "2026-09-30",
+   "bank": 1680619.29,
+   "nowAll": -9784442,
+   "nowConfirmed": -9784442,
+   "afterAll": -9784442,
+   "afterConfirmed": -9784442
+  },
+  {
+   "cut": "2026-10-17",
+   "bank": 1269777.34,
+   "nowAll": 12749735,
+   "nowConfirmed": 12546275,
+   "afterAll": -137024,
+   "afterConfirmed": -340484
+  },
+  {
+   "cut": "2026-10-19",
+   "bank": 1279577.34,
+   "nowAll": 12749735,
+   "nowConfirmed": 12546275,
+   "afterAll": -127224,
+   "afterConfirmed": -330684
+  }
+ ],
+ "unconfirmedOct": [
+  "2026-09-14 TM-KD-26-2615 RECEIPT_IN ₦1000000 Yusuf (LE-KD-26-1767 Suspended — investigation)",
+  "2026-09-14 TM-KD-26-3091 RECEIPT_REVERSAL_OUT ₦-1000000 Yusuf (LE-KD-26-1767 Suspended — investigation)",
+  "2026-09-19 TM-KD-26-2648 RECEIPT_IN ₦1122000 Yusuf (LE-KD-26-1778 Suspended — investigation)",
+  "2026-09-19 TM-KD-26-3092 RECEIPT_REVERSAL_OUT ₦-1122000 Yusuf (LE-KD-26-1778 Suspended — investigation)",
+  "2026-10-17 TM-KD-26-3339 RECEIPT_IN ₦203460 ENGR ATTAH NICHOLAS (LE-KD-26-2158 Pending clearance)"
+ ],
+ "matched": [
+  "2026-10-01 ₦49000 NIP FRM YUNUSA AHMED MOBUTOZAPS  ALUMINIU ⇄ (T1-6a) 2026-10-01",
+  "2026-10-01 ₦2411727 NIP FRM ZAREWA ALUMINIUM AND PLASTICS Tr ⇄ TM-KD-26-3294 2026-10-01",
+  "2026-10-01 ₦6427220 NIP FRM SAMAILA ALIYU MOBILE TRF TO TAJ ⇄ TM-KD-26-3111 2026-10-01",
+  "2026-10-02 ₦-3000053.75 NIP Nails payment INTER BANK TRANSFER ⇄ TM-KD-26-3010 2026-10-02",
+  "2026-10-05 ₦-3341993.75 NIP Aluminium INTER BANK TRANSFER EAS ⇄ TM-KD-26-3135 2026-10-05",
+  "2026-10-05 ₦-4000053.75 NIP Chairman zap INTER BANK TRANSFER ⇄ (T1-1) 2026-10-05",
+  "2026-10-05 ₦715000 NIP FRM IBRAHIM AUWAL YAHAYA Outward Tra ⇄ TM-KD-26-3151 2026-10-05",
+  "2026-10-06 ₦3288000 NIP FRM ILIYASU LAWAL MOBILE TRF TO TAJ ⇄ TM-KD-26-3128 2026-10-06",
+  "2026-10-06 ₦-3386889.75 NIP Loan repayment INTER BANK TRANSFE ⇄ (T1-2) 2026-10-06",
+  "2026-10-07 ₦5920240 NIP FRM STORM SHIELD NIG LIMITED Refund ⇄ (T1-3) 2026-10-07",
+  "2026-10-08 ₦13389200 NIP FRM YUSUF Yusuf Aliyu ⇄ TM-KD-26-3183 2026-10-08",
+  "2026-10-09 ₦35000 NIP FRM MUHAMMAD HARUNA ABDULLAHI  DGBNK2 ⇄ (T1-6c) 2026-10-09",
+  "2026-10-09 ₦10000000 NIP FRM ZAREWA ALUMINIUM AND PLASTICS Tr ⇄ TM-KD-26-3306 2026-10-09",
+  "2026-10-10 ₦12000000 NIP FRM CENTRE FOR SUNNAH STUDIES IN A C ⇄ TM-KD-26-3195 2026-10-10",
+  "2026-10-12 ₦500000 NIP FRM MUSA maina ABUBAKAR Transfer fro ⇄ TM-KD-26-3222 2026-10-12",
+  "2026-10-12 ₦400000 NIP FRM MUSA maina ABUBAKAR Transfer fro ⇄ TM-KD-26-3223 2026-10-12",
+  "2026-10-12 ₦82600 NIP FRM B I M J ALLUMINUIM NIG ENT T ⇄ TM-KD-26-3226 2026-10-12",
+  "2026-10-12 ₦-11177553.75 NIP Aluzinc INTER BANK TRANSFER GCC G ⇄ TM-KD-26-3245 2026-10-12",
+  "2026-10-12 ₦-13419893.75 NIP Aluminium INTER BANK TRANSFER E ⇄ TM-KD-26-3246 2026-10-12",
+  "2026-10-13 ₦4000000 NIP FRM ZAREWA ALUMINIUM AND PLASTICS Tr ⇄ TM-KD-26-3308 2026-10-13",
+  "2026-10-14 ₦1500000 NIP FRM ZAREWA ALUMINIUM AND PLASTICS Tr ⇄ TM-KD-26-3327 2026-10-14",
+  "2026-10-15 ₦-11536253.75 NIP Aluzinc INTER BANK TRANSFER LINK ⇄ (T1-7b) 2026-10-15",
+  "2026-10-15 ₦-1409853.75 NIP Aluzinc INTER BANK TRANSFER CHIN ⇄ TM-KD-26-3288 2026-10-15",
+  "2026-10-19 ₦9800 NIP FRM YUNUSA AHMED Col ⇄ (T1-6b) 2026-10-19"
+ ],
+ "bankOnly": [
+  "2026-10-12 ₦-11729493.75 NIP Twenty percent INTER BANK TRANSFE",
+  "2026-10-14 ₦1874640 Balance LOCAL TRANSFER"
+ ],
+ "erpOnly": [
+  "2026-10-09 TM-KD-26-3188 REFUND_PAYOUT ₦-33950 Ibrahim Zaria",
+  "2026-10-17 TM-KD-26-3339 RECEIPT_IN ₦203460 ENGR ATTAH NICHOLAS",
+  "2026-10-09 (T1-5) refundPayoutLineReverse ₦33950 "
+ ],
+ "bankCharges": 1912.95,
+ "tajBcAfter": 1913
+}

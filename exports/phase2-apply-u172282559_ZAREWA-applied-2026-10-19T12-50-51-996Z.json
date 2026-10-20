@@ -1,0 +1,24 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T12:50:51.996Z",
+ "plan": "taj-round1-post-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "T1-5",
+   "record": "TM-KD-26-3188 RF-KD-26-9752 Ibrahim Zaria −₦33,950 Taj 9 Oct (associated staff share, Mal Amadu Ibrahim, GT Bank)",
+   "field": "refund payout line reversal (REFUND_PAYOUT_REVERSAL_IN)",
+   "op": "refundPayoutLineReverse",
+   "outcome": "applied",
+   "created": "TM-KD-26-3399",
+   "line": "TM-KD-26-3188 2026-10-09 −₦33950",
+   "refund": "RF-KD-26-9752",
+   "paidBeforeNgn": 460790,
+   "paidAfterNgn": 426840,
+   "statusBefore": "Paid",
+   "statusAfter": "Partially paid"
+  }
+ ]
+}

@@ -1,0 +1,19 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T13:04:29.492Z",
+ "plan": "taj-round1-post-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "T1-8-10-15",
+   "record": "Taj 2026-10-15 ₦208",
+   "field": "new expense (Bank charges)",
+   "op": "postExpense",
+   "outcome": "applied",
+   "expenseID": "EXP-KD-26-0507",
+   "treasuryMovementId": "TM-KD-26-3409"
+  }
+ ]
+}

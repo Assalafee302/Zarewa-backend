@@ -1,0 +1,26 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T13:51:06.304Z",
+ "plan": "taj-round2-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-1",
+   "record": "RF-KD-26-9796 Adam Suleiman (QT-KD-26-1818), Approved ₦268,120, unpaid",
+   "field": "approved amount + calculation lines + company cut",
+   "op": "refundApprovalRestore",
+   "outcome": "applied",
+   "approvedBeforeNgn": 268120,
+   "approvedAfterNgn": 303120,
+   "cutBeforeNgn": 9220,
+   "cutAfterNgn": 10424,
+   "retention": "RCR-KD-26-0150",
+   "linesAfter": [
+    "Overpayment ₦274960",
+    "Customer commission ₦28160"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T12:49:14.416Z",
+ "plan": "taj-round1-post-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "T1-3",
+   "record": "Taj 2026-10-07 +₦5,920,240 \"NIP FRM STORM SHIELD NIG LIMITED Refund\"",
+   "field": "supplier overpayment reversal (PO-KD-26-0079)",
+   "op": "supplierOverpaymentReversal",
+   "outcome": "skipped",
+   "why": "already posted as TM-KD-26-3398"
+  }
+ ]
+}

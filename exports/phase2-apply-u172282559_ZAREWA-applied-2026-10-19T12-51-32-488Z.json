@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T12:51:32.488Z",
+ "plan": "taj-round1-post-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "T1-6a",
+   "record": "Taj 2026-10-01 +₦49,000 \"NIP FRM YUNUSA AHMED MOBUTOZAPS ALUMINIU\"",
+   "field": "customer advance (no open quotation)",
+   "op": "customerAdvance",
+   "outcome": "applied",
+   "ledgerEntryId": "LE-KD-26-2188",
+   "customer": "CUS-KD-26-1165",
+   "treasuryMovementIds": [
+    "TM-KD-26-3400"
+   ]
+  }
+ ]
+}

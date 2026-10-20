@@ -1,3 +1,4 @@
+import { transportAgentPayoutAccount } from '../shared/lib/payoutAccountGuard.js';
 import {
   companionOverpayNgnByReceiptId,
   firstProductionDateISO,
@@ -922,7 +923,9 @@ export function listManagementItems(db, branchScope = 'ALL') {
     pendingPriceExceptions = db
       .prepare(
         `SELECT id, customer_name, total_ngn, paid_ngn, date_iso, branch_id,
-                price_exception_md_review_required
+                price_exception_md_review_required${
+                  hasColumn(db, 'quotations', 'md_price_exception_snapshot_json') ? ', md_price_exception_snapshot_json' : ''
+                }
          FROM quotations
          WHERE ${SQL_PENDING_BELOW_FLOOR_EXCEPTION}
            AND IFNULL(paid_ngn, 0) > 0
@@ -1831,17 +1834,33 @@ export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
     )
     .all(...b.args);
   const out = [];
+  // A1: the haulier's payout account lives on the transport agent profile.
+  const agentAccountById = new Map();
+  for (const agent of db.prepare(`SELECT id, profile_json FROM transport_agents`).all()) {
+    let profile = {};
+    try {
+      profile = JSON.parse(agent.profile_json || '{}') || {};
+    } catch {
+      profile = {};
+    }
+    agentAccountById.set(String(agent.id), transportAgentPayoutAccount(profile));
+  }
   for (const row of rows) {
     const total = poTransportQuotedFeeNgn(row);
     const paid = Number(row.transport_paid_ngn) || 0;
     const outstandingNgn = effectiveOutstandingNgn(total, paid);
     if (outstandingNgn <= 0) continue;
+    const agentAccount = agentAccountById.get(String(row.transport_agent_id ?? '').trim()) || {};
     out.push({
       poID: row.po_id,
       supplierName: row.supplier_name ?? '',
       branchId: row.branch_id ?? '',
       status: row.status ?? '',
       procurementKind: String(row.procurement_kind ?? '').trim() || 'coil',
+      transportAgentId: String(row.transport_agent_id ?? '').trim(),
+      payeeName: agentAccount.payeeName || '',
+      payeeBankName: agentAccount.payeeBankName || '',
+      payeeAccountNo: agentAccount.payeeAccountNo || '',
       transportAgentName: row.transport_agent_name ?? '',
       transportReference: row.transport_reference ?? '',
       transportFinanceAdvice: row.transport_finance_advice ?? '',

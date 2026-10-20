@@ -6,6 +6,7 @@ import { REFUND_MD_APPROVAL_THRESHOLD_NGN } from '../shared/workspaceGovernance.
 import { refundPayableQuotationWhereSql } from '../shared/lib/quotationRefundsBlocked.js';
 import { metreVarianceExceedsThreshold } from '../shared/lib/productionMetreVariance.js';
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
+import { dualControlAckKey, listDualControlAcknowledgements } from './dualControlAckOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -38,7 +39,8 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
   if (readFinanceFeatureFlags().enforceDualControlPayments) {
     const rows = db
       .prepare(
-        `SELECT refund_id, customer_name, quotation_ref, amount_ngn, approved_amount_ngn, requested_by_user_id, approved_by_user_id, requested_by, approved_by, paid_by_user_id, paid_by, status, branch_id
+        `SELECT refund_id, customer_name, quotation_ref, amount_ngn, approved_amount_ngn, requested_by_user_id, approved_by_user_id, requested_by, approved_by, paid_by_user_id, paid_by, status, branch_id,
+                requested_at_iso, approval_date, paid_at_iso
          FROM customer_refunds
          WHERE TRIM(COALESCE(LOWER(status), '')) IN ('approved', 'paid')
          ${bRef.sql}`
@@ -49,6 +51,7 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
         dualControlWarnings.push({
           kind: 'same_requester_approver',
           refundId: r.refund_id,
+          atIso: r.approval_date || r.requested_at_iso || '',
           message: 'Requester and approver are the same user.',
           customerName: r.customer_name || '',
           quotationRef: r.quotation_ref || '',
@@ -64,6 +67,7 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
         dualControlWarnings.push({
           kind: 'same_approver_payer',
           refundId: r.refund_id,
+          atIso: r.paid_at_iso || r.approval_date || '',
           message: 'Approver and payer are the same user.',
           customerName: r.customer_name || '',
           quotationRef: r.quotation_ref || '',
@@ -75,6 +79,18 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
           branchId: r.branch_id || '',
         });
       }
+    }
+  }
+
+  // MD/CEO "Acknowledge with note": acknowledged warnings leave the attention list, kept with who/when/note.
+  const dualControlAcknowledged = [];
+  if (dualControlWarnings.length > 0) {
+    const acks = listDualControlAcknowledgements(db, {
+      refundIds: [...new Set(dualControlWarnings.map((w) => w.refundId))],
+    });
+    for (let i = dualControlWarnings.length - 1; i >= 0; i -= 1) {
+      const ack = acks.get(dualControlAckKey(dualControlWarnings[i].refundId, dualControlWarnings[i].kind));
+      if (ack) dualControlAcknowledged.unshift({ ...dualControlWarnings.splice(i, 1)[0], acknowledgement: ack });
     }
   }
 
@@ -123,6 +139,7 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
       submittedAwaitingApproval: mgmt.pendingMaterialIncidents || [],
     },
     dualControlWarnings,
+    dualControlAcknowledged,
     adminTrialBypasses: adminTrialRows,
     totals: {
       pendingApprovalCount,

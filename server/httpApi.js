@@ -402,6 +402,7 @@ import {
 import { registerAiProviderRoutes } from './aiProviders/index.js';
 import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
+import { acknowledgeDualControlWarning, listDualControlAcknowledgements } from './dualControlAckOps.js';
 import { buildExecutiveDashboard, resolveExecDashboardBranchScope, resolveExecDashboardPeriod } from './execDashboardOps.js';
 import { buildExecCustomerBrief, buildMdCustomerIntelPack } from './mdCustomerIntelOps.js';
 import { buildMdTracePack } from './mdTraceOps.js';
@@ -641,6 +642,27 @@ import {
   listNegativeStockApprovalsForOm,
 } from './operations/negativeStockApprovalOps.js';
 import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWalletOps.js';
+import {
+  cashOfficeFromBody,
+  paymentRequestPayoutAccountBlock,
+  poTransportPayoutAccountBlock,
+  refundPayoutAccountBlock,
+  stampCashOfficeLines,
+} from './finance/payoutAccountGate.js';
+import { addMissingPayoutAccountSafe } from './finance/payoutAccountOps.js';
+import { assertBmOmOverride, overQuoteApprovalFromBody } from './finance/managerOverride.js';
+import { receiptDuplicatesWithin24h } from './finance/receiptDuplicateOps.js';
+import { receiptDuplicateRefusal } from '../shared/lib/receiptDuplicateGuard.js';
+import { cancelReceiptForRefundCredit } from './sales/receiptUseRefundCreditOps.js';
+import {
+  autoCloseRefundRoundingRemainder,
+  listStaffShareBatches,
+  payStaffShareBatch,
+  refundStaffBatchState,
+  setStaffShareBatchThresholdNgn,
+} from './finance/staffShareBatchOps.js';
+import { staffShareBatchedRefusal } from '../shared/lib/staffShareBatch.js';
+import { listStatementFreshness, recordBankStatementImport } from './finance/bankStatementImportOps.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
 import { holdReceiptAwaitingCreditCheck } from './sales/receiptBankCheckHold.js';
 import { setPoTransportPayoutHold } from './procurement/poTransportPayoutHold.js';
@@ -3011,6 +3033,38 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  // Same-person refund warnings: MD/CEO "Acknowledge with note" (audited). Role check lives in the op.
+  app.post('/api/management/dual-control/acknowledge', requirePermission(['audit.view', 'refunds.approve']), (req, res) => {
+    try {
+      const r = acknowledgeDualControlWarning(db, {
+        refundId: req.body?.refundId,
+        kind: req.body?.kind,
+        note: req.body?.note,
+        user: req.user,
+      });
+      if (!r.ok) return res.status(r.status || 400).json({ ok: false, error: r.error });
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not record the acknowledgement.' });
+    }
+  });
+
+  app.get(
+    '/api/management/dual-control/acknowledgements',
+    requirePermission(['audit.view', 'refunds.approve', 'sales.manage', 'quotations.manage', 'finance.view']),
+    (req, res) => {
+      try {
+        const refundId = String(req.query?.refundId || '').trim();
+        const acks = listDualControlAcknowledgements(db, refundId ? { refundIds: [refundId] } : {});
+        res.json({ ok: true, items: [...acks.values()] });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load acknowledgements.' });
+      }
+    }
+  );
+
   app.get(
     '/api/management/quotation-audit',
     requirePermission(['audit.view', 'refunds.approve', 'sales.manage', 'quotations.manage']),
@@ -5240,6 +5294,20 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /** Finance Phase A (A8): "Statement loaded to dd/mm hh:mm" per bank account. */
+  app.get(
+    '/api/treasury/statement-freshness',
+    requirePermission(['finance.view', 'finance.pay', 'cashier.desk.view']),
+    (req, res) => {
+      try {
+        return res.json(listStatementFreshness(db, resolveBootstrapBranchScope(req)));
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load statement freshness.' });
+      }
+    }
+  );
+
   app.get('/api/treasury/statement-balances', requireManagementReportsView, (req, res) => {
     try {
       const periodKey = String(req.query.periodKey || '').trim();
@@ -6392,6 +6460,37 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  /**
+   * Finance Phase A (A6): no bank payment behind this receipt and the customer has refund credit —
+   * cancel the cash receipt (cashier's name, audited) so the credit can be applied to the quotation.
+   */
+  app.post(
+    '/api/sales-receipts/:receiptId/use-refund-credit-instead',
+    requirePermission(['finance.pay', 'finance.post']),
+    (req, res) => {
+      try {
+        const rid = String(req.params.receiptId || '');
+        const rg = assertSalesReceiptIdInWorkspace(db, req, rid);
+        if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
+        const r = cancelReceiptForRefundCredit(
+          db,
+          rid,
+          { note: req.body?.note, branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID },
+          req.user
+        );
+        if (!r.ok) return res.status(400).json(r);
+        const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
+        const bags = { receipts: receipt ? [receipt] : [] };
+        const quotation = r.quotationRef ? getQuotation(db, r.quotationRef) : null;
+        if (quotation) bags.quotations = [quotation];
+        return res.status(200).json(withWriteDelta({ ...r }, bags));
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   /** Status only. The treasury line stays until someone checks customer credit. */
   app.post(
     '/api/sales-receipts/:receiptId/bank-check-hold',
@@ -7206,6 +7305,10 @@ export function registerHttpApi(app, db) {
         error: 'Recording haulage against treasury requires finance.pay permission.',
       });
     }
+    if (needsTreasury) {
+      const accountBlock = poTransportPayoutAccountBlock(db, poId, body.transportAgentId);
+      if (accountBlock) return res.status(400).json(accountBlock);
+    }
     return handlePatchWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped, ctx) => {
       const inOuter = Boolean(ctx?.withinEditApprovalTransaction);
       const syncOpts = inOuter ? { outerTransaction: true } : {};
@@ -7268,6 +7371,8 @@ export function registerHttpApi(app, db) {
           error: 'Recording haulage against treasury requires finance.pay permission.',
         });
       }
+      const accountBlock = poTransportPayoutAccountBlock(db, poId);
+      if (accountBlock) return res.status(400).json(accountBlock);
       const r = write.postPurchaseOrderTransport(db, poId, {
         treasuryAccountId: body.treasuryAccountId,
         amountNgn: body.amountNgn,
@@ -7279,6 +7384,7 @@ export function registerHttpApi(app, db) {
         actor: req.user,
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
+        ...overQuoteApprovalFromBody(req.user, body, 'a haulage payment above the quoted fee'),
       });
       if (r.ok) {
         syncFinancePoTransportWorkItem(db, poId, req.user);
@@ -7345,8 +7451,9 @@ export function registerHttpApi(app, db) {
       actor: req.user,
       workspaceBranchId: req.workspaceBranchId,
       workspaceViewAll: Boolean(req.workspaceViewAll),
+      ...overQuoteApprovalFromBody(req.user, req.body || {}, 'a supplier payment above the purchase order value'),
     });
-    if (!r.ok) return res.status(400).json(r);
+    if (!r.ok) return res.status(r.code === 'MANAGER_OVERRIDE_REQUIRED' ? 403 : 400).json(r);
     res.status(200).json(withPurchaseOrderWriteDelta(db, req.params.poId, r));
   });
 
@@ -10998,6 +11105,82 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /** Finance Phase A (A7): this week's staff-share batches (refund staff splits under the threshold). */
+  app.get('/api/staff-share-batches', requirePermission(['finance.pay', 'finance.view', 'cashier.desk.view']), (req, res) => {
+    try {
+      return res.json(listStaffShareBatches(db, resolveBootstrapBranchScope(req)));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load staff-share batches.' });
+    }
+  });
+
+  /** A7: pay one staff member's weekly batch (one payout per staff per week). */
+  app.post('/api/staff-share-batches/pay', requirePermission('finance.pay'), (req, res) => {
+    try {
+      const body = req.body || {};
+      const r = payStaffShareBatch(
+        db,
+        {
+          ...body,
+          branchScope: resolveBootstrapBranchScope(req),
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        },
+        req.user
+      );
+      const refunds = (r.paid || [])
+        .map((l) => getCustomerRefundDetail(db, l.refundId, { heal: true }))
+        .filter(Boolean);
+      return res.status(r.ok ? 201 : 400).json(withWriteDelta({ ...r }, { refunds }));
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  /** A7: staff-share batch threshold (default ₦5,000). */
+  app.put('/api/staff-share-batches/threshold', requirePermission('settings.manage'), (req, res) => {
+    try {
+      const r = setStaffShareBatchThresholdNgn(db, req.body?.thresholdNgn, req.user);
+      return res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  /** Finance Phase A (A1): fill a payee's missing bank + 10-digit account from the pay desk. */
+  app.post('/api/payout-accounts', requirePermission('finance.pay'), (req, res) => {
+    try {
+      const body = req.body || {};
+      const target = String(body.target || '').trim();
+      if (target === 'refund') {
+        const g = assertRefundIdInWorkspace(db, req, body.refundId);
+        if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error });
+      } else if (target === 'payment_request') {
+        const g = assertPaymentRequestIdInWorkspace(db, req, body.requestId);
+        if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error });
+      } else if (target === 'transport_agent' && body.poId) {
+        const g = assertPurchaseOrderIdInWorkspace(db, req, body.poId);
+        if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error });
+      }
+      const r = addMissingPayoutAccountSafe(db, body, req.user);
+      if (!r.ok) return res.status(r.code === 'NOT_FOUND' ? 404 : 400).json(r);
+      if (target === 'refund') {
+        const refund = getCustomerRefundDetail(db, String(body.refundId || ''));
+        return res.json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
+      }
+      if (target === 'transport_agent' && body.poId) {
+        return res.json(withPurchaseOrderWriteDelta(db, String(body.poId), r));
+      }
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.post('/api/refunds/:refundId/close-rounding', requirePermission('finance.pay'), (req, res) => {
     try {
       const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
@@ -11018,6 +11201,33 @@ export function registerHttpApi(app, db) {
       if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
       const treasuryLines = normalizeTreasuryLines(req.body || {});
       const body = req.body || {};
+      // A7: staff shares under the batch threshold are paid from the weekly staff-share batch.
+      const refundRowForPay = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(String(req.params.refundId || ''));
+      const staffBatch = refundRowForPay ? refundStaffBatchState(db, refundRowForPay) : null;
+      const batchedKeys = new Set((staffBatch?.batched || []).map((t) => `${t.partyKind}::${t.partyId}`));
+      // A1: every payee this payout can reach needs a usable account.
+      // D2: bank / POS lines need the payee account; Cash Office lines need name + voucher.
+      const cashOffice = cashOfficeFromBody(body);
+      const accountBlock = refundPayoutAccountBlock(db, req.params.refundId, {
+        skip: (t) => batchedKeys.has(`${t.partyKind}::${t.partyId}`),
+        lines: treasuryLines,
+        cash: cashOffice,
+      });
+      if (accountBlock) return res.status(400).json(accountBlock);
+      stampCashOfficeLines(db, treasuryLines, cashOffice);
+      if (staffBatch && staffBatch.batchedOwedNgn > 0) {
+        const requestedNgn = treasuryLines.reduce((s, l) => s + Math.max(0, Math.round(Number(l?.amountNgn) || 0)), 0);
+        if (requestedNgn > staffBatch.individualOwedNgn || (requestedNgn === 0 && staffBatch.individualOwedNgn === 0)) {
+          return res.status(400).json(
+            staffShareBatchedRefusal({
+              refundId: String(req.params.refundId || ''),
+              requestedNgn,
+              individualOwedNgn: staffBatch.individualOwedNgn,
+              batchedOwedNgn: staffBatch.batchedOwedNgn,
+            })
+          );
+        }
+      }
       const r = payRefundEntryWithOptionalWalletRelease(db, req.params.refundId, {
         ...body,
         paymentLines: treasuryLines,
@@ -11030,8 +11240,22 @@ export function registerHttpApi(app, db) {
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
       if (r.ok) {
+        // A7: a remainder of ₦200 or less closes as "bank fee/rounding" (audited, no cash moves).
+        let roundingClose = null;
+        try {
+          roundingClose = autoCloseRefundRoundingRemainder(db, String(req.params.refundId || ''), req.user);
+        } catch (roundErr) {
+          console.error('[refund-auto-rounding]', roundErr);
+        }
         const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''), { heal: true });
-        return res.status(201).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
+        return res
+          .status(201)
+          .json(
+            withWriteDelta(
+              { ...r, roundingClosedNgn: roundingClose?.ok && !roundingClose?.skipped && !roundingClose?.noOp ? roundingClose.before?.outstandingNgn ?? 0 : 0 },
+              { refunds: refund ? [refund] : [] }
+            )
+          );
       }
       res.status(400).json(r);
     } catch (e) {
@@ -11731,6 +11955,14 @@ export function registerHttpApi(app, db) {
   app.post('/api/payment-requests/:requestId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
       const treasuryLines = normalizeTreasuryLines(req.body || {});
+      // D2: bank / POS lines need the payee account; Cash Office lines need name + voucher.
+      const cashOffice = cashOfficeFromBody(req.body || {});
+      const accountBlock = paymentRequestPayoutAccountBlock(db, req.params.requestId, {
+        lines: treasuryLines,
+        cash: cashOffice,
+      });
+      if (accountBlock) return res.status(400).json(accountBlock);
+      stampCashOfficeLines(db, treasuryLines, cashOffice);
       const r = write.payPaymentRequest(db, req.params.requestId, {
         ...(req.body || {}),
         paymentLines: treasuryLines,
@@ -12469,6 +12701,18 @@ export function registerHttpApi(app, db) {
       } catch (syncErr) {
         console.error(syncErr);
       }
+      // A8: which account this statement is for, and up to when it runs.
+      const statementImport = recordBankStatementImport(
+        db,
+        {
+          treasuryAccountId: req.body?.treasuryAccountId,
+          statementToISO: req.body?.statementToISO,
+          branchId,
+          lineDays: rows.map((r) => r.bankDateISO),
+          createdIds: created,
+        },
+        req.user
+      );
       res.status(200).json({
         ok: errors.length === 0,
         createdIds: created,
@@ -12478,6 +12722,7 @@ export function registerHttpApi(app, db) {
         errorCount: errors.length,
         errors,
         parseWarnings: parsed.parseErrors?.length ? parsed.parseErrors : undefined,
+        statementImport,
       });
     } catch (e) {
       console.error(e);
@@ -12528,6 +12773,18 @@ export function registerHttpApi(app, db) {
       } catch (syncErr) {
         console.error(syncErr);
       }
+      // A8: which account this statement is for, and up to when it runs.
+      const statementImport = recordBankStatementImport(
+        db,
+        {
+          treasuryAccountId: req.body?.treasuryAccountId,
+          statementToISO: req.body?.statementToISO,
+          branchId,
+          lineDays: normalized.map((r) => r.bankDateISO),
+          createdIds: created,
+        },
+        req.user
+      );
       res.status(200).json({
         ok: errors.length === 0,
         createdIds: created,
@@ -12536,6 +12793,7 @@ export function registerHttpApi(app, db) {
         skippedDuplicates: skippedDuplicates.length ? skippedDuplicates : undefined,
         errorCount: errors.length,
         errors,
+        statementImport,
       });
     } catch (e) {
       console.error(e);
@@ -13809,6 +14067,20 @@ export function registerHttpApi(app, db) {
         });
       }
       const paidByName = receiptPaidByName(req.body || {}, cust.name || customerName);
+      // Finance Phase A (A2): same customer + amount + quotation / cutting list within 24 h is blocked.
+      const duplicates24h = receiptDuplicatesWithin24h(db, { customerID, quotationId, amountNgn, dateISO });
+      let duplicate24hOverride = null;
+      if (duplicates24h.length) {
+        const reason = String(req.body?.duplicate24hOverrideReason || '').trim();
+        if (!reason) return res.status(409).json(receiptDuplicateRefusal(duplicates24h, amountNgn));
+        const override = assertBmOmOverride({
+          actor: req.user,
+          reason,
+          subject: 'a second receipt within 24 hours',
+        });
+        if (!override.ok) return res.status(403).json({ ...override, duplicates: duplicates24h });
+        duplicate24hOverride = { reason: override.reason, approver: override.approver, duplicates: duplicates24h };
+      }
       const duplicateSignals = recentReceiptDuplicateSignals(db, {
         customerID,
         quotationId,
@@ -14074,8 +14346,20 @@ export function registerHttpApi(app, db) {
             advanceRepeatOverride: advanceRepeats.length
               ? { reason: advanceRepeatReason, repeats: advanceRepeats }
               : null,
+            duplicate24hOverride,
           },
         });
+        if (duplicate24hOverride) {
+          appendAuditLog(db, {
+            actor: req.user,
+            action: 'ledger.receipt_duplicate_24h_override',
+            entityKind: 'quotation',
+            entityId: quotationId,
+            status: 'flagged',
+            note: `[DUPLICATE OVERRIDE] ${duplicate24hOverride.approver.name || 'Manager'} posted a second ₦${Math.round(Number(amountNgn) || 0).toLocaleString('en-NG')} receipt within 24 h of ${duplicate24hOverride.duplicates.map((d) => d.id).join(', ')}: ${duplicate24hOverride.reason}`,
+            details: { receiptEntryId: parsed.receipt?.id ?? '', ...duplicate24hOverride },
+          });
+        }
         if (advanceRepeats.length) {
           appendAuditLog(db, {
             actor: req.user,

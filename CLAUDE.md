@@ -99,3 +99,17 @@ Frontend lives in the sibling repo `../Zarewa-frontend-main` (report UI, `src/li
 - DB-backed test to run against a real MySQL: `server/finance/bankStatementBalanceOps.test.js` (skips without MySQL).
 - `PRODUCTION_GATE_REQUIRES_CONFIRMED` (default off): owner switches it on Monday 19 Oct 2026 after the memo; set in the server env and restart.
 
+
+## Needs-attention explanations — owner decisions (2026-10-19, branch feat/attention-explain)
+
+- Every flag's sentence, evidence, field to highlight, clearing actions and deep link live in one place:
+  `shared/lib/attentionRules.js` (mirrored). Rows, banners, bell and counts read it; old view at `?legacy=1`.
+- Same-person refund warnings: MD/CEO "Acknowledge with note" (note ≥ 10 chars, audit_log
+  `refund.dual_control.acknowledged`). Acknowledged warnings leave the list, stay on the refund record with who/when/note.
+- Clearance panel % paid shows the real figure (e.g. 140%) and the overpaid amount in red.
+- Ops report "Approved refunds awaiting payment" uses the `refund_unpaid` sentence.
+- Stock attention panel and HR flags: later, separate branch.
+- Deploy batch order (owner): hotfix/refund-uses-confirmed-amount → hotfix/refund-payout-gl-key →
+  fix/refund-cap-and-mixed-overpay → feat/finance-guardrails → **feat/attention-explain**. Deploy backend and frontend
+  together. DB-backed tests: `server/mdAttentionOps.test.js`, `server/dualControlAckOps.test.js` (run on 3307 copy).
+- No push until the owner says.

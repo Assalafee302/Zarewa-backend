@@ -1,0 +1,534 @@
+{
+ "qt": [
+  {
+   "id": "QT-KD-26-1777",
+   "customer_id": "CUS-KD-26-0904",
+   "customer_name": "abbas gabdo",
+   "date_label": "10 Oct",
+   "date_iso": "2026-10-10",
+   "due_date_iso": "",
+   "total_display": "₦10,218,200",
+   "total_ngn": 10218200,
+   "paid_ngn": 12000000,
+   "payment_status": "Paid",
+   "status": "Pending",
+   "approval_date": "",
+   "customer_feedback": "",
+   "handled_by": "Abdulrahman Uthman Sali",
+   "project_name": "gabdo",
+   "lines_json": "{\"products\":[{\"id\":\"L1791632758347-dqxx37g\",\"name\":\"Roofing Sheet\",\"qty\":\"1751\",\"unitPrice\":\"5700\",\"customLine\":false,\"gauge\":\"0.28mm\",\"colour\":\"Bush Green\",\"design\":\"Longspan (Indus6)\",\"profile\":\"Longspan (Indus6)\",\"lineKind\":\"roofing\",\"floorPricePerMeter\":5750,\"recommendedPricePerMeter\":5750}],\"accessories\":[{\"id\":\"L1791632758347-xr12j5t\",\"name\":\"Drive screw nail\",\"qty\":\"95\",\"unitPrice\":\"2500\",\"customLine\":false,\"setupQuoteItemId\":\"SQI-012\",\"unit\":\"pack\",\"inventoryProductId\":\"ACC-DRIVE-SCREW-PACK\",\"floorUnitPriceNgn\":0}],\"services\":[{\"id\":\"L1791632758347-l9la7o4\",\"name\":\"\",\"qty\":\"\",\"unitPrice\":\"\",\"customLine\":false,\"gauge\":\"0.28mm\",\"colour\":\"Bush Green\",\"design\":\"Longspan (Indus6)\",\"profile\":\"Longspan (Indus6)\",\"assigneeAssociatedStaffID\":\"\",\"assigneeCustomerID\":\"\",\"assigneeName\":\"\",\"assigneeRole\":\"\"}],\"materialGauge\":\"0.28mm\",\"materialColor\":\"Bush Green\",\"materialDesign\":\"Longspan (Indus6)\",\"materialTypeId\":\"MAT-002\"}",
+   "manager_cleared_at_iso": "2026-10-10T19:50:30.942Z",
+   "manager_flagged_at_iso": null,
+   "manager_flag_reason": null,
+   "manager_production_approved_at_iso": null,
+   "archived": 0,
+   "quotation_lifecycle_note": null,
+   "md_price_exception_approved_at_iso": "2026-10-10T11:50:06.336Z",
+   "md_price_exception_approved_by_user_id": "USR-ADMIN",
+   "bm_price_exception_approved_at_iso": "2026-10-10T11:50:06.336Z",
+   "bm_price_exception_approved_by_user_id": "USR-ADMIN",
+   "price_exception_md_review_required": 1,
+   "price_exception_md_confirmed_at_iso": "2026-10-10T11:50:06.336Z",
+   "price_exception_md_confirmed_by_user_id": "USR-ADMIN",
+   "branch_id": "BR-KD",
+   "manager_production_approved_by_user_id": null,
+   "manager_production_approved_by_name": null,
+   "manager_production_approval_note": null,
+   "manager_production_paid_fraction_at_approval": null,
+   "manager_production_approval_level": null,
+   "payment_balance_waived_ngn": 0,
+   "payment_balance_waived_at_iso": null,
+   "payment_balance_waived_by_user_id": null,
+   "payment_balance_waived_by_name": null,
+   "payment_balance_waive_note": null,
+   "is_staff_purchase": 0,
+   "staff_purchase_credit_id": null,
+   "refunds_blocked_at_iso": null,
+   "refunds_blocked_by_user_id": null,
+   "refunds_blocked_by_name": null,
+   "refunds_blocked_reason": null,
+   "md_price_exception_snapshot_json": "[{\"code\":\"below_floor\",\"lineCategory\":\"products\",\"lineIndex\":0,\"lineName\":\"Roofing Sheet\",\"gauge\":\"0.28mm\",\"design\":\"longspan (indus6)\",\"quotedPerMeter\":5700,\"floorPerMeter\":5750,\"recommendedPerMeter\":5750,\"bandNgn\":50,\"minAllowedPerMeter\":5750,\"floorSource\":\"workbook\",\"ignoredListStamp\":true,\"freezeEvent\":\"first_payment\",\"freezeDateIso\":\"2026-10-10\",\"pricingAsAtIso\":\"2026-10-10\",\"floorWhy\":\"Ignored list-price stamp (equals recommended/list badge — not the workbook minimum). Gate ₦5,750/m from material workbook minimum (not published list). Workbook as of first payment (2026-10-10). Later floor raises do not change this deal.\"}]",
+   "payment_gate_basis_total_ngn": 10218200,
+   "agent_customer_id": "CUS-KD-26-0953",
+   "agent_customer_name": "Abdulrahman Uthman Sali",
+   "handled_by_user_id": "USR-ADMIN"
+  }
+ ],
+ "qtLines": [
+  {
+   "id": "QT-KD-26-1777-L1",
+   "quotation_id": "QT-KD-26-1777",
+   "sort_order": 1,
+   "category": "products",
+   "name": "Roofing Sheet",
+   "qty": 1751,
+   "unit": "ea",
+   "unit_price_ngn": 5700,
+   "line_total_ngn": 9980700
+  },
+  {
+   "id": "QT-KD-26-1777-L2",
+   "quotation_id": "QT-KD-26-1777",
+   "sort_order": 2,
+   "category": "accessories",
+   "name": "Drive screw nail",
+   "qty": 95,
+   "unit": "ea",
+   "unit_price_ngn": 2500,
+   "line_total_ngn": 237500
+  }
+ ],
+ "qtLedger": [
+  {
+   "id": "LE-KD-26-2060",
+   "type": "RECEIPT",
+   "amount_ngn": 10218200,
+   "at_iso": "2026-10-10T12:00:00.000Z",
+   "payment_method": "Bank — Zaps Aluminum Enterprises",
+   "note": "Payment on QT-KD-26-1777 (full amount on quotation; may exceed quote total)"
+  },
+  {
+   "id": "LE-KD-26-2062",
+   "type": "OVERPAY_ADVANCE",
+   "amount_ngn": 1781800,
+   "at_iso": "2026-10-10T12:00:00.000Z",
+   "payment_method": "Bank — Zaps Aluminum Enterprises",
+   "note": "Overpayment vs remaining balance on QT-KD-26-1777 → customer credit"
+  },
+  {
+   "id": "LE-KD-26-2079",
+   "type": "OVERPAY_REVERSAL",
+   "amount_ngn": 29200,
+   "at_iso": "2026-10-10T12:00:00.000Z",
+   "payment_method": "Internal",
+   "note": "Credit confirmation: move ₦29,200 overpay from QT-KD-26-1777 toward QT-KD-26-1782."
+  }
+ ],
+ "refunds": [
+  {
+   "refund_id": "RF-KD-26-9776",
+   "status": "Paid",
+   "amount_ngn": 1913200,
+   "approved_amount_ngn": 1913200,
+   "paid_amount_ngn": 1881080,
+   "reason_category": "[\"Overpayment\",\"Substitution Difference\"]",
+   "requested_at_iso": "2026-10-10T19:46:16.256Z"
+  }
+ ],
+ "jobs": [
+  {
+   "job_id": "PRO-KD-26-1456",
+   "cutting_list_id": "CL-KD-26-1457",
+   "quotation_ref": "QT-KD-26-1777",
+   "customer_id": "CUS-KD-26-0904",
+   "customer_name": "abbas gabdo",
+   "product_id": null,
+   "product_name": null,
+   "planned_meters": 1751,
+   "planned_sheets": 333,
+   "machine_name": "Longspan (Indus6)",
+   "start_date_iso": "2026-10-10T12:00:00.000Z",
+   "end_date_iso": "2026-10-10",
+   "materials_note": null,
+   "operator_name": null,
+   "status": "Completed",
+   "created_at_iso": "2026-10-10T11:55:45.783Z",
+   "completed_at_iso": "2026-10-10T12:00:00.000Z",
+   "actual_meters": 1751,
+   "actual_weight_kg": 4670,
+   "conversion_alert_state": "High",
+   "manager_review_required": 1,
+   "manager_review_signed_at_iso": null,
+   "manager_review_signed_by_user_id": null,
+   "manager_review_signed_by_name": null,
+   "manager_review_remark": null,
+   "conversion_variance_reason_code": "scale_issue",
+   "conversion_variance_reason_text": null,
+   "conversion_variance_band": "High",
+   "coil_spec_mismatch_pending": 1,
+   "offcut_inventory_meters": 0,
+   "offcut_supply_json": null,
+   "branch_id": "BR-KD",
+   "production_date_iso": "2026-10-10",
+   "planned_roof_m": 1567.7,
+   "planned_cladding_m": 53.1,
+   "planned_flatsheet_m": 130.2,
+   "actual_roof_m": 0,
+   "actual_cladding_m": 0,
+   "actual_flatsheet_m": 1751
+  }
+ ],
+ "cutting": [
+  {
+   "id": "CL-KD-26-1457",
+   "customer_id": "CUS-KD-26-0904",
+   "customer_name": "abbas gabdo",
+   "quotation_ref": "QT-KD-26-1777",
+   "product_id": null,
+   "product_name": null,
+   "date_label": "10 Oct",
+   "date_iso": "2026-10-10",
+   "sheets_to_cut": 333,
+   "total_meters": 1751,
+   "total_label": "1,751 m",
+   "status": "Finished",
+   "machine_name": "Longspan (Indus6)",
+   "operator_name": null,
+   "production_registered": 1,
+   "production_register_ref": "PRO-KD-26-1456",
+   "handled_by": "Abdulrahman Uthman Sali",
+   "branch_id": "BR-KD",
+   "production_release_pending": 0,
+   "production_released_at_iso": null,
+   "production_released_by": null,
+   "print_count": 1,
+   "last_printed_at_iso": "2026-10-10T11:55:50.870Z",
+   "last_printed_by": "Muhammad Ibrahim Bakari"
+  }
+ ],
+ "audit": [
+  {
+   "action": "ledger.receipt",
+   "entity_kind": "quotation",
+   "entity_id": "QT-KD-26-1777",
+   "occurred_at_iso": "2026-10-10T11:47:55.293Z",
+   "actor_user_id": "USR-ADMIN",
+   "note": "Receipt posted against QT-KD-26-1777",
+   "details_json": "{\"receiptEntryId\":\"LE-KD-26-2060\",\"overpayEntryId\":\"\",\"amountNgn\":12000000,\"fullAmountAsReceipt\":true,\"managerClearanceReopened\":false,\"duplicateOverride\":null,\"unlinkedBankOverride\":null}"
+  },
+  {
+   "action": "quotation.md_price_exception_approve",
+   "entity_kind": "quotation",
+   "entity_id": "QT-KD-26-1777",
+   "occurred_at_iso": "2026-10-10T11:50:06.340Z",
+   "actor_user_id": "USR-ADMIN",
+   "note": "Abdulrahman Uthman Sali — 1 below-floor line(s): products#1 quoted 5700/m < floor 5750/m",
+   "details_json": "{\"violations\":[{\"code\":\"below_floor\",\"lineCategory\":\"products\",\"lineIndex\":0,\"lineName\":\"Roofing Sheet\",\"gauge\":\"0.28mm\",\"design\":\"longspan (indus6)\",\"quotedPerMeter\":5700,\"floorPerMeter\":5750,\"recommendedPerMeter\":5750,\"bandNgn\":50,\"minAllowedPerMeter\":5750,\"floorSource\":\"workbook\",\"ignoredListStamp\":true,\"freezeEvent\":\"first_payment\",\"freezeDateIso\":\"2026-10-10\",\"pricingAsAtIso\":\"2026-10-10\",\"floorWhy\":\"Ignored list-price stamp (equals recommended/list badge — not the workbook minimum). Gate ₦5,750/m from material workbook minimum (not published list). Workbook as of first payment (2026-10-10). Later floor raises do not change this deal.\"}],\"snapshotJson\":\"[{\\\"code\\\":\\\"below_floor\\\",\\\"lineCategory\\\":\\\"products\\\",\\\"lineIndex\\\":0,\\\"lineName\\\":\\\"Roofing Sheet\\\",\\\"gauge\\\":\\\"0.28mm\\\",\\\"design\\\":\\\"longspan (indus6)\\\",\\\"quotedPerMeter\\\":5700,\\\"floorPerMeter\\\":5750,\\\"recommendedPerMeter\\\":5750,\\\"bandNgn\\\":50,\\\"minAllowedPerMeter\\\":5750,\\\"floorSource\\\":\\\"workbook\\\",\\\"ignoredListStamp\\\":true,\\\"freezeEvent\\\":\\\"first_payment\\\",\\\"freezeDateIso\\\":\\\"2026-10-10\\\",\\\"pricingAsAtIso\\\":\\\"2026-10-10\\\",\\\"floorWhy\\\":\\\"Ignored list-price stamp (equals recommended/list badge — not the workbook minimum). Gate ₦5,750/m from material workbook minimum (not published list). Workbook as of first payment (2026-10-10). Later floor raises do not change this deal.\\\"}]\"}"
+  },
+  {
+   "action": "receipt.finance_amount_sync",
+   "entity_kind": "sales_receipt",
+   "entity_id": "LE-KD-26-2060",
+   "occurred_at_iso": "2026-10-10T12:36:12.597Z",
+   "actor_user_id": "USR-D1B9D0F6017652C2",
+   "note": "Sales receipt amount aligned to finance-confirmed ₦12,000,000 (was ₦12,000,000).",
+   "details_json": "{\"confirmedAmountNgn\":12000000,\"previousAmountNgn\":12000000,\"quotationRef\":\"QT-KD-26-1777\",\"receiptLedgerNgn\":10218200,\"overpayLedgerNgn\":1781800}"
+  },
+  {
+   "action": "ledger.apply_refund_credit",
+   "entity_kind": "refund_credit_application",
+   "entity_id": "RCA-1791658390301-ak0d1s",
+   "occurred_at_iso": "2026-10-10T18:53:10.312Z",
+   "actor_user_id": "USR-ADMIN",
+   "note": "Credit confirmation: ₦29,200 → QT-KD-26-1782",
+   "details_json": "{\"customerID\":\"CUS-KD-26-0904\",\"targetQuotationRef\":\"QT-KD-26-1782\",\"sourceQuotationRef\":\"QT-KD-26-1777\",\"refundId\":null,\"kind\":\"overpay\",\"amountNgn\":29200,\"leftoverOnSourceNgn\":1752600}"
+  },
+  {
+   "action": "quotation.auto_clear_on_refund_approval",
+   "entity_kind": "quotation",
+   "entity_id": "QT-KD-26-1777",
+   "occurred_at_iso": "2026-10-10T19:50:30.944Z",
+   "actor_user_id": "USR-ADMIN",
+   "note": "Quotation manager-cleared when refund RF-KD-26-9776 was approved.",
+   "details_json": "{\"refundID\":\"RF-KD-26-9776\"}"
+  },
+  {
+   "action": "refund.pay.revenue_review_warning",
+   "entity_kind": "refund",
+   "entity_id": "RF-KD-26-9776",
+   "occurred_at_iso": "2026-10-16T15:26:51.243Z",
+   "actor_user_id": "USR-ADMIN",
+   "note": "Post-production refund — payout reduces 2500; review AR/revenue if refund exceeds remaining deposit and legacy bridge coverage.",
+   "details_json": "{\"glTreatment\":\"deposit_2500\",\"quotationRef\":\"QT-KD-26-1777\"}"
+  }
+ ],
+ "customer": [
+  {
+   "error": "Unknown column 'bank_account_number' in 'SELECT' | sql=\"SELECT customer_id, name, bank_name, bank_account_number, bank_account_name FROM customers WHERE customer_id = ?\" | binds=1/1"
+  }
+ ],
+ "preview": {
+  "ok": true,
+  "preview": {
+   "customerID": "CUS-KD-26-0904",
+   "customerName": "abbas gabdo",
+   "quotationRef": "QT-KD-26-1777",
+   "quoteTotalNgn": 10218200,
+   "paidOnQuoteNgn": 12000000,
+   "overpayAdvanceNgn": 1781800,
+   "quotationCashInNgn": 12000000,
+   "receiptCashNgn": 12000000,
+   "overpaymentExcessNgn": 1781800,
+   "overpaymentResidualNgn": 0,
+   "overpaymentAlreadyRefundedNgn": 1752600,
+   "creditAppliedOutNgn": 29200,
+   "remainingRefundableNgn": null,
+   "refundHardCapNgn": null,
+   "quotedMeters": 1751,
+   "mdDiscountMetres": 1751,
+   "actualMeters": 1751,
+   "coilProducedMeters": 1751,
+   "producedMetersForUnproduced": 1751,
+   "stoneMeterQuote": false,
+   "productionFulfillment": {
+    "quotedMeters": 1751,
+    "coilProducedMeters": 1751,
+    "jobActualMeters": 1751,
+    "producedMetersForUnproduced": 1751,
+    "offcutFgMeters": 0,
+    "unproducedMetres": 0,
+    "fullyProducedRoofing": true,
+    "hasCompletedJob": true,
+    "stoneMeterQuote": false,
+    "jobs": [
+     {
+      "jobId": "PRO-KD-26-1456",
+      "status": "Completed",
+      "plannedMeters": 1751,
+      "actualMeters": 1751,
+      "offcutInventoryMeters": 0,
+      "eligibleProducedMeters": 1751,
+      "outputSource": "coil"
+     }
+    ]
+   },
+   "pricePerMeterNgn": 5700,
+   "pricingAsAtIso": "2026-10-10",
+   "substitutePricePerMeterNgn": null,
+   "substitutionPerMeterBreakdown": [],
+   "suggestedAmountNgn": 150000,
+   "suggestedLines": [
+    {
+     "label": "Accessory shortfall: Drive screw nail (60 × ₦2,500)",
+     "amountNgn": 150000,
+     "category": "Accessory shortfall"
+    }
+   ],
+   "categorySuggestedMaxNgn": {
+    "Accessory shortfall": 150000
+   },
+   "derivedCategoryMaxNgn": {
+    "Order cancellation": 0,
+    "Other": 0,
+    "MD discount": 0
+   },
+   "warnings": [
+    "Quoted 1751.00 m roofing is fully produced (1751.00 m output: 1751.00 m from coil) — unproduced meterage refund does not apply.",
+    "There are 1 existing refund(s) for this quotation totaling ₦1,913,200.",
+    "Original overpayment was ₦1,781,800. ₦29,200 is already applied to another quotation and the rest is covered by prior refunds (residual ₦0). Do not create another Overpayment refund.",
+    "Economic floor uses MD-approved quoted selling ₦/m (below workbook minimum) — refund headroom matches the approved deal price.",
+    "Economic floor check: some rates from published list (workbook floor missing)."
+   ],
+   "receiptClearanceRequired": false,
+   "unclearedReceipts": [],
+   "alreadyRefundedCategories": [
+    "Overpayment",
+    "Substitution Difference"
+   ],
+   "paidRefundsOnQuotationNgn": 1881080,
+   "priorRefundsOnQuotationNgn": 1913200,
+   "priorRefundsOnQuotation": [
+    {
+     "refundId": "RF-KD-26-9776",
+     "status": "Paid",
+     "amountNgn": 1913200,
+     "paidAmountNgn": 1881080,
+     "reasonCategory": "[\"Overpayment\",\"Substitution Difference\"]"
+    }
+   ],
+   "blockedRefundCategories": [
+    "Unproduced meterage"
+   ],
+   "eligibleRefundCategories": [
+    "Accessory shortfall"
+   ],
+   "productionSuggestedCategories": [],
+   "productionAlignmentIssues": [],
+   "economicFloor": {
+    "producedOutputMeters": 1751,
+    "floorDeliveredValueNgn": 9820100,
+    "maxDefensibleRefundNgn": 0,
+    "priorRefundedNgn": 191320029200,
+    "cashInNgn": 12000000,
+    "incompleteFloorPricing": false,
+    "usedPriceListFallback": true,
+    "honouredMdPriceException": true,
+    "usedQuotedSellingCap": false,
+    "quotedSellingPpmNgn": 5700,
+    "ppmSourceByJob": {
+     "PRO-KD-26-1456": "md_approved_quoted_selling"
+    },
+    "jobRows": [
+     {
+      "jobId": "PRO-KD-26-1456",
+      "outputMeters": 1751,
+      "floorPpmNgn": null,
+      "floorValueNgn": 9820100,
+      "ppmSource": "md_approved_quoted_selling",
+      "gaugeSlices": [
+       {
+        "meters": 1590.4,
+        "coilGaugeLabel": "0.28mm",
+        "floorPpmNgn": 5700,
+        "floorValueNgn": 9065280,
+        "ppmSource": "md_approved_quoted_selling"
+       },
+       {
+        "meters": 160.6,
+        "coilGaugeLabel": "0.24mm",
+        "floorPpmNgn": 4700,
+        "floorValueNgn": 754820,
+        "ppmSource": "price_list"
+       }
+      ]
+     }
+    ]
+   },
+   "hasCancelledProductionJob": false,
+   "cancelledNotProduced": false,
+   "openProductionJob": null,
+   "refundEligibilityOk": false,
+   "refundEligibilityError": "Refundable balance on this quotation is fully covered by existing refund requests."
+  }
+ },
+ "po": [
+  {
+   "po_id": "PO-KD-26-0092",
+   "supplier_id": "SUP-020",
+   "supplier_name": "E-Best Aluminium Abuja",
+   "order_date_iso": "2026-10-12",
+   "expected_delivery_iso": "2026-10-14",
+   "status": "Received",
+   "invoice_no": "",
+   "invoice_date_iso": "",
+   "delivery_date_iso": "",
+   "transport_agent_id": "AG-004",
+   "transport_agent_name": "Bashir Idris",
+   "transport_reference": null,
+   "transport_note": null,
+   "transport_finance_advice": null,
+   "transport_treasury_movement_id": null,
+   "transport_amount_ngn": 100000,
+   "transport_advance_ngn": 100000,
+   "transport_paid_ngn": 0,
+   "transport_paid": 0,
+   "transport_paid_at_iso": null,
+   "supplier_paid_ngn": 13419840,
+   "branch_id": "BR-KD",
+   "procurement_kind": "coil",
+   "transport_payout_hold": 0,
+   "transport_payout_hold_reason": null
+  }
+ ],
+ "poTm": [],
+ "poPreq": [],
+ "po9091": [
+  {
+   "error": "Unknown column 'transport_status' in 'SELECT' | sql=\"SELECT po_id, transport_agent_name, transport_amount_ngn, transport_paid_ngn, transport_paid, transport_status FROM purchase_orders WHERE po_id IN ('PO-KD-26-0089','PO-KD-26-0090','PO-KD-26-0091','PO-KD-26-0092')\" | binds=0/0"
+  }
+ ],
+ "mq": [
+  {
+   "id": "QT-KD-26-1697",
+   "customer_id": "CUS-KD-26-1100",
+   "total_ngn": 148900,
+   "paid_ngn": 196350,
+   "status": "Pending"
+  }
+ ],
+ "mqLedger": [
+  {
+   "id": "LE-KD-26-1959",
+   "type": "RECEIPT",
+   "amount_ngn": 148900,
+   "at_iso": "2026-10-02T12:00:00.000Z",
+   "payment_method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "quotation_ref": "QT-KD-26-1697",
+   "note": "Payment on QT-KD-26-1697 (full amount on quotation; may exceed quote total)"
+  }
+ ],
+ "mqRefunds": [
+  {
+   "refund_id": "RF-KD-26-9734",
+   "status": "Partially paid",
+   "amount_ngn": 74450,
+   "approved_amount_ngn": 74450,
+   "paid_amount_ngn": 72000,
+   "calculation_lines_json": "[{\"label\":\"Overpayment on QT-KD-26-1697\",\"amountNgn\":47450,\"category\":\"Overpayment\"},{\"label\":\"Unclaimed installation / labour: Installation\",\"amountNgn\":20000,\"category\":\"Installation issue\"},{\"label\":\"Unclaimed transport: Transportation\",\"amountNgn\":7000,\"category\":\"Transport issue\"}]"
+  }
+ ],
+ "mqCredit": {
+  "ok": true,
+  "customerID": "CUS-KD-26-1100",
+  "customerName": "ALH MAHADI TURUNKU",
+  "targetQuotationRef": "QT-KD-26-1697",
+  "targetDueNgn": 0,
+  "totalAvailableNgn": 42766,
+  "recommendedApplyNgn": 0,
+  "remainderDueAfterRecommendNgn": 0,
+  "leftoverCreditAfterRecommendNgn": 42766,
+  "sources": [
+   {
+    "id": "overpay:QT-KD-26-1697",
+    "kind": "overpay",
+    "refundId": null,
+    "sourceQuotationRef": "QT-KD-26-1697",
+    "availableNgn": 42766,
+    "requiresApproval": false,
+    "status": null,
+    "overpaymentOnly": true,
+    "sameQuotation": true,
+    "amountNgn": 42766,
+    "creditAppliedNgn": 0,
+    "creditAppliedToQuotationRef": "",
+    "paidAmountNgn": 0,
+    "fresh": true,
+    "usageHowTo": "",
+    "label": "Overpayment on QT-KD-26-1697",
+    "recommendation": "Use up to ₦42,766 from overpayment on QT-KD-26-1697 — no refund request needed. Leftover stays on that job."
+   }
+  ],
+  "extraSources": [],
+  "extraAvailableNgn": 0,
+  "unavailableSources": [
+   {
+    "id": "refund:RF-KD-26-9734",
+    "refundId": "RF-KD-26-9734",
+    "sourceQuotationRef": "QT-KD-26-1697",
+    "availableNgn": 2450,
+    "status": "Partially paid",
+    "overpaymentOnly": false,
+    "paidAtISO": "2026-10-06",
+    "paidBy": "Mansur Lawal Matazu",
+    "paidAmountNgn": 72000,
+    "amountNgn": 74450,
+    "creditAppliedNgn": 0,
+    "creditAppliedToQuotationRef": "",
+    "usageHowTo": "",
+    "reason": "Transport/installation refunds are cash payout only."
+   }
+  ],
+  "targetBlocksExternalCredit": false,
+  "blockingRefundId": null,
+  "statusReportLabel": "Credit confirmation",
+  "priorConfirmPaymentReleases": []
+ },
+ "mqTm": [
+  {
+   "id": "TM-KD-26-2992",
+   "type": "RECEIPT_IN",
+   "treasury_account_id": 4,
+   "amount_ngn": 196350,
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "source_id": "LE-KD-26-1959"
+  },
+  {
+   "id": "TM-KD-26-3149",
+   "type": "REFUND_PAYOUT",
+   "treasury_account_id": 4,
+   "amount_ngn": -72000,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "source_id": "RF-KD-26-9734"
+  }
+ ]
+}

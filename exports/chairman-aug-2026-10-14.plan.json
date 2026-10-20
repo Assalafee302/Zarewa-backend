@@ -1,0 +1,138 @@
+{
+ "createdAtISO": "2026-10-14",
+ "source": "Owner instruction 14 Oct 2026: Chairman withdrawals (bank lines not previously posted), TM-KD-26-1969 and TM-KD-26-1974 date slips. EXP-KD-26-0221 (forklift, 6 Aug transfer to Emmanuel Godwin Obochi, First Bank) stays Maintenance.",
+ "items": [
+  {
+   "id": "W1",
+   "group": "D",
+   "record": "Taj 10 Aug ₦1,160,000",
+   "field": "new expense (Chairman withdrawal)",
+   "reason": "Laila wedding (bank line, not previously posted)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-10",
+     "amountNgn": 1160000,
+     "category": "Chairman withdrawal",
+     "expenseType": "Laila wedding (bank line, not previously posted)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-TAJ-2026-08-10",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "W2",
+   "group": "D",
+   "record": "Taj 15 Aug ₦300,000",
+   "field": "new expense (Chairman withdrawal)",
+   "reason": "Laila wedding (bank line, not previously posted)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-15",
+     "amountNgn": 300000,
+     "category": "Chairman withdrawal",
+     "expenseType": "Laila wedding (bank line, not previously posted)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-TAJ-2026-08-15",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "W3",
+   "group": "D",
+   "record": "Moniepoint 1 Aug ₦50,000",
+   "field": "new expense (Chairman withdrawal)",
+   "reason": "Khalifa school fees and registration, paid via Hussaina Sali Mustapha (confirmed by OM)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-01",
+     "amountNgn": 50000,
+     "category": "Chairman withdrawal",
+     "expenseType": "Khalifa school fees and registration, paid via Hussaina Sali Mustapha (confirmed by OM)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-01",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "W4",
+   "group": "D",
+   "record": "Moniepoint 7 Aug ₦50,000",
+   "field": "new expense (Chairman withdrawal)",
+   "reason": "Khalifa school fees and registration, paid via Hussaina Sali Mustapha (confirmed by OM)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-07",
+     "amountNgn": 50000,
+     "category": "Chairman withdrawal",
+     "expenseType": "Khalifa school fees and registration, paid via Hussaina Sali Mustapha (confirmed by OM)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-07",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "W5",
+   "group": "D",
+   "record": "Moniepoint 7 Aug ₦20,000",
+   "field": "new expense (Chairman withdrawal)",
+   "reason": "Khalifa school fees and registration, paid via Hussaina Sali Mustapha (confirmed by OM)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-07",
+     "amountNgn": 20000,
+     "category": "Chairman withdrawal",
+     "expenseType": "Khalifa school fees and registration, paid via Hussaina Sali Mustapha (confirmed by OM)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-07-B",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "T1",
+   "group": "C",
+   "record": "TM-KD-26-1969 (LE-KD-26-1366, Engr Yaro, ₦13,000,000, Taj)",
+   "field": "treasury_movements.posted_at_iso",
+   "reason": "day/month slip, bank 5–6 Aug",
+   "ops": [
+    {
+     "kind": "redateTreasury",
+     "movementId": "TM-KD-26-1969",
+     "before": "2026-04-05",
+     "after": "2026-08-05",
+     "note": "day/month slip, bank 5–6 Aug"
+    }
+   ]
+  },
+  {
+   "id": "T2",
+   "group": "C",
+   "record": "TM-KD-26-1974 (PREQ-KD-26-0159, forklift, ₦20,000, Moniepoint)",
+   "field": "treasury_movements.posted_at_iso",
+   "reason": "bank date 6 Aug: transfer to Emmanuel Godwin Obochi, First Bank",
+   "ops": [
+    {
+     "kind": "redateTreasury",
+     "movementId": "TM-KD-26-1974",
+     "before": "2026-08-07",
+     "after": "2026-08-06",
+     "note": "bank date 6 Aug: transfer to Emmanuel Godwin Obochi, First Bank"
+    }
+   ]
+  }
+ ]
+}

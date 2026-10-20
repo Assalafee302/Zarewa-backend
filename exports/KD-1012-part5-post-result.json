@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-12",
+  "grn": {
+    "movementId": "MV-26-00740",
+    "qty": 423,
+    "valueNgn": 2834100,
+    "glJournalId": "JE-KD-26-4775",
+    "poStatus": "Received"
+  },
+  "reset": {
+    "movementId": "MV-26-00741",
+    "varianceJournalId": "JE-KD-26-4776",
+    "cogsJournalId": "JE-KD-26-4777"
+  },
+  "caseId": "INV-KD-26-0009"
+}

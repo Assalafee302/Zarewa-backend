@@ -1,0 +1,592 @@
+{
+  "ok": true,
+  "readOnly": true,
+  "branchScope": "BR-KD",
+  "uiReported": {
+    "openCredits": 122,
+    "totalBalanceNgn": 1151728,
+    "withdrawNowNgn": 1151728,
+    "lockedNgn": 0
+  },
+  "liveSummary": {
+    "openCredits": 122,
+    "totalOpenNgn": 1151728,
+    "availableNgn": 1151728,
+    "heldNgn": 0,
+    "reservedNgn": 0,
+    "paidOutNgn": 0,
+    "cooldownActive": false,
+    "lastWithdrawalPaidAtIso": null,
+    "nextWithdrawalAllowedAtIso": null,
+    "matchesUi": true,
+    "deltaVsUiNgn": 0
+  },
+  "ledgerAgg": {
+    "creditRows": 125,
+    "openRows": 122,
+    "creditedTotalNgn": 1179576,
+    "openTotalNgn": 1151728,
+    "fullyClosedAmountNgn": 27848,
+    "partialWithdrawnNgn": 0
+  },
+  "withdrawalsByStatus": [
+    {
+      "status": "cancelled",
+      "count": 1,
+      "totalNgn": 50000
+    }
+  ],
+  "expectedVsLedger": {
+    "refundsScanned": 710,
+    "refundsWithExpectedCut": 145,
+    "matchedCount": 96,
+    "missingCreditCount": 24,
+    "missingCreditNgn": 789312,
+    "underCreditedCount": 25,
+    "underCreditedShortfallNgn": 1660263,
+    "overCreditedCount": 0,
+    "orphanCreditCount": 3,
+    "impliedOpenIfGapsFilledNgn": 3601303,
+    "gapAboveUiNgn": 2449575
+  },
+  "topMissing": [
+    {
+      "refundId": "RF-KD-26-9730",
+      "status": "Paid",
+      "customerName": "Suleiman Zaria",
+      "approvedNgn": 1753330,
+      "expectedCutNgn": 350666,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 1753330,
+      "requestedAtIso": "2026-10-06T17:16:15.995Z"
+    },
+    {
+      "refundId": "RF-KD-26-9693",
+      "status": "Paid",
+      "customerName": "Arma Yau",
+      "approvedNgn": 861575,
+      "expectedCutNgn": 172315,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 861575,
+      "requestedAtIso": "2026-09-29T14:07:46.880Z"
+    },
+    {
+      "refundId": "RF-KD-26-9718",
+      "status": "Paid",
+      "customerName": "Engr Attah Nicholas",
+      "approvedNgn": 295160,
+      "expectedCutNgn": 59032,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 295160,
+      "requestedAtIso": "2026-09-30T19:15:51.093Z"
+    },
+    {
+      "refundId": "RF-KD-26-9560",
+      "status": "Approved",
+      "customerName": "Mustapha Musa Abubakar",
+      "approvedNgn": 176950,
+      "expectedCutNgn": 35390,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 176950,
+      "requestedAtIso": "2026-09-01T09:10:25.055Z"
+    },
+    {
+      "refundId": "RF-KD-26-9722",
+      "status": "Paid",
+      "customerName": "Anas Cap Zaria",
+      "approvedNgn": 139240,
+      "expectedCutNgn": 27848,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 139240,
+      "requestedAtIso": "2026-09-30T19:34:48.738Z"
+    },
+    {
+      "refundId": "RF-KD-26-9626",
+      "status": "Paid",
+      "customerName": "Jibril Sule",
+      "approvedNgn": 122016,
+      "expectedCutNgn": 24403,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 122016,
+      "requestedAtIso": "2026-09-19T15:37:40.919Z"
+    },
+    {
+      "refundId": "RF-KD-26-9729",
+      "status": "Paid",
+      "customerName": "Ramaran Garkuwa",
+      "approvedNgn": 94300,
+      "expectedCutNgn": 18860,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 94300,
+      "requestedAtIso": "2026-10-06T17:10:29.593Z"
+    },
+    {
+      "refundId": "RF-KD-26-9712",
+      "status": "Paid",
+      "customerName": "Ramaran Garkuwa",
+      "approvedNgn": 94300,
+      "expectedCutNgn": 18860,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 94300,
+      "requestedAtIso": "2026-09-30T18:18:49.972Z"
+    },
+    {
+      "refundId": "RF-KD-26-9714",
+      "status": "Paid",
+      "customerName": "Tukur Tk",
+      "approvedNgn": 93600,
+      "expectedCutNgn": 18720,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 93600,
+      "requestedAtIso": "2026-09-30T18:58:26.891Z"
+    },
+    {
+      "refundId": "RF-KD-26-9537",
+      "status": "Paid",
+      "customerName": "Abubakar Abba",
+      "approvedNgn": 79775,
+      "expectedCutNgn": 15955,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 79775,
+      "requestedAtIso": "2026-08-25T17:08:24.319Z"
+    },
+    {
+      "refundId": "RF-KD-26-9711",
+      "status": "Paid",
+      "customerName": "Yaron Yahya",
+      "approvedNgn": 37800,
+      "expectedCutNgn": 7560,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 37800,
+      "requestedAtIso": "2026-09-30T18:12:07.578Z"
+    },
+    {
+      "refundId": "RF-KD-26-9713",
+      "status": "Paid",
+      "customerName": "Ramaran Garkuwa",
+      "approvedNgn": 33915,
+      "expectedCutNgn": 6783,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 33915,
+      "requestedAtIso": "2026-09-30T18:19:44.663Z"
+    },
+    {
+      "refundId": "RF-KD-26-9608",
+      "status": "Paid",
+      "customerName": "Mohammed Tasiu Imam",
+      "approvedNgn": 33600,
+      "expectedCutNgn": 6720,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 33600,
+      "requestedAtIso": "2026-09-12T17:42:57.760Z"
+    },
+    {
+      "refundId": "RF-KD-26-9531",
+      "status": "Paid",
+      "customerName": "Ali Adamu Ardo",
+      "approvedNgn": 22850,
+      "expectedCutNgn": 4570,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 22850,
+      "requestedAtIso": "2026-08-25T16:40:55.763Z"
+    },
+    {
+      "refundId": "RF-KD-26-9594",
+      "status": "Paid",
+      "customerName": "Hamza Abubakar",
+      "approvedNgn": 20150,
+      "expectedCutNgn": 4030,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 20150,
+      "requestedAtIso": "2026-09-08T18:21:09.789Z"
+    },
+    {
+      "refundId": "RF-KD-26-9523",
+      "status": "Paid",
+      "customerName": "Benjamin Jaji Barrack",
+      "approvedNgn": 19605,
+      "expectedCutNgn": 3921,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 19605,
+      "requestedAtIso": "2026-08-25T15:29:48.125Z"
+    },
+    {
+      "refundId": "RF-KD-26-9519",
+      "status": "Paid",
+      "customerName": "Nazifi",
+      "approvedNgn": 19525,
+      "expectedCutNgn": 3905,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 19525,
+      "requestedAtIso": "2026-08-24T15:42:58.710Z"
+    },
+    {
+      "refundId": "RF-KD-26-9708",
+      "status": "Paid",
+      "customerName": "Ali Cap Jos",
+      "approvedNgn": 18500,
+      "expectedCutNgn": 3700,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 18500,
+      "requestedAtIso": "2026-09-30T17:15:51.799Z"
+    },
+    {
+      "refundId": "RF-KD-26-9716",
+      "status": "Paid",
+      "customerName": "Engr Attah Nicholas",
+      "approvedNgn": 10011,
+      "expectedCutNgn": 2002,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 10011,
+      "requestedAtIso": "2026-09-30T19:08:55.226Z"
+    },
+    {
+      "refundId": "RF-KD-26-9522",
+      "status": "Paid",
+      "customerName": "Shamsu",
+      "approvedNgn": 9500,
+      "expectedCutNgn": 1900,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 9500,
+      "requestedAtIso": "2026-08-25T15:25:26.413Z"
+    },
+    {
+      "refundId": "RF-KD-26-9627",
+      "status": "Paid",
+      "customerName": "Najeeb Uzairu",
+      "approvedNgn": 6920,
+      "expectedCutNgn": 1384,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 6920,
+      "requestedAtIso": "2026-09-19T15:55:49.760Z"
+    },
+    {
+      "refundId": "RF-KD-26-9724",
+      "status": "Paid",
+      "customerName": "Abu Cap",
+      "approvedNgn": 1941,
+      "expectedCutNgn": 388,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 1941,
+      "requestedAtIso": "2026-10-03T17:30:53.248Z"
+    },
+    {
+      "refundId": "RF-KD-26-9686",
+      "status": "Paid",
+      "customerName": "Anas Custom",
+      "approvedNgn": 1000,
+      "expectedCutNgn": 200,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 1000,
+      "requestedAtIso": "2026-09-26T16:12:32.285Z"
+    },
+    {
+      "refundId": "RF-KD-26-9685",
+      "status": "Paid",
+      "customerName": "Lawal Zaria",
+      "approvedNgn": 1000,
+      "expectedCutNgn": 200,
+      "source": "resolveCreditTargets",
+      "paidAmountNgn": 1000,
+      "requestedAtIso": "2026-09-26T16:09:35.744Z"
+    }
+  ],
+  "topUnderCredited": [
+    {
+      "refundId": "RF-KD-26-9579",
+      "status": "Paid",
+      "customerName": "Yahuza",
+      "expectedCutNgn": 739120,
+      "creditedNgn": 99120,
+      "openNgn": 99120,
+      "shortfallNgn": 640000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9726",
+      "status": "Paid",
+      "customerName": "Aminu Ibrahim",
+      "expectedCutNgn": 188538,
+      "creditedNgn": 8738,
+      "openNgn": 8738,
+      "shortfallNgn": 179800,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9702",
+      "status": "Paid",
+      "customerName": "Suleiman Zaria",
+      "expectedCutNgn": 186812,
+      "creditedNgn": 14042,
+      "openNgn": 14042,
+      "shortfallNgn": 172770,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9581",
+      "status": "Paid",
+      "customerName": "Aminu Ibrahim",
+      "expectedCutNgn": 130862,
+      "creditedNgn": 11462,
+      "openNgn": 11462,
+      "shortfallNgn": 119400,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9577",
+      "status": "Paid",
+      "customerName": "Alhaji Mrido",
+      "expectedCutNgn": 136149,
+      "creditedNgn": 33149,
+      "openNgn": 33149,
+      "shortfallNgn": 103000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9667",
+      "status": "Paid",
+      "customerName": "Engr Zubairu",
+      "expectedCutNgn": 102174,
+      "creditedNgn": 20174,
+      "openNgn": 20174,
+      "shortfallNgn": 82000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9752",
+      "status": "Paid",
+      "customerName": "Ibrahim Zaria",
+      "expectedCutNgn": 90660,
+      "creditedNgn": 22260,
+      "openNgn": 22260,
+      "shortfallNgn": 68400,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9678",
+      "status": "Paid",
+      "customerName": "Usman Tijjani",
+      "expectedCutNgn": 66960,
+      "creditedNgn": 16960,
+      "openNgn": 16960,
+      "shortfallNgn": 50000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9562",
+      "status": "Approved",
+      "customerName": "Engr Yaro",
+      "expectedCutNgn": 65755,
+      "creditedNgn": 25755,
+      "openNgn": 25755,
+      "shortfallNgn": 40000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9554",
+      "status": "Paid",
+      "customerName": "Qs Isa",
+      "expectedCutNgn": 59460,
+      "creditedNgn": 27300,
+      "openNgn": 27300,
+      "shortfallNgn": 32160,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9755",
+      "status": "Approved",
+      "customerName": "Shuaibu Roofer",
+      "expectedCutNgn": 41952,
+      "creditedNgn": 9952,
+      "openNgn": 9952,
+      "shortfallNgn": 32000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9580",
+      "status": "Paid",
+      "customerName": "Ayuba Abubakar",
+      "expectedCutNgn": 36186,
+      "creditedNgn": 13186,
+      "openNgn": 13186,
+      "shortfallNgn": 23000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9587",
+      "status": "Paid",
+      "customerName": "Alkasim Cap",
+      "expectedCutNgn": 28615,
+      "creditedNgn": 11015,
+      "openNgn": 11015,
+      "shortfallNgn": 17600,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9555",
+      "status": "Paid",
+      "customerName": "Panteka Guy",
+      "expectedCutNgn": 17860,
+      "creditedNgn": 2860,
+      "openNgn": 2860,
+      "shortfallNgn": 15000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9684",
+      "status": "Paid",
+      "customerName": "Adamuaibrahim",
+      "expectedCutNgn": 19740,
+      "creditedNgn": 5139,
+      "openNgn": 5139,
+      "shortfallNgn": 14601,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9674",
+      "status": "Paid",
+      "customerName": "Bello Goma",
+      "expectedCutNgn": 19994,
+      "creditedNgn": 7194,
+      "openNgn": 7194,
+      "shortfallNgn": 12800,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9661",
+      "status": "Paid",
+      "customerName": "Mustapha Cap 2",
+      "expectedCutNgn": 16880,
+      "creditedNgn": 4280,
+      "openNgn": 4280,
+      "shortfallNgn": 12600,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9710",
+      "status": "Paid",
+      "customerName": "Nasiru Zaria",
+      "expectedCutNgn": 30486,
+      "creditedNgn": 18486,
+      "openNgn": 18486,
+      "shortfallNgn": 12000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9709",
+      "status": "Paid",
+      "customerName": "Surajo",
+      "expectedCutNgn": 15386,
+      "creditedNgn": 4614,
+      "openNgn": 4614,
+      "shortfallNgn": 10772,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9589",
+      "status": "Paid",
+      "customerName": "Ibrahim Tall",
+      "expectedCutNgn": 11283,
+      "creditedNgn": 1283,
+      "openNgn": 1283,
+      "shortfallNgn": 10000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9664",
+      "status": "Paid",
+      "customerName": "Arma Yau",
+      "expectedCutNgn": 4760,
+      "creditedNgn": 1400,
+      "openNgn": 1400,
+      "shortfallNgn": 3360,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9689",
+      "status": "Paid",
+      "customerName": "Ali Cap Jos",
+      "expectedCutNgn": 7000,
+      "creditedNgn": 4000,
+      "openNgn": 4000,
+      "shortfallNgn": 3000,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9588",
+      "status": "Paid",
+      "customerName": "Yakubu Abdullahi",
+      "expectedCutNgn": 5059,
+      "creditedNgn": 2459,
+      "openNgn": 2459,
+      "shortfallNgn": 2600,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9559",
+      "status": "Approved",
+      "customerName": "Ahmed",
+      "expectedCutNgn": 8088,
+      "creditedNgn": 6288,
+      "openNgn": 6288,
+      "shortfallNgn": 1800,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    },
+    {
+      "refundId": "RF-KD-26-9623",
+      "status": "Paid",
+      "customerName": "Yahuza",
+      "expectedCutNgn": 2840,
+      "creditedNgn": 1240,
+      "openNgn": 1240,
+      "shortfallNgn": 1600,
+      "source": "resolveCreditTargets",
+      "raisable": true
+    }
+  ],
+  "topOverCredited": [],
+  "orphanCredits": [
+    {
+      "refundId": "RF-KD-26-9680",
+      "amountNgn": 0,
+      "openNgn": 0,
+      "refundStatus": "Partially paid"
+    },
+    {
+      "refundId": "RF-KD-26-9690",
+      "amountNgn": 0,
+      "openNgn": 0,
+      "refundStatus": "Partially paid"
+    },
+    {
+      "refundId": "RF-KD-26-9720",
+      "amountNgn": 27848,
+      "openNgn": 0,
+      "refundStatus": "Cancelled"
+    }
+  ]
+}

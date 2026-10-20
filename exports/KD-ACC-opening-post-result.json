@@ -1,0 +1,114 @@
+{
+  "results": [
+    {
+      "product_id": "ACC-TAPPING-SCREW-PCS",
+      "adj": 17022,
+      "unit_cost": 60,
+      "varianceNgn": 1021320,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4595"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "ACC-DRIVE-SCREW-PACK",
+      "adj": 3144.2,
+      "unit_cost": 983.33,
+      "varianceNgn": 3091786,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4596"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "ACC-RIVET-PACK",
+      "adj": 64,
+      "unit_cost": 4800,
+      "varianceNgn": 307200,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4597"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "ACC-REPAIR-KIT",
+      "adj": 43,
+      "unit_cost": 3500,
+      "varianceNgn": 150500,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4598"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "ACC-FELT-ROLL",
+      "adj": -938,
+      "unit_cost": 250,
+      "varianceNgn": 234500,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4599"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "ACC-WASHER-PACK",
+      "adj": 898,
+      "unit_cost": 300,
+      "varianceNgn": 269400,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4600"
+        },
+        "glWarning": null
+      }
+    }
+  ],
+  "after": [
+    {
+      "product_id": "ACC-DRIVE-SCREW-PACK",
+      "stock_level": 540
+    },
+    {
+      "product_id": "ACC-FELT-ROLL",
+      "stock_level": 1000
+    },
+    {
+      "product_id": "ACC-REPAIR-KIT",
+      "stock_level": 58
+    },
+    {
+      "product_id": "ACC-RIVET-PACK",
+      "stock_level": 24
+    },
+    {
+      "product_id": "ACC-TAPPING-SCREW-PCS",
+      "stock_level": 52750
+    },
+    {
+      "product_id": "ACC-WASHER-PACK",
+      "stock_level": 1401
+    }
+  ]
+}

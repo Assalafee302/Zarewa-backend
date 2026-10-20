@@ -1,0 +1,468 @@
+{
+  "results": [
+    {
+      "product_id": "ACC-SILICON-TUBE",
+      "adj": 103,
+      "unit_cost": 1800,
+      "signedNgn": 185400,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4601"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "ACC-STONE-NAIL-PACK",
+      "adj": 4,
+      "unit_cost": 9000,
+      "signedNgn": 36000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4602"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-milano-black-0.20mm",
+      "adj": -790,
+      "unit_cost": 4400,
+      "signedNgn": -3476000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4603"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-bond-black-0.20mm",
+      "adj": 306.70000000000005,
+      "unit_cost": 4400,
+      "signedNgn": 1349480,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4604"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-milano-red-mix-black-0.20mm",
+      "adj": 1087.1,
+      "unit_cost": 4400,
+      "signedNgn": 4783240,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4605"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-classic-black-0.20mm",
+      "adj": 641.1,
+      "unit_cost": 4400,
+      "signedNgn": 2820840,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4606"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-shingle-red-patch-black-0.20mm",
+      "adj": -430,
+      "unit_cost": 4400,
+      "signedNgn": -1892000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4607"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-shingle-black-patch-white-0.20mm",
+      "adj": -390,
+      "unit_cost": 4400,
+      "signedNgn": -1716000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4608"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-bond-black-0.22mm",
+      "adj": 250,
+      "unit_cost": 4400,
+      "signedNgn": 1100000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4609"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-bond-black-0.24mm",
+      "adj": -250,
+      "unit_cost": 4400,
+      "signedNgn": -1100000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4610"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-bond-bush-green-0.20mm",
+      "adj": -252,
+      "unit_cost": 4400,
+      "signedNgn": -1108800,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4611"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-bond-red-mix-black-0.20mm",
+      "adj": 44,
+      "unit_cost": 4400,
+      "signedNgn": 193600,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4612"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-classic-black-0.18mm",
+      "adj": -500,
+      "unit_cost": 4400,
+      "signedNgn": -2200000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4613"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-classic-red-mix-black-0.20mm",
+      "adj": 1,
+      "unit_cost": 4400,
+      "signedNgn": 4400,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4614"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-milano-black-0.18mm",
+      "adj": -1000,
+      "unit_cost": 4400,
+      "signedNgn": -4400000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4615"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-milano-coffee-mix-black-0.20mm",
+      "adj": -480,
+      "unit_cost": 4400,
+      "signedNgn": -2112000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4616"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-milano-red-patch-black-0.20mm",
+      "adj": -283,
+      "unit_cost": 4400,
+      "signedNgn": -1245200,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4617"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-roman-black-0.20mm",
+      "adj": 257,
+      "unit_cost": 4400,
+      "signedNgn": 1130800,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4618"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-single-black-0.20mm",
+      "adj": 95,
+      "unit_cost": 4400,
+      "signedNgn": 418000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4619"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-single-black-patch-white-0.20mm",
+      "adj": 1399,
+      "unit_cost": 4400,
+      "signedNgn": 6155600,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4620"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-single-red-mix-black-0.20mm",
+      "adj": 587,
+      "unit_cost": 4400,
+      "signedNgn": 2582800,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4621"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-single-red-patch-black-0.20mm",
+      "adj": 960,
+      "unit_cost": 4400,
+      "signedNgn": 4224000,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4622"
+        },
+        "glWarning": null
+      }
+    },
+    {
+      "product_id": "STONE-single-red-patch-black-0.24mm",
+      "adj": 423,
+      "unit_cost": 4400,
+      "signedNgn": 1861200,
+      "result": {
+        "ok": true,
+        "gl": {
+          "ok": true,
+          "journalId": "JE-KD-26-4623"
+        },
+        "glWarning": null
+      }
+    }
+  ],
+  "after": [
+    {
+      "product_id": "ACC-SILICON-TUBE",
+      "stock_level": 20
+    },
+    {
+      "product_id": "ACC-STONE-NAIL-PACK",
+      "stock_level": 20
+    },
+    {
+      "product_id": "STONE-bond-black-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-bond-black-0.20mm",
+      "stock_level": 510
+    },
+    {
+      "product_id": "STONE-bond-black-0.22mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-bond-black-0.24mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-bond-bush-green-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-bond-red-mix-black-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-classic-black-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-classic-black-0.20mm",
+      "stock_level": 250
+    },
+    {
+      "product_id": "STONE-classic-p-red-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-classic-red-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-classic-red-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-classic-red-mix-black-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-milano-black-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-milano-black-0.20mm",
+      "stock_level": 750
+    },
+    {
+      "product_id": "STONE-milano-coffee-mix-black-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-milano-red-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-milano-red-mix-black-0.20mm",
+      "stock_level": 699.9999999999999
+    },
+    {
+      "product_id": "STONE-milano-red-patch-black-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-milano-red-patch-black-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-roman-black-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-shingle-black-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-shingle-black-patch-white-0.20mm",
+      "stock_level": 110
+    },
+    {
+      "product_id": "STONE-shingle-red-patch-black-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-shingle-red-patch-black-0.20mm",
+      "stock_level": 70
+    },
+    {
+      "product_id": "STONE-single-black-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-single-black-patch-white-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-single-black-patch-white-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-single-red-mix-black-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-single-red-mix-black-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-single-red-patch-black-0.18mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-single-red-patch-black-0.20mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-single-red-patch-black-0.24mm",
+      "stock_level": 0
+    },
+    {
+      "product_id": "STONE-stone-coated-black-0.20mm",
+      "stock_level": 0
+    }
+  ]
+}

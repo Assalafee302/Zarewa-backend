@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "posted": true,
+  "coilNo": "CL-26-2094",
+  "postDate": "2026-10-10",
+  "erpBefore": 2122.89,
+  "restoreKg": 492.11,
+  "erpAfter": 2615,
+  "currentWeightKg": 2615,
+  "status": "Available",
+  "reserved": 0,
+  "targetKg": 2615,
+  "hitTarget": true,
+  "apiResult": {
+    "ok": true,
+    "coilNo": "CL-26-2094",
+    "kg": 492.11,
+    "reason": "Reverse incorrect 7 Oct 2026 stock-check scrap (−492.11 kg @ 1.935 kg/m). Restore to last job closing weight 2,615 kg"
+  },
+  "reason": "Reverse incorrect 7 Oct 2026 stock-check scrap (−492.11 kg @ 1.935 kg/m). Restore to last job closing weight 2,615 kg"
+}

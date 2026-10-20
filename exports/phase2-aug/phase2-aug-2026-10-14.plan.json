@@ -1,0 +1,341 @@
+{
+ "createdAtISO": "2026-10-14",
+ "source": "Owner instruction 14 Oct 2026: Phase 2 round 2 — August 2026 Kaduna records complete and correct (A missing bank lines, B corrections). Correction 14 Oct: Ibrahim Shaitu ₦3,000 31 Aug is Fuel & lubricant (transport to collect the Matrix diesel), not a refund.",
+ "items": [
+  {
+   "id": "A1a",
+   "group": "A",
+   "record": "Taj 24 Aug ₦1,620,000",
+   "field": "new expense (Admin salary)",
+   "reason": "Salaries Aug 2026 (bulk transfer)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-24",
+     "amountNgn": 1620000,
+     "category": "Admin salary",
+     "expenseType": "Salaries Aug 2026 (bulk transfer)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-TAJ-2026-08-24",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "A1b",
+   "group": "A",
+   "record": "Moniepoint 28 Aug ₦70,000 Shehu Yacham Joseph",
+   "field": "new expense (Admin salary)",
+   "reason": "Salary Aug 2026 - Shehu Yacham Joseph",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-28",
+     "amountNgn": 70000,
+     "category": "Admin salary",
+     "expenseType": "Salary Aug 2026 - Shehu Yacham Joseph",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-28",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "A2",
+   "group": "A",
+   "record": "Moniepoint 25 Aug ₦6,800,000 Muhsin Best Engineering Services Ltd",
+   "field": "new capex expense (Plant and machinery) + transformer asset cost",
+   "reason": "Transformer, first payment",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-25",
+     "amountNgn": 6800000,
+     "category": "Plant and machinery",
+     "expenseType": "Transformer, first payment - Muhsin Best Engineering Services Ltd",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-25",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD",
+     "addToAsset": {
+      "assetId": "FA-1791991186487-6gzuen",
+      "expectedCostNgn": 2877950,
+      "name": "Transformer (EXP-KD-26-0362 + 0397 + {expenseId})",
+      "notes": "Transformer, paid in 3 parts: first payment 25 Aug 2026 (Moniepoint), then 10 Sep and 28 Sep"
+     }
+    }
+   ]
+  },
+  {
+   "id": "A3",
+   "group": "A",
+   "record": "Moniepoint 1 Aug ₦250,000 Rafiu Sunday Ismahil",
+   "field": "new expense (Accessories)",
+   "reason": "Felt - Rafiu Sunday Ismahil",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-01",
+     "amountNgn": 250000,
+     "category": "Accessories",
+     "expenseType": "Felt - Rafiu Sunday Ismahil",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-01",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "A4",
+   "group": "A",
+   "record": "Moniepoint 29 Aug ₦200,000 POS Transfer - Nuhu Mikiyan",
+   "field": "new expense (Carriage inward)",
+   "reason": "POS Transfer - Nuhu Mikiyan (Kano transporter, Strong purchase)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-29",
+     "amountNgn": 200000,
+     "category": "Carriage inward",
+     "expenseType": "POS Transfer - Nuhu Mikiyan (Kano transporter, Strong purchase)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-29",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "A5b",
+   "group": "A",
+   "record": "Moniepoint 25 Aug ₦3,500 (+₦20 fee) Godwin Obochi Emmanuel",
+   "field": "new expense (Maintenance)",
+   "reason": "Forklift - Godwin Obochi Emmanuel",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-25",
+     "amountNgn": 3500,
+     "category": "Maintenance",
+     "expenseType": "Forklift - Godwin Obochi Emmanuel",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-25",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "A7",
+   "group": "A",
+   "record": "Moniepoint 31 Aug ₦395,900 Matrix Energy Ltd (no Sept expense of ₦395,900)",
+   "field": "new expense (Fuel & lubricant)",
+   "reason": "Diesel - Matrix Energy Ltd",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-31",
+     "amountNgn": 395900,
+     "category": "Fuel & lubricant",
+     "expenseType": "Diesel - Matrix Energy Ltd",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-31",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "A7b",
+   "group": "A",
+   "record": "Moniepoint 31 Aug ₦3,000 Ibrahim Shaitu",
+   "field": "new expense (Fuel & lubricant)",
+   "reason": "Transport to collect the Matrix diesel - Ibrahim Shaitu",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-31",
+     "amountNgn": 3000,
+     "category": "Fuel & lubricant",
+     "expenseType": "Transport to collect the Matrix diesel - Ibrahim Shaitu",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-31",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "A8a",
+   "group": "A",
+   "record": "Taj Aug bank charges ₦1,661.55",
+   "field": "new expense (Bank charges)",
+   "reason": "Taj Aug 2026 bank charges: stamp duty 650, transfer fees 698.75, SMS 312.80 (1,661.55)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-31",
+     "amountNgn": 1662,
+     "category": "Bank charges",
+     "expenseType": "Taj Aug 2026 bank charges: stamp duty 650, transfer fees 698.75, SMS 312.80 (1,661.55)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-TAJ-2026-08-31",
+     "treasuryAccountId": 2,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "A8b",
+   "group": "A",
+   "record": "Moniepoint Aug bank charges ₦6,455.50",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint Aug 2026 bank charges: stamp duty 6,250, VAT 205.50 (6,455.50)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-31",
+     "amountNgn": 6456,
+     "category": "Bank charges",
+     "expenseType": "Moniepoint Aug 2026 bank charges: stamp duty 6,250, VAT 205.50 (6,455.50)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-31",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "B10",
+   "group": "B",
+   "record": "RF-KD-26-9250 (QT-KD-26-0783, Tahir, ₦809,400 recorded paid 11 Jul to \"Abdulrahman\", TM-KD-26-1427 Moniepoint)",
+   "field": "refund payout",
+   "reason": "Bank: ₦720,000 to Tahir Isiya on 9 Aug (Moniepoint); ₦89,400 difference to explain",
+   "ops": [
+    {
+     "kind": "refundRepay",
+     "refundId": "RF-KD-26-9250",
+     "originalMovementId": "TM-KD-26-1427",
+     "expectedPaidNgn": 809400,
+     "reverseDate": "2026-07-11",
+     "payDate": "2026-08-09",
+     "amountNgn": 720000,
+     "treasuryAccountId": 4,
+     "payeeName": "Tahir Isiya",
+     "note": "₦89,400 difference to explain"
+    }
+   ]
+  },
+  {
+   "id": "B11",
+   "group": "B",
+   "record": "EXP-KD-26-0241 Matrix gas ₦357,033 (TM-KD-26-2142)",
+   "field": "treasury account + date",
+   "reason": "Bank: Moniepoint 15 Aug ₦357,033 to Matrix Energy \"gas\"; not on the Taj statement",
+   "ops": [
+    {
+     "kind": "moveTreasury",
+     "movementId": "TM-KD-26-2142",
+     "fromAccountId": 2,
+     "fromDate": "2026-08-17",
+     "toAccountId": 4,
+     "toDate": "2026-08-15",
+     "note": "Bank: Moniepoint 15 Aug ₦357,033 to Matrix Energy \"gas\"; not on the Taj statement"
+    }
+   ]
+  },
+  {
+   "id": "B12a",
+   "group": "B",
+   "record": "Security ₦10,000 (TM-KD-26-2327, PREQ-KD-26-0205)",
+   "field": "treasury account + date",
+   "reason": "Bank: Moniepoint 28 Aug ₦10,000 to Abubakar Mohammed (OPay); not on the Taj statement",
+   "ops": [
+    {
+     "kind": "moveTreasury",
+     "movementId": "TM-KD-26-2327",
+     "fromAccountId": 2,
+     "fromDate": "2026-08-29",
+     "toAccountId": 4,
+     "toDate": "2026-08-28",
+     "note": "Bank: Moniepoint 28 Aug ₦10,000 to Abubakar Mohammed (OPay); not on the Taj statement"
+    }
+   ]
+  },
+  {
+   "id": "B12b",
+   "group": "B",
+   "record": "Rafel transport ₦20,000 (TM-KD-26-2326, PREQ-KD-26-0210)",
+   "field": "treasury account + date",
+   "reason": "Bank: Moniepoint 14 Aug ₦20,000 to Rapheal Ewanger Orpin (OPay); not on the Taj statement",
+   "ops": [
+    {
+     "kind": "moveTreasury",
+     "movementId": "TM-KD-26-2326",
+     "fromAccountId": 2,
+     "fromDate": "2026-08-14",
+     "toAccountId": 4,
+     "toDate": "2026-08-14",
+     "note": "Bank: Moniepoint 14 Aug ₦20,000 to Rapheal Ewanger Orpin (OPay); not on the Taj statement"
+    }
+   ]
+  },
+  {
+   "id": "B12c",
+   "group": "B",
+   "record": "Tahir refund ₦15,350 (TM-KD-26-2162, RF-KD-26-9500)",
+   "field": "treasury account + date",
+   "reason": "Bank: Moniepoint 19 Aug ₦15,350 to Abdulrahman Uthman Sali (OPay), not to Tahir; not on the Taj statement",
+   "ops": [
+    {
+     "kind": "moveTreasury",
+     "movementId": "TM-KD-26-2162",
+     "fromAccountId": 2,
+     "fromDate": "2026-08-19",
+     "toAccountId": 4,
+     "toDate": "2026-08-19",
+     "note": "Bank: Moniepoint 19 Aug ₦15,350 to Abdulrahman Uthman Sali (OPay), not to Tahir; not on the Taj statement"
+    }
+   ]
+  },
+  {
+   "id": "B13c",
+   "group": "B",
+   "record": "Oga Ali ₦599,400 (LE-KD-26-1339, TM-KD-26-1904) + ₦447,680 (LE-KD-26-1347, TM-KD-26-1942), both already on Taj",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Taj 4 Aug credit NIP FRM CHANCELLORS FARMS LTD ₦1,062,080 (₦15,000 more than the two receipts)",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-04",
+     "amountNgn": 1062080,
+     "description": "NIP FRM CHANCELLORS FARMS LTD 28 pcs of — Paid by: Chancellors Farms Ltd",
+     "movementIds": [
+      "TM-KD-26-1904",
+      "TM-KD-26-1942"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "B14",
+   "group": "B",
+   "record": "Taj (treasury account 2) opening balance",
+   "field": "treasury_accounts.opening_balance_ngn",
+   "reason": "ERP Taj balance = bank ₦12,924,292.56 at 31 Jul 2026 (opening = 12,924,292.56 − ERP Taj movements to 31 Jul ₦56,354; whole naira)",
+   "ops": [
+    {
+     "kind": "setOpening",
+     "treasuryAccountId": 2,
+     "before": 21401720,
+     "after": 12867939
+    }
+   ]
+  }
+ ]
+}

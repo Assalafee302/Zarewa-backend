@@ -1,0 +1,5 @@
+2026-10-13T14:25:49.365Z === run3 start srv2078.hstgr.io:3306/u172282559_ZAREWA
+2026-10-13T14:28:16.002Z PRE-CHECK FAILED — nothing written:
+  work rows 119 ≠ 117
+  8394 live 1357 ≠ file 2645 (changed overnight)
+  8394 has movement after 12 Oct: MV-1791900987085-iasxp COIL_CONSUMPTION 2026-10-13

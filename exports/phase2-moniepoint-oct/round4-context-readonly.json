@@ -1,0 +1,1559 @@
+{
+ "takenAt": "2026-10-17T15:52:45.034Z",
+ "varMoves": [
+  {
+   "id": "TM-KD-26-3107",
+   "type": "RECEIPT_IN",
+   "a": 4,
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 204880,
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1986",
+   "counterparty_name": "aliyu mohd"
+  },
+  {
+   "id": "TM-KD-26-3142",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": -1840,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9728",
+   "counterparty_name": "Hussaini Adam"
+  },
+  {
+   "id": "TM-KD-26-3149",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": -72216,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9734",
+   "counterparty_name": "Alh Mahadi Turunku"
+  },
+  {
+   "id": "TM-KD-26-3150",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": -976,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9736",
+   "counterparty_name": "Yakubu Mktar"
+  },
+  {
+   "id": "TM-KD-26-3165",
+   "type": "RECEIPT_IN",
+   "a": 4,
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "amount_ngn": 43428,
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2026",
+   "counterparty_name": "shamsudeen"
+  },
+  {
+   "id": "TM-KD-26-3201",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": -1070020,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9770",
+   "counterparty_name": "Suleiman Zaria"
+  },
+  {
+   "id": "TM-KD-26-3207",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": -190670,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9771",
+   "counterparty_name": "Mohammed Alhassan"
+  },
+  {
+   "id": "TM-KD-26-3211",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": -1316,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9772",
+   "counterparty_name": "Sangir Dahiru"
+  },
+  {
+   "id": "TM-KD-26-3212",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": -2520,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9766",
+   "counterparty_name": "Jamilu Baba"
+  },
+  {
+   "id": "TM-KD-26-3213",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": -5080,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9764",
+   "counterparty_name": "Ibrahim Shuaibu"
+  },
+  {
+   "id": "TM-KD-26-3215",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": -39808,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9755",
+   "counterparty_name": "Shuaibu Roofer"
+  },
+  {
+   "id": "TM-KD-26-3228",
+   "type": "RECEIPT_IN",
+   "a": 4,
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "amount_ngn": 4000,
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2092",
+   "counterparty_name": "HAKIMI"
+  },
+  {
+   "id": "TM-KD-26-3229",
+   "type": "RECEIPT_IN",
+   "a": 4,
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 353184,
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2093",
+   "counterparty_name": "ENGR ATTAH NICHOLAS"
+  },
+  {
+   "id": "TM-KD-26-3232",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": -17680,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9778",
+   "counterparty_name": "Suleman Ibrahim"
+  },
+  {
+   "id": "TM-KD-26-3233",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": -23360,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9777",
+   "counterparty_name": "Adamu"
+  },
+  {
+   "id": "TM-KD-26-3241",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": -29100,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9780",
+   "counterparty_name": "Qs Abdullahi Tj"
+  },
+  {
+   "id": "TM-KD-26-3242",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": -20640,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9780",
+   "counterparty_name": "Qs Abdullahi Tj"
+  },
+  {
+   "id": "TM-KD-26-3244",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": -112056,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9781",
+   "counterparty_name": "Nasiru Salisu"
+  }
+ ],
+ "varRefunds": [
+  {
+   "refund_id": "RF-KD-26-9728",
+   "approved_amount_ngn": 26905,
+   "paid_amount_ngn": 21524,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9734",
+   "approved_amount_ngn": 74450,
+   "paid_amount_ngn": 72216,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9736",
+   "approved_amount_ngn": 1220,
+   "paid_amount_ngn": 976,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9755",
+   "approved_amount_ngn": 209760,
+   "paid_amount_ngn": 199808,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9764",
+   "approved_amount_ngn": 6350,
+   "paid_amount_ngn": 5080,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9766",
+   "approved_amount_ngn": 3150,
+   "paid_amount_ngn": 2520,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9770",
+   "approved_amount_ngn": 1625260,
+   "paid_amount_ngn": 1587120,
+   "status": "Partially paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9771",
+   "approved_amount_ngn": 429337,
+   "paid_amount_ngn": 381670,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9772",
+   "approved_amount_ngn": 1645,
+   "paid_amount_ngn": 1316,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9777",
+   "approved_amount_ngn": 62200,
+   "paid_amount_ngn": 56360,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9778",
+   "approved_amount_ngn": 22100,
+   "paid_amount_ngn": 17680,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9780",
+   "approved_amount_ngn": 55800,
+   "paid_amount_ngn": 49740,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  },
+  {
+   "refund_id": "RF-KD-26-9781",
+   "approved_amount_ngn": 257070,
+   "paid_amount_ngn": 228546,
+   "status": "Paid",
+   "remainder_closed_ngn": 0
+  }
+ ],
+ "varRefundLines": [
+  {
+   "id": "TM-KD-26-3141",
+   "source_id": "RF-KD-26-9728",
+   "amount_ngn": -19684
+  },
+  {
+   "id": "TM-KD-26-3142",
+   "source_id": "RF-KD-26-9728",
+   "amount_ngn": -1840
+  },
+  {
+   "id": "TM-KD-26-3149",
+   "source_id": "RF-KD-26-9734",
+   "amount_ngn": -72216
+  },
+  {
+   "id": "TM-KD-26-3150",
+   "source_id": "RF-KD-26-9736",
+   "amount_ngn": -976
+  },
+  {
+   "id": "TM-KD-26-3214",
+   "source_id": "RF-KD-26-9755",
+   "amount_ngn": -160000
+  },
+  {
+   "id": "TM-KD-26-3215",
+   "source_id": "RF-KD-26-9755",
+   "amount_ngn": -39808
+  },
+  {
+   "id": "TM-KD-26-3213",
+   "source_id": "RF-KD-26-9764",
+   "amount_ngn": -5080
+  },
+  {
+   "id": "TM-KD-26-3212",
+   "source_id": "RF-KD-26-9766",
+   "amount_ngn": -2520
+  },
+  {
+   "id": "TM-KD-26-3201",
+   "source_id": "RF-KD-26-9770",
+   "amount_ngn": -1070020
+  },
+  {
+   "id": "TM-KD-26-3204",
+   "source_id": "RF-KD-26-9770",
+   "amount_ngn": -417100
+  },
+  {
+   "id": "TM-KD-26-3322",
+   "source_id": "RF-KD-26-9770",
+   "amount_ngn": -100000
+  },
+  {
+   "id": "TM-KD-26-3205",
+   "source_id": "RF-KD-26-9771",
+   "amount_ngn": -191000
+  },
+  {
+   "id": "TM-KD-26-3207",
+   "source_id": "RF-KD-26-9771",
+   "amount_ngn": -190670
+  },
+  {
+   "id": "TM-KD-26-3211",
+   "source_id": "RF-KD-26-9772",
+   "amount_ngn": -1316
+  },
+  {
+   "id": "TM-KD-26-3231",
+   "source_id": "RF-KD-26-9777",
+   "amount_ngn": -33000
+  },
+  {
+   "id": "TM-KD-26-3233",
+   "source_id": "RF-KD-26-9777",
+   "amount_ngn": -23360
+  },
+  {
+   "id": "TM-KD-26-3232",
+   "source_id": "RF-KD-26-9778",
+   "amount_ngn": -17680
+  },
+  {
+   "id": "TM-KD-26-3241",
+   "source_id": "RF-KD-26-9780",
+   "amount_ngn": -29100
+  },
+  {
+   "id": "TM-KD-26-3242",
+   "source_id": "RF-KD-26-9780",
+   "amount_ngn": -20640
+  },
+  {
+   "id": "TM-KD-26-3243",
+   "source_id": "RF-KD-26-9781",
+   "amount_ngn": -100000
+  },
+  {
+   "id": "TM-KD-26-3244",
+   "source_id": "RF-KD-26-9781",
+   "amount_ngn": -112056
+  },
+  {
+   "id": "TM-KD-26-3350",
+   "source_id": "RF-KD-26-9781",
+   "amount_ngn": -16490
+  }
+ ],
+ "varReceipts": [
+  {
+   "id": "LE-KD-26-1986",
+   "amount_ngn": 204880,
+   "method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "status": "Cleared",
+   "quotation_ref": "QT-KD-26-1720",
+   "date_iso": "2026-10-05"
+  },
+  {
+   "id": "LE-KD-26-2026",
+   "amount_ngn": 43428,
+   "method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "status": "Cleared",
+   "quotation_ref": "QT-KD-26-1755",
+   "date_iso": "2026-10-07"
+  },
+  {
+   "id": "LE-KD-26-2092",
+   "amount_ngn": 4000,
+   "method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "status": "Cleared",
+   "quotation_ref": "QT-KD-26-1791",
+   "date_iso": "2026-10-12"
+  },
+  {
+   "id": "LE-KD-26-2093",
+   "amount_ngn": 353184,
+   "method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "status": "Cleared",
+   "quotation_ref": "QT-KD-26-1792",
+   "date_iso": "2026-10-12"
+  }
+ ],
+ "varReceiptLines": [
+  {
+   "id": "TM-KD-26-3107",
+   "source_id": "LE-KD-26-1986",
+   "amount_ngn": 204880
+  },
+  {
+   "id": "TM-KD-26-3165",
+   "source_id": "LE-KD-26-2026",
+   "amount_ngn": 43428
+  },
+  {
+   "id": "TM-KD-26-3228",
+   "source_id": "LE-KD-26-2092",
+   "amount_ngn": 4000
+  },
+  {
+   "id": "TM-KD-26-3229",
+   "source_id": "LE-KD-26-2093",
+   "amount_ngn": 353184
+  }
+ ],
+ "exp471": [
+  {
+   "expense_id": "EXP-KD-26-0471",
+   "expense_type": "Bank charges — Moniepoint, Oct 2026",
+   "amount_ngn": 8340,
+   "date": "2026-10-15",
+   "category": "Bank charges",
+   "payment_method": "Bank",
+   "reference": "BANK-MP-2026-10-15-2359",
+   "branch_id": "BR-KD",
+   "category_lane": "finance_compliance",
+   "tm": "TM-KD-26-3311"
+  }
+ ],
+ "exp471rev": [],
+ "qt1777": [
+  {
+   "id": "QT-KD-26-1777",
+   "total_ngn": 10218200,
+   "paid_ngn": 12000000,
+   "lines_json": "{\"products\":[{\"id\":\"L1791632758347-dqxx37g\",\"name\":\"Roofing Sheet\",\"qty\":\"1751\",\"unitPrice\":\"5700\",\"customLine\":false,\"gauge\":\"0.28mm\",\"colour\":\"Bush Green\",\"design\":\"Longspan (Indus6)\",\"profile\":\"Longspan (Indus6)\",\"lineKind\":\"roofing\",\"floorPricePerMeter\":5750,\"recommendedPricePerMeter\":5750}],\"accessories\":[{\"id\":\"L1791632758347-xr12j5t\",\"name\":\"Drive screw nail\",\"qty\":\"95\",\"unitPrice\":\"2500\",\"customLine\":false,\"setupQuoteItemId\":\"SQI-012\",\"unit\":\"pack\",\"inventoryProductId\":\"ACC-DRIVE-SCREW-PACK\",\"floorUnitPriceNgn\":0}],\"services\":[{\"id\":\"L1791632758347-l9la7o4\",\"name\":\"\",\"qty\":\"\",\"unitPrice\":\"\",\"customLine\":false,\"gauge\":\"0.28mm\",\"colour\":\"Bush Green\",\"design\":\"Longspan (Indus6)\",\"profile\":\"Longspan (Indus6)\",\"assigneeAssociatedStaffID\":\"\",\"assigneeCustomerID\":\"\",\"assigneeName\":\"\",\"assigneeRole\":\"\"}],\"materialGauge\":\"0.28mm\",\"materialColor\":\"Bush Green\",\"materialDesign\":\"Longspan (Indus6)\",\"materialTypeId\":\"MAT-002\"}"
+  }
+ ],
+ "nailsProduct": [
+  {
+   "product_id": "ACC-DRIVE-SCREW-PACK",
+   "name": "Drive screw nail (pack)",
+   "stock_level": 373,
+   "unit": "pack",
+   "branch_id": "BR-KD"
+  },
+  {
+   "product_id": "ACC-DRIVE-SCREW-PACK",
+   "name": "Drive screw nail (pack)",
+   "stock_level": -693.5,
+   "unit": "pack",
+   "branch_id": "BR-MDG"
+  },
+  {
+   "product_id": "ACC-DRIVE-SCREW-PACK",
+   "name": "Drive screw nail (pack)",
+   "stock_level": -50353.5,
+   "unit": "pack",
+   "branch_id": "BR-YL"
+  }
+ ],
+ "nailsMoves": [
+  {
+   "id": "MV-1790847511064-b6uk5",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-YL-26-0213",
+   "qty": -3300,
+   "date_iso": "2026-10-01",
+   "detail": "Drive screw nail · PRO-YL-26-0213 · QT-YL-26-0263"
+  },
+  {
+   "id": "MV-1790864823579-hq9co",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-YL-26-0220",
+   "qty": -150,
+   "date_iso": "2026-10-01",
+   "detail": "Drive screw nail · PRO-YL-26-0220 · QT-YL-26-0269"
+  },
+  {
+   "id": "MV-1791204917927-jndq9",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-YL-26-0228",
+   "qty": -3000,
+   "date_iso": "2026-10-05",
+   "detail": "Drive screw nail · PRO-YL-26-0228 · QT-YL-26-0278"
+  },
+  {
+   "id": "MV-1791296413436-fc00n",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1415",
+   "qty": -30,
+   "date_iso": "2026-10-06",
+   "detail": "Drive screw nail · PRO-KD-26-1415 · QT-KD-26-1715"
+  },
+  {
+   "id": "MV-1791386754713-l3meh",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1424",
+   "qty": -9,
+   "date_iso": "2026-10-07",
+   "detail": "Drive screw nail · PRO-KD-26-1424 · QT-KD-26-1724"
+  },
+  {
+   "id": "MV-1791387784072-2gjbj",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1435",
+   "qty": -15,
+   "date_iso": "2026-10-07",
+   "detail": "Drive screw nail · PRO-KD-26-1435 · QT-KD-26-1750"
+  },
+  {
+   "id": "MV-1791387817029-ftufy",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1440",
+   "qty": -4,
+   "date_iso": "2026-10-07",
+   "detail": "Drive screw nail · PRO-KD-26-1440 · QT-KD-26-1754"
+  },
+  {
+   "id": "MV-1791477535109-tfw0w",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1443",
+   "qty": -50,
+   "date_iso": "2026-10-08",
+   "detail": "Drive screw nail · PRO-KD-26-1443 · QT-KD-26-1757"
+  },
+  {
+   "id": "MV-26-00677",
+   "type": "ADJUSTMENT",
+   "ref": null,
+   "qty": 3144.2,
+   "date_iso": "2026-10-08",
+   "detail": "Physical count 5 Oct 2026 – opening stock reset"
+  },
+  {
+   "id": "MV-1791537644505-0an52",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1395",
+   "qty": -9,
+   "date_iso": "2026-10-09",
+   "detail": "Drive screw nail · PRO-KD-26-1395 · QT-KD-26-1692"
+  },
+  {
+   "id": "MV-1791537740086-k6tev",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1402",
+   "qty": -15,
+   "date_iso": "2026-10-09",
+   "detail": "Drive screw nail · PRO-KD-26-1402 · QT-KD-26-1700"
+  },
+  {
+   "id": "MV-1791547361909-dtx50",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1138",
+   "qty": -14,
+   "date_iso": "2026-10-09",
+   "detail": "Drive screw nail · PRO-KD-26-1138 · QT-KD-26-1371"
+  },
+  {
+   "id": "MV-1791547386854-dyjg9",
+   "type": "ACCESSORY_ISSUE_ADJUSTMENT",
+   "ref": "PRO-KD-26-1138",
+   "qty": 14,
+   "date_iso": "2026-10-09",
+   "detail": "Accessory correction (restore) · Drive screw nail · PRO-KD-26-1138 · QT-KD-26-1371"
+  },
+  {
+   "id": "MV-1791547386856-at2xi",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1138",
+   "qty": -14,
+   "date_iso": "2026-10-09",
+   "detail": "Drive screw nail · PRO-KD-26-1138 · QT-KD-26-1371"
+  },
+  {
+   "id": "MV-1791547430942-73dg9",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1168",
+   "qty": -6,
+   "date_iso": "2026-10-09",
+   "detail": "Drive screw nail · PRO-KD-26-1168 · QT-KD-26-1372"
+  },
+  {
+   "id": "MV-1791661446401-9xrya",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1456",
+   "qty": -95,
+   "date_iso": "2026-10-10",
+   "detail": "Drive screw nail · PRO-KD-26-1456 · QT-KD-26-1777"
+  },
+  {
+   "id": "MV-1791811257833-hjp11",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-YL-26-0274",
+   "qty": -2000,
+   "date_iso": "2026-10-12",
+   "detail": "Drive screw nail · PRO-YL-26-0274 · QT-YL-26-0344"
+  },
+  {
+   "id": "MV-1791812853314-hjv7j",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1466",
+   "qty": -8,
+   "date_iso": "2026-10-12",
+   "detail": "Drive screw nail · PRO-KD-26-1466 · QT-KD-26-1787"
+  },
+  {
+   "id": "MV-1791820116208-43crt",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1462",
+   "qty": -3,
+   "date_iso": "2026-10-12",
+   "detail": "Drive screw nail · PRO-KD-26-1462 · QT-KD-26-1783"
+  },
+  {
+   "id": "MV-1791905221366-1lm90",
+   "type": "ACCESSORY_ISSUE_ADJUSTMENT",
+   "ref": "PRO-KD-26-1456",
+   "qty": 95,
+   "date_iso": "2026-10-13",
+   "detail": "Accessory correction (restore) · Drive screw nail · PRO-KD-26-1456 · QT-KD-26-1777"
+  },
+  {
+   "id": "MV-1791905221371-gyw8d",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1456",
+   "qty": -35,
+   "date_iso": "2026-10-13",
+   "detail": "Drive screw nail · PRO-KD-26-1456 · QT-KD-26-1777"
+  },
+  {
+   "id": "MV-1791905495629-zy0uz",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1460",
+   "qty": -11,
+   "date_iso": "2026-10-13",
+   "detail": "Drive screw nail · PRO-KD-26-1460 · QT-KD-26-1781"
+  },
+  {
+   "id": "MV-1791905887984-f71sa",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1475",
+   "qty": -13,
+   "date_iso": "2026-10-13",
+   "detail": "Drive screw nail · PRO-KD-26-1475 · QT-KD-26-1796"
+  },
+  {
+   "id": "MV-1792079953417-oy99n",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-KD-26-1477",
+   "qty": -3,
+   "date_iso": "2026-10-15",
+   "detail": "Drive screw nail · PRO-KD-26-1477 · QT-KD-26-1798"
+  },
+  {
+   "id": "MV-1792165787965-wrxkp",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-YL-26-0276",
+   "qty": -350,
+   "date_iso": "2026-10-16",
+   "detail": "Drive screw nail · PRO-YL-26-0276 · QT-YL-26-0346"
+  },
+  {
+   "id": "MV-1792229505181-fyvf2",
+   "type": "ACCESSORY_ISSUE",
+   "ref": "PRO-YL-26-0300",
+   "qty": -150,
+   "date_iso": "2026-10-17",
+   "detail": "Drive screw nail · PRO-YL-26-0300 · QT-YL-26-0380"
+  }
+ ],
+ "deliveries1777": [],
+ "yusufBank": null,
+ "yusufCust": [
+  {
+   "customer_id": "CUS-KD-26-1113",
+   "name": "YUSUF ALIYU"
+  }
+ ],
+ "expCats": [],
+ "moves4Oct": [
+  {
+   "id": "TM-KD-26-3229",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 353184,
+   "counterparty_name": "ENGR ATTAH NICHOLAS",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2093"
+  },
+  {
+   "id": "TM-KD-26-3015",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 94300,
+   "counterparty_name": "RAMARAN GARKUWA",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1967"
+  },
+  {
+   "id": "TM-KD-26-2943",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 8000,
+   "counterparty_name": "ABU CAP",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1933"
+  },
+  {
+   "id": "TM-KD-26-2941",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 100000,
+   "counterparty_name": "Yakubu mktar",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1932"
+  },
+  {
+   "id": "TM-KD-26-2929",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 951000,
+   "counterparty_name": "NUHU SHITTU",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1931"
+  },
+  {
+   "id": "TM-KD-26-2926",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 7900,
+   "counterparty_name": "ENGR  ABUBAKAR GARBA  ZARIA",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1929"
+  },
+  {
+   "id": "TM-KD-26-2921",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 28200,
+   "counterparty_name": "mamuna cap NDC",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1928"
+  },
+  {
+   "id": "TM-KD-26-2920",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 130790,
+   "counterparty_name": "mamuna cap NDC",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1927"
+  },
+  {
+   "id": "TM-KD-26-2919",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "amount_ngn": 4700,
+   "counterparty_name": "Anas Cap Zaria",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1926"
+  },
+  {
+   "id": "TM-KD-26-3013",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "amount_ngn": 500000,
+   "counterparty_name": "ENGR RUFAI",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1966"
+  },
+  {
+   "id": "TM-KD-26-3011",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "amount_ngn": 208575,
+   "counterparty_name": "idris cap",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1965"
+  },
+  {
+   "id": "TM-KD-26-3002",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "amount_ngn": 25000,
+   "counterparty_name": "Ahmad muhd",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1964"
+  },
+  {
+   "id": "TM-KD-26-3001",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "amount_ngn": 1440000,
+   "counterparty_name": "Sanusi Dangiwa",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1963"
+  },
+  {
+   "id": "TM-KD-26-2995",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "amount_ngn": 9875,
+   "counterparty_name": "MUSTAPHA 2",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1961"
+  },
+  {
+   "id": "TM-KD-26-2994",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "amount_ngn": 189164,
+   "counterparty_name": "ZAMANI BIULDING SERVICES LTD",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1960"
+  },
+  {
+   "id": "TM-KD-26-2992",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "amount_ngn": 196350,
+   "counterparty_name": "ALH MAHADI TURUNKU",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1959"
+  },
+  {
+   "id": "TM-KD-26-2991",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "amount_ngn": 38800,
+   "counterparty_name": "adaMU IBRAHIM",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1958"
+  },
+  {
+   "id": "TM-KD-26-3235",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "amount_ngn": 1097920,
+   "counterparty_name": "jibril sule",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2102"
+  },
+  {
+   "id": "TM-KD-26-3234",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "amount_ngn": 1754070,
+   "counterparty_name": "jibril sule",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2100"
+  },
+  {
+   "id": "TM-KD-26-3075",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "amount_ngn": 24600,
+   "counterparty_name": "ibrahim shuaibu",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1977"
+  },
+  {
+   "id": "TM-KD-26-3038",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "amount_ngn": 9400,
+   "counterparty_name": "NASIRU MUHAMMAD",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1974"
+  },
+  {
+   "id": "TM-KD-26-3031",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "amount_ngn": 43200,
+   "counterparty_name": "aminu ndc",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1973"
+  },
+  {
+   "id": "TM-KD-26-3028",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "amount_ngn": 7000,
+   "counterparty_name": "jamilu baba",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1970"
+  },
+  {
+   "id": "TM-KD-26-3026",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "amount_ngn": 42000,
+   "counterparty_name": "NUHU SHITTU",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1968"
+  },
+  {
+   "id": "TM-KD-26-3100",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-04T12:00:00.000Z",
+   "amount_ngn": 4898500,
+   "counterparty_name": "Suleiman zaria",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1979"
+  },
+  {
+   "id": "TM-KD-26-3120",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 872000,
+   "counterparty_name": "Dr Bashir",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2003"
+  },
+  {
+   "id": "TM-KD-26-3110",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 4038,
+   "counterparty_name": "aliyu mohd",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1988"
+  },
+  {
+   "id": "TM-KD-26-3108",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 94325,
+   "counterparty_name": "aliyu mohd",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1987"
+  },
+  {
+   "id": "TM-KD-26-3107",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 204880,
+   "counterparty_name": "aliyu mohd",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1986"
+  },
+  {
+   "id": "TM-KD-26-3105",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 59250,
+   "counterparty_name": "babalele",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1983"
+  },
+  {
+   "id": "TM-KD-26-3104",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 1076000,
+   "counterparty_name": "auwal ismail",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1982"
+  },
+  {
+   "id": "TM-KD-26-3103",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 4000,
+   "counterparty_name": "Sanusi Dangiwa",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1981"
+  },
+  {
+   "id": "TM-KD-26-3101",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "amount_ngn": 394330,
+   "counterparty_name": "hussaini adam",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1980"
+  },
+  {
+   "id": "TM-KD-26-3153",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 2000000,
+   "counterparty_name": "AMINU IBRAHIM",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2022"
+  },
+  {
+   "id": "TM-KD-26-3152",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 1200000,
+   "counterparty_name": "ibrahim zaria",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2021"
+  },
+  {
+   "id": "TM-KD-26-3137",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 5986200,
+   "counterparty_name": "yunusa driver",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2016"
+  },
+  {
+   "id": "TM-KD-26-3134",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 91250,
+   "counterparty_name": "mustapha",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2015"
+  },
+  {
+   "id": "TM-KD-26-3133",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 9200,
+   "counterparty_name": "ibrahim mahmud",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2014"
+  },
+  {
+   "id": "TM-KD-26-3132",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 63400,
+   "counterparty_name": "ibrahim mahmud",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2014"
+  },
+  {
+   "id": "TM-KD-26-3131",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 19250,
+   "counterparty_name": "Abba Yusuf baita",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2013"
+  },
+  {
+   "id": "TM-KD-26-3130",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 144000,
+   "counterparty_name": "Salis Kabir capenter",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2012"
+  },
+  {
+   "id": "TM-KD-26-3129",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 3654630,
+   "counterparty_name": "AMINU IBRAHIM",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2011"
+  },
+  {
+   "id": "TM-KD-26-3126",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 112500,
+   "counterparty_name": "auwal idiris",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2007"
+  },
+  {
+   "id": "TM-KD-26-3125",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 57750,
+   "counterparty_name": "babalele",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2006"
+  },
+  {
+   "id": "TM-KD-26-3124",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 34650,
+   "counterparty_name": "SURAJO",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2005"
+  },
+  {
+   "id": "TM-KD-26-3123",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": 6400,
+   "counterparty_name": "SALISU JIBRIL",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2004"
+  },
+  {
+   "id": "TM-KD-26-3170",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "amount_ngn": 1209600,
+   "counterparty_name": "yohanna lbrahim",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2032"
+  },
+  {
+   "id": "TM-KD-26-3165",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "amount_ngn": 43428,
+   "counterparty_name": "shamsudeen",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2026"
+  },
+  {
+   "id": "TM-KD-26-3164",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "amount_ngn": 10000,
+   "counterparty_name": "HARUNA MOHD",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2025"
+  },
+  {
+   "id": "TM-KD-26-3156",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "amount_ngn": 147000,
+   "counterparty_name": "Abdullahi",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2024"
+  },
+  {
+   "id": "TM-KD-26-3155",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "amount_ngn": 448000,
+   "counterparty_name": "HARUNA MOHD",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2023"
+  },
+  {
+   "id": "TM-KD-26-3154",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "amount_ngn": 1654630,
+   "counterparty_name": "AMINU IBRAHIM",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2022"
+  },
+  {
+   "id": "TM-KD-26-3206",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": 1256550,
+   "counterparty_name": "nasiru salisu",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2070"
+  },
+  {
+   "id": "TM-KD-26-3180",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": 965000,
+   "counterparty_name": "HAKIMI",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2042"
+  },
+  {
+   "id": "TM-KD-26-3178",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": 1141865,
+   "counterparty_name": "Ocholi Onuche",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2040"
+  },
+  {
+   "id": "TM-KD-26-3176",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": 44000,
+   "counterparty_name": "musa auwal",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2038"
+  },
+  {
+   "id": "TM-KD-26-3173",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": 55000,
+   "counterparty_name": "AMINU IBRAHIM",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2037"
+  },
+  {
+   "id": "TM-KD-26-3172",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": 52500,
+   "counterparty_name": "engr ali jaji",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2034"
+  },
+  {
+   "id": "TM-KD-26-3171",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": 15850,
+   "counterparty_name": "abubakar musa",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2033"
+  },
+  {
+   "id": "TM-KD-26-3198",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-09T12:00:00.000Z",
+   "amount_ngn": 4600,
+   "counterparty_name": "Abdullahi",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2064"
+  },
+  {
+   "id": "TM-KD-26-3189",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-09T12:00:00.000Z",
+   "amount_ngn": 299200,
+   "counterparty_name": "BUHARI CAP",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2055"
+  },
+  {
+   "id": "TM-KD-26-3186",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-09T12:00:00.000Z",
+   "amount_ngn": 149100,
+   "counterparty_name": "SULEMAN IBRAHIM",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2052"
+  },
+  {
+   "id": "TM-KD-26-3185",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-09T12:00:00.000Z",
+   "amount_ngn": 36500,
+   "counterparty_name": "SULEMAN BELLO ZARIA",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2051"
+  },
+  {
+   "id": "TM-KD-26-3181",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-09T12:00:00.000Z",
+   "amount_ngn": 1001540,
+   "counterparty_name": "mohammed haruna",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2044"
+  },
+  {
+   "id": "TM-KD-26-3199",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": 12000,
+   "counterparty_name": "SULEMAN IBRAHIM",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2065"
+  },
+  {
+   "id": "TM-KD-26-3196",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": 3257100,
+   "counterparty_name": "Suleiman zaria",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2061"
+  },
+  {
+   "id": "TM-KD-26-3194",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": 121730,
+   "counterparty_name": "SANGIR DAHIRU",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2058"
+  },
+  {
+   "id": "TM-KD-26-3193",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-10T12:00:00.000Z",
+   "amount_ngn": 73150,
+   "counterparty_name": "DAN SOKOTO",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2057"
+  },
+  {
+   "id": "TM-KD-26-3228",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "amount_ngn": 4000,
+   "counterparty_name": "HAKIMI",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2092"
+  },
+  {
+   "id": "TM-KD-26-3225",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "amount_ngn": 24800,
+   "counterparty_name": "SHAMSUDEEN YUSUF",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2087"
+  },
+  {
+   "id": "TM-KD-26-3224",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "amount_ngn": 868300,
+   "counterparty_name": "yahya abdullahi",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2086"
+  },
+  {
+   "id": "TM-KD-26-3221",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "amount_ngn": 15400,
+   "counterparty_name": "bashir cap",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2084"
+  },
+  {
+   "id": "TM-KD-26-3220",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "amount_ngn": 73000,
+   "counterparty_name": "sani iliyasu",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2083"
+  },
+  {
+   "id": "TM-KD-26-3219",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "amount_ngn": 18250,
+   "counterparty_name": "HAKIMI",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2082"
+  },
+  {
+   "id": "TM-KD-26-3218",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "amount_ngn": 356430,
+   "counterparty_name": "oga ismail  a airforce",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2081"
+  },
+  {
+   "id": "TM-KD-26-3247",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": 153100,
+   "counterparty_name": "RABIU",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2118"
+  },
+  {
+   "id": "TM-KD-26-3239",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": 16975,
+   "counterparty_name": "aliyu kabiru",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2112"
+  },
+  {
+   "id": "TM-KD-26-3238",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": 278220,
+   "counterparty_name": "HANNATU THOMAS",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2108"
+  },
+  {
+   "id": "TM-KD-26-3237",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": 1395000,
+   "counterparty_name": "YAHYA SOJA",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2107"
+  },
+  {
+   "id": "TM-KD-26-3236",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": 1205960,
+   "counterparty_name": "Qs Abdullahi Tj",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2103"
+  },
+  {
+   "id": "TM-KD-26-3230",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-13T12:00:00.000Z",
+   "amount_ngn": 146250,
+   "counterparty_name": "IBRAHIM  WELDER",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2094"
+  },
+  {
+   "id": "TM-KD-26-3321",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "amount_ngn": 464000,
+   "counterparty_name": "Adam suleiman",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2150"
+  },
+  {
+   "id": "TM-KD-26-3320",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "amount_ngn": 1250000,
+   "counterparty_name": "Adam suleiman",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2150"
+  },
+  {
+   "id": "TM-KD-26-3285",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "amount_ngn": 191810,
+   "counterparty_name": "mudasir illiyasu",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2127"
+  },
+  {
+   "id": "TM-KD-26-3252",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "amount_ngn": 14400,
+   "counterparty_name": "yahya abdullahi",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2122"
+  },
+  {
+   "id": "TM-KD-26-3251",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "amount_ngn": 69300,
+   "counterparty_name": "Tijjani Aliyu",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2121"
+  },
+  {
+   "id": "TM-KD-26-3250",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "amount_ngn": 2240,
+   "counterparty_name": "sani haruna",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2120"
+  },
+  {
+   "id": "TM-KD-26-3249",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "amount_ngn": 84000,
+   "counterparty_name": "sani haruna",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2120"
+  },
+  {
+   "id": "TM-KD-26-3248",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "amount_ngn": 1574050,
+   "counterparty_name": "usman aliyu",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2119"
+  },
+  {
+   "id": "TM-KD-26-3296",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-15T12:00:00.000Z",
+   "amount_ngn": 49540,
+   "counterparty_name": "IMRAN IBRAHEEM JAFAR",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2135"
+  },
+  {
+   "id": "TM-KD-26-3290",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-15T12:00:00.000Z",
+   "amount_ngn": 19400,
+   "counterparty_name": "mudasir illiyasu",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2131"
+  },
+  {
+   "id": "TM-KD-26-3289",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-15T12:00:00.000Z",
+   "amount_ngn": 9875,
+   "counterparty_name": "DAYYABU LAWAL",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2130"
+  },
+  {
+   "id": "TM-KD-26-3287",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-15T12:00:00.000Z",
+   "amount_ngn": 193410,
+   "counterparty_name": "HARUNA USMAN INDA",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2129"
+  },
+  {
+   "id": "TM-KD-26-3286",
+   "type": "RECEIPT_IN",
+   "posted_at_iso": "2026-10-15T12:00:00.000Z",
+   "amount_ngn": 3000,
+   "counterparty_name": "Tijjani Aliyu",
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-2128"
+  }
+ ]
+}

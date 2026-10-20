@@ -1,0 +1,1657 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-14T23:52:09.559Z",
+ "plan": "round3-2026-10-15.part1.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "L-TJ-000",
+   "group": "A",
+   "record": "TJ-000 Taj 2026-08-02 ₦451,770",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1019"
+  },
+  {
+   "id": "L-TJ-001",
+   "group": "A",
+   "record": "TJ-001 Taj 2026-08-04 ₦1,062,080",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0991"
+  },
+  {
+   "id": "L-TJ-002",
+   "group": "A",
+   "record": "TJ-002 Taj 2026-08-04 ₦6,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1020"
+  },
+  {
+   "id": "L-TJ-003",
+   "group": "A",
+   "record": "TJ-003 Taj 2026-08-04 ₦-1,300,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1021"
+  },
+  {
+   "id": "L-TJ-005",
+   "group": "A",
+   "record": "TJ-005 Taj 2026-08-05 ₦8,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1022"
+  },
+  {
+   "id": "L-TJ-006",
+   "group": "A",
+   "record": "TJ-006 Taj 2026-08-06 ₦5,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1023"
+  },
+  {
+   "id": "L-TJ-007",
+   "group": "A",
+   "record": "TJ-007 Taj 2026-08-06 ₦219,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1024"
+  },
+  {
+   "id": "L-TJ-008",
+   "group": "A",
+   "record": "TJ-008 Taj 2026-08-06 ₦200,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1025"
+  },
+  {
+   "id": "L-TJ-009",
+   "group": "A",
+   "record": "TJ-009 Taj 2026-08-07 ₦5,599,397",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1026"
+  },
+  {
+   "id": "L-TJ-010",
+   "group": "A",
+   "record": "TJ-010 Taj 2026-08-07 ₦-3,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1027"
+  },
+  {
+   "id": "L-TJ-011",
+   "group": "A",
+   "record": "TJ-011 Taj 2026-08-07 ₦-26,221,440",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1028"
+  },
+  {
+   "id": "L-TJ-014",
+   "group": "A",
+   "record": "TJ-014 Taj 2026-08-07 ₦-8,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1029"
+  },
+  {
+   "id": "L-TJ-016",
+   "group": "A",
+   "record": "TJ-016 Taj 2026-08-09 ₦742,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1030"
+  },
+  {
+   "id": "L-TJ-017",
+   "group": "A",
+   "record": "TJ-017 Taj 2026-08-10 ₦5,689,333",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0992"
+  },
+  {
+   "id": "L-TJ-018",
+   "group": "A",
+   "record": "TJ-018 Taj 2026-08-10 ₦2,036,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1031"
+  },
+  {
+   "id": "L-TJ-019",
+   "group": "A",
+   "record": "TJ-019 Taj 2026-08-10 ₦4,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1032"
+  },
+  {
+   "id": "L-TJ-020",
+   "group": "A",
+   "record": "TJ-020 Taj 2026-08-10 ₦-4,288,520",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1033"
+  },
+  {
+   "id": "L-TJ-021",
+   "group": "A",
+   "record": "TJ-021 Taj 2026-08-10 ₦-7,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1034"
+  },
+  {
+   "id": "L-TJ-022",
+   "group": "A",
+   "record": "TJ-022 Taj 2026-08-10 ₦-1,160,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1035"
+  },
+  {
+   "id": "L-TJ-026",
+   "group": "A",
+   "record": "TJ-026 Taj 2026-08-11 ₦486,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0993"
+  },
+  {
+   "id": "L-TJ-027",
+   "group": "A",
+   "record": "TJ-027 Taj 2026-08-11 ₦17,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0994"
+  },
+  {
+   "id": "L-TJ-028",
+   "group": "A",
+   "record": "TJ-028 Taj 2026-08-12 ₦3,220,160",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1036"
+  },
+  {
+   "id": "L-TJ-029",
+   "group": "A",
+   "record": "TJ-029 Taj 2026-08-14 ₦-4,500,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1037"
+  },
+  {
+   "id": "L-TJ-031",
+   "group": "A",
+   "record": "TJ-031 Taj 2026-08-14 ₦2,295,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0995"
+  },
+  {
+   "id": "L-TJ-032",
+   "group": "A",
+   "record": "TJ-032 Taj 2026-08-15 ₦1,132,400",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0996"
+  },
+  {
+   "id": "L-TJ-033",
+   "group": "A",
+   "record": "TJ-033 Taj 2026-08-15 ₦-2,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1038"
+  },
+  {
+   "id": "L-TJ-034",
+   "group": "A",
+   "record": "TJ-034 Taj 2026-08-15 ₦-300,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1039"
+  },
+  {
+   "id": "L-TJ-037",
+   "group": "A",
+   "record": "TJ-037 Taj 2026-08-18 ₦1,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1040"
+  },
+  {
+   "id": "L-TJ-038",
+   "group": "A",
+   "record": "TJ-038 Taj 2026-08-19 ₦569,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1041"
+  },
+  {
+   "id": "L-TJ-039",
+   "group": "A",
+   "record": "TJ-039 Taj 2026-08-19 ₦36,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0997"
+  },
+  {
+   "id": "L-TJ-040",
+   "group": "A",
+   "record": "TJ-040 Taj 2026-08-20 ₦2,428,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1042"
+  },
+  {
+   "id": "L-TJ-041",
+   "group": "A",
+   "record": "TJ-041 Taj 2026-08-21 ₦-2,700,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1043"
+  },
+  {
+   "id": "L-TJ-044",
+   "group": "A",
+   "record": "TJ-044 Taj 2026-08-24 ₦975,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0998"
+  },
+  {
+   "id": "L-TJ-045",
+   "group": "A",
+   "record": "TJ-045 Taj 2026-08-24 ₦-1,620,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1044"
+  },
+  {
+   "id": "L-TJ-047",
+   "group": "A",
+   "record": "TJ-047 Taj 2026-08-24 ₦1,300,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-0999"
+  },
+  {
+   "id": "L-TJ-048",
+   "group": "A",
+   "record": "TJ-048 Taj 2026-08-27 ₦339,100",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1000"
+  },
+  {
+   "id": "L-TJ-049",
+   "group": "A",
+   "record": "TJ-049 Taj 2026-08-29 ₦-3,500,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1045"
+  },
+  {
+   "id": "L-MP-0000",
+   "group": "A",
+   "record": "MP-0000 Moniepoint 2026-08-01 ₦97,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1046"
+  },
+  {
+   "id": "L-MP-0001",
+   "group": "A",
+   "record": "MP-0001 Moniepoint 2026-08-01 ₦31,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1047"
+  },
+  {
+   "id": "L-MP-0002",
+   "group": "A",
+   "record": "MP-0002 Moniepoint 2026-08-01 ₦455,350",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1048"
+  },
+  {
+   "id": "L-MP-0003",
+   "group": "A",
+   "record": "MP-0003 Moniepoint 2026-08-01 ₦97,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1049"
+  },
+  {
+   "id": "L-MP-0004",
+   "group": "A",
+   "record": "MP-0004 Moniepoint 2026-08-01 ₦4,975",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1050"
+  },
+  {
+   "id": "L-MP-0005",
+   "group": "A",
+   "record": "MP-0005 Moniepoint 2026-08-01 ₦158,300",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1051"
+  },
+  {
+   "id": "L-MP-0006",
+   "group": "A",
+   "record": "MP-0006 Moniepoint 2026-08-01 ₦5,370",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1052"
+  },
+  {
+   "id": "L-MP-0007",
+   "group": "A",
+   "record": "MP-0007 Moniepoint 2026-08-01 ₦3,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1053"
+  },
+  {
+   "id": "L-MP-0009",
+   "group": "A",
+   "record": "MP-0009 Moniepoint 2026-08-01 ₦-50,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1054"
+  },
+  {
+   "id": "L-MP-0011",
+   "group": "A",
+   "record": "MP-0011 Moniepoint 2026-08-01 ₦200,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1055"
+  },
+  {
+   "id": "L-MP-0012",
+   "group": "A",
+   "record": "MP-0012 Moniepoint 2026-08-01 ₦70,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1056"
+  },
+  {
+   "id": "L-MP-0013",
+   "group": "A",
+   "record": "MP-0013 Moniepoint 2026-08-01 ₦413,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1057"
+  },
+  {
+   "id": "L-MP-0014",
+   "group": "A",
+   "record": "MP-0014 Moniepoint 2026-08-01 ₦224,540",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1058"
+  },
+  {
+   "id": "L-MP-0015",
+   "group": "A",
+   "record": "MP-0015 Moniepoint 2026-08-01 ₦22,780",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1059"
+  },
+  {
+   "id": "L-MP-0017",
+   "group": "A",
+   "record": "MP-0017 Moniepoint 2026-08-01 ₦-250,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1060"
+  },
+  {
+   "id": "L-MP-0022",
+   "group": "A",
+   "record": "MP-0022 Moniepoint 2026-08-02 ₦84,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1061"
+  },
+  {
+   "id": "L-MP-0023",
+   "group": "A",
+   "record": "MP-0023 Moniepoint 2026-08-02 ₦474,800",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1062"
+  },
+  {
+   "id": "L-MP-0024",
+   "group": "A",
+   "record": "MP-0024 Moniepoint 2026-08-03 ₦76,800",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1001"
+  },
+  {
+   "id": "L-MP-0027",
+   "group": "A",
+   "record": "MP-0027 Moniepoint 2026-08-03 ₦885,725",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1063"
+  },
+  {
+   "id": "L-MP-0028",
+   "group": "A",
+   "record": "MP-0028 Moniepoint 2026-08-03 ₦13,930",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1064"
+  },
+  {
+   "id": "L-MP-0029",
+   "group": "A",
+   "record": "MP-0029 Moniepoint 2026-08-03 ₦405,360",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1065"
+  },
+  {
+   "id": "L-MP-0030",
+   "group": "A",
+   "record": "MP-0030 Moniepoint 2026-08-03 ₦49,350",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1066"
+  },
+  {
+   "id": "L-MP-0031",
+   "group": "A",
+   "record": "MP-0031 Moniepoint 2026-08-04 ₦10,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1067"
+  },
+  {
+   "id": "L-MP-0032",
+   "group": "A",
+   "record": "MP-0032 Moniepoint 2026-08-04 ₦7,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1068"
+  },
+  {
+   "id": "L-MP-0033",
+   "group": "A",
+   "record": "MP-0033 Moniepoint 2026-08-04 ₦500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1069"
+  },
+  {
+   "id": "L-MP-0034",
+   "group": "A",
+   "record": "MP-0034 Moniepoint 2026-08-04 ₦74,800",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1070"
+  },
+  {
+   "id": "L-MP-0035",
+   "group": "A",
+   "record": "MP-0035 Moniepoint 2026-08-04 ₦238,700",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1002"
+  },
+  {
+   "id": "L-MP-0036",
+   "group": "A",
+   "record": "MP-0036 Moniepoint 2026-08-04 ₦751,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1071"
+  },
+  {
+   "id": "L-MP-0037",
+   "group": "A",
+   "record": "MP-0037 Moniepoint 2026-08-04 ₦3,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1072"
+  },
+  {
+   "id": "L-MP-0038",
+   "group": "A",
+   "record": "MP-0038 Moniepoint 2026-08-04 ₦300,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1003"
+  },
+  {
+   "id": "L-MP-0039",
+   "group": "A",
+   "record": "MP-0039 Moniepoint 2026-08-04 ₦613,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1073"
+  },
+  {
+   "id": "L-MP-0040",
+   "group": "A",
+   "record": "MP-0040 Moniepoint 2026-08-04 ₦7,460",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1074"
+  },
+  {
+   "id": "L-MP-0041",
+   "group": "A",
+   "record": "MP-0041 Moniepoint 2026-08-04 ₦234,880",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1075"
+  },
+  {
+   "id": "L-MP-0042",
+   "group": "A",
+   "record": "MP-0042 Moniepoint 2026-08-04 ₦15,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1076"
+  },
+  {
+   "id": "L-MP-0043",
+   "group": "A",
+   "record": "MP-0043 Moniepoint 2026-08-04 ₦449,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1077"
+  },
+  {
+   "id": "L-MP-0044",
+   "group": "A",
+   "record": "MP-0044 Moniepoint 2026-08-04 ₦100,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1078"
+  },
+  {
+   "id": "L-MP-0045",
+   "group": "A",
+   "record": "MP-0045 Moniepoint 2026-08-04 ₦50,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1079"
+  },
+  {
+   "id": "L-MP-0046",
+   "group": "A",
+   "record": "MP-0046 Moniepoint 2026-08-04 ₦40,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1080"
+  },
+  {
+   "id": "L-MP-0052",
+   "group": "A",
+   "record": "MP-0052 Moniepoint 2026-08-04 ₦-312,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1081"
+  },
+  {
+   "id": "L-MP-0054",
+   "group": "A",
+   "record": "MP-0054 Moniepoint 2026-08-04 ₦-6,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1082"
+  },
+  {
+   "id": "L-MP-0059",
+   "group": "A",
+   "record": "MP-0059 Moniepoint 2026-08-05 ₦15,350",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1083"
+  },
+  {
+   "id": "L-MP-0060",
+   "group": "A",
+   "record": "MP-0060 Moniepoint 2026-08-05 ₦313,300",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1084"
+  },
+  {
+   "id": "L-MP-0061",
+   "group": "A",
+   "record": "MP-0061 Moniepoint 2026-08-05 ₦50,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1085"
+  },
+  {
+   "id": "L-MP-0062",
+   "group": "A",
+   "record": "MP-0062 Moniepoint 2026-08-05 ₦10,840",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1086"
+  },
+  {
+   "id": "L-MP-0066",
+   "group": "A",
+   "record": "MP-0066 Moniepoint 2026-08-05 ₦46,080",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1087"
+  },
+  {
+   "id": "L-MP-0067",
+   "group": "A",
+   "record": "MP-0067 Moniepoint 2026-08-05 ₦99,350",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1088"
+  },
+  {
+   "id": "L-MP-0073",
+   "group": "A",
+   "record": "MP-0073 Moniepoint 2026-08-05 ₦2,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1089"
+  },
+  {
+   "id": "L-MP-0074",
+   "group": "A",
+   "record": "MP-0074 Moniepoint 2026-08-05 ₦596,400",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1090"
+  },
+  {
+   "id": "L-MP-0077",
+   "group": "A",
+   "record": "MP-0077 Moniepoint 2026-08-05 ₦-80,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1091"
+  },
+  {
+   "id": "L-MP-0078",
+   "group": "A",
+   "record": "MP-0078 Moniepoint 2026-08-06 ₦165,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1092"
+  },
+  {
+   "id": "L-MP-0079",
+   "group": "A",
+   "record": "MP-0079 Moniepoint 2026-08-06 ₦1,990",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1093"
+  },
+  {
+   "id": "L-MP-0081",
+   "group": "A",
+   "record": "MP-0081 Moniepoint 2026-08-06 ₦950,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1094"
+  },
+  {
+   "id": "L-MP-0082",
+   "group": "A",
+   "record": "MP-0082 Moniepoint 2026-08-06 ₦75,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1095"
+  },
+  {
+   "id": "L-MP-0083",
+   "group": "A",
+   "record": "MP-0083 Moniepoint 2026-08-06 ₦-20,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1096"
+  },
+  {
+   "id": "L-MP-0086",
+   "group": "A",
+   "record": "MP-0086 Moniepoint 2026-08-06 ₦158,760",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1004"
+  },
+  {
+   "id": "L-MP-0087",
+   "group": "A",
+   "record": "MP-0087 Moniepoint 2026-08-06 ₦48,400",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1097"
+  },
+  {
+   "id": "L-MP-0088",
+   "group": "A",
+   "record": "MP-0088 Moniepoint 2026-08-06 ₦29,930",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1098"
+  },
+  {
+   "id": "L-MP-0089",
+   "group": "A",
+   "record": "MP-0089 Moniepoint 2026-08-06 ₦189,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1099"
+  },
+  {
+   "id": "L-MP-0094",
+   "group": "A",
+   "record": "MP-0094 Moniepoint 2026-08-06 ₦-45,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1100"
+  },
+  {
+   "id": "L-MP-0109",
+   "group": "A",
+   "record": "MP-0109 Moniepoint 2026-08-06 ₦-11,600",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1101"
+  },
+  {
+   "id": "L-MP-0114",
+   "group": "A",
+   "record": "MP-0114 Moniepoint 2026-08-06 ₦16,915",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1102"
+  },
+  {
+   "id": "L-MP-0118",
+   "group": "A",
+   "record": "MP-0118 Moniepoint 2026-08-07 ₦231,180",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1103"
+  },
+  {
+   "id": "L-MP-0119",
+   "group": "A",
+   "record": "MP-0119 Moniepoint 2026-08-07 ₦365,270",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1104"
+  },
+  {
+   "id": "L-MP-0121",
+   "group": "A",
+   "record": "MP-0121 Moniepoint 2026-08-07 ₦-130,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1105"
+  },
+  {
+   "id": "L-MP-0126",
+   "group": "A",
+   "record": "MP-0126 Moniepoint 2026-08-07 ₦2,500,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1106"
+  },
+  {
+   "id": "L-MP-0129",
+   "group": "A",
+   "record": "MP-0129 Moniepoint 2026-08-07 ₦-264,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1107"
+  },
+  {
+   "id": "L-MP-0130",
+   "group": "A",
+   "record": "MP-0130 Moniepoint 2026-08-07 ₦62,300",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1108"
+  },
+  {
+   "id": "L-MP-0131",
+   "group": "A",
+   "record": "MP-0131 Moniepoint 2026-08-07 ₦362,510",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1109"
+  },
+  {
+   "id": "L-MP-0132",
+   "group": "A",
+   "record": "MP-0132 Moniepoint 2026-08-07 ₦145,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1110"
+  },
+  {
+   "id": "L-MP-0134",
+   "group": "A",
+   "record": "MP-0134 Moniepoint 2026-08-07 ₦-350,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1111"
+  },
+  {
+   "id": "L-MP-0135",
+   "group": "A",
+   "record": "MP-0135 Moniepoint 2026-08-07 ₦-8,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1112"
+  },
+  {
+   "id": "L-MP-0138",
+   "group": "A",
+   "record": "MP-0138 Moniepoint 2026-08-07 ₦-50,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1113"
+  },
+  {
+   "id": "L-MP-0141",
+   "group": "A",
+   "record": "MP-0141 Moniepoint 2026-08-07 ₦-20,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1114"
+  },
+  {
+   "id": "L-MP-0143",
+   "group": "A",
+   "record": "MP-0143 Moniepoint 2026-08-08 ₦7,160",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1115"
+  },
+  {
+   "id": "L-MP-0144",
+   "group": "A",
+   "record": "MP-0144 Moniepoint 2026-08-08 ₦390,605",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1116"
+  },
+  {
+   "id": "L-MP-0145",
+   "group": "A",
+   "record": "MP-0145 Moniepoint 2026-08-08 ₦192,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1117"
+  },
+  {
+   "id": "L-MP-0146",
+   "group": "A",
+   "record": "MP-0146 Moniepoint 2026-08-08 ₦-142,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1118"
+  },
+  {
+   "id": "L-MP-0154",
+   "group": "A",
+   "record": "MP-0154 Moniepoint 2026-08-08 ₦250,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1119"
+  },
+  {
+   "id": "L-MP-0155",
+   "group": "A",
+   "record": "MP-0155 Moniepoint 2026-08-08 ₦73,950",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1005"
+  },
+  {
+   "id": "L-MP-0156",
+   "group": "A",
+   "record": "MP-0156 Moniepoint 2026-08-08 ₦60,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1006"
+  },
+  {
+   "id": "L-MP-0157",
+   "group": "A",
+   "record": "MP-0157 Moniepoint 2026-08-08 ₦-4,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1120"
+  },
+  {
+   "id": "L-MP-0159",
+   "group": "A",
+   "record": "MP-0159 Moniepoint 2026-08-08 ₦-73,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1121"
+  },
+  {
+   "id": "L-MP-0164",
+   "group": "A",
+   "record": "MP-0164 Moniepoint 2026-08-08 ₦-50,700",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1122"
+  },
+  {
+   "id": "L-MP-0165",
+   "group": "A",
+   "record": "MP-0165 Moniepoint 2026-08-09 ₦-70,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1123"
+  },
+  {
+   "id": "L-MP-0168",
+   "group": "A",
+   "record": "MP-0168 Moniepoint 2026-08-09 ₦-720,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1124"
+  },
+  {
+   "id": "L-MP-0170",
+   "group": "A",
+   "record": "MP-0170 Moniepoint 2026-08-09 ₦49,185",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1125"
+  },
+  {
+   "id": "L-MP-0171",
+   "group": "A",
+   "record": "MP-0171 Moniepoint 2026-08-09 ₦213,444",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1126"
+  },
+  {
+   "id": "L-MP-0172",
+   "group": "A",
+   "record": "MP-0172 Moniepoint 2026-08-10 ₦17,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1127"
+  },
+  {
+   "id": "L-MP-0173",
+   "group": "A",
+   "record": "MP-0173 Moniepoint 2026-08-10 ₦106,250",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1128"
+  },
+  {
+   "id": "L-MP-0176",
+   "group": "A",
+   "record": "MP-0176 Moniepoint 2026-08-10 ₦-59,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1129"
+  },
+  {
+   "id": "L-MP-0179",
+   "group": "A",
+   "record": "MP-0179 Moniepoint 2026-08-10 ₦-4,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1130"
+  },
+  {
+   "id": "L-MP-0190",
+   "group": "A",
+   "record": "MP-0190 Moniepoint 2026-08-10 ₦-30,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1131"
+  },
+  {
+   "id": "L-MP-0191",
+   "group": "A",
+   "record": "MP-0191 Moniepoint 2026-08-10 ₦420,000.09",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1007"
+  },
+  {
+   "id": "L-MP-0194",
+   "group": "A",
+   "record": "MP-0194 Moniepoint 2026-08-10 ₦-30,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1132"
+  },
+  {
+   "id": "L-MP-0195",
+   "group": "A",
+   "record": "MP-0195 Moniepoint 2026-08-11 ₦11,190",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1133"
+  },
+  {
+   "id": "L-MP-0196",
+   "group": "A",
+   "record": "MP-0196 Moniepoint 2026-08-11 ₦13,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1134"
+  },
+  {
+   "id": "L-MP-0197",
+   "group": "A",
+   "record": "MP-0197 Moniepoint 2026-08-11 ₦30,400",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1135"
+  },
+  {
+   "id": "L-MP-0198",
+   "group": "A",
+   "record": "MP-0198 Moniepoint 2026-08-11 ₦211,400",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1136"
+  },
+  {
+   "id": "L-MP-0199",
+   "group": "A",
+   "record": "MP-0199 Moniepoint 2026-08-11 ₦24,925",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1137"
+  },
+  {
+   "id": "L-MP-0200",
+   "group": "A",
+   "record": "MP-0200 Moniepoint 2026-08-11 ₦23,600",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1138"
+  },
+  {
+   "id": "L-MP-0205",
+   "group": "A",
+   "record": "MP-0205 Moniepoint 2026-08-11 ₦-42,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1139"
+  },
+  {
+   "id": "L-MP-0206",
+   "group": "A",
+   "record": "MP-0206 Moniepoint 2026-08-11 ₦385,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1140"
+  },
+  {
+   "id": "L-MP-0207",
+   "group": "A",
+   "record": "MP-0207 Moniepoint 2026-08-12 ₦73,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1141"
+  },
+  {
+   "id": "L-MP-0208",
+   "group": "A",
+   "record": "MP-0208 Moniepoint 2026-08-12 ₦10,400",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1142"
+  },
+  {
+   "id": "L-MP-0209",
+   "group": "A",
+   "record": "MP-0209 Moniepoint 2026-08-12 ₦-9,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1143"
+  },
+  {
+   "id": "L-MP-0211",
+   "group": "A",
+   "record": "MP-0211 Moniepoint 2026-08-12 ₦349,760",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1144"
+  },
+  {
+   "id": "L-MP-0212",
+   "group": "A",
+   "record": "MP-0212 Moniepoint 2026-08-12 ₦39,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1145"
+  },
+  {
+   "id": "L-MP-0213",
+   "group": "A",
+   "record": "MP-0213 Moniepoint 2026-08-12 ₦7,960",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1146"
+  },
+  {
+   "id": "L-MP-0214",
+   "group": "A",
+   "record": "MP-0214 Moniepoint 2026-08-12 ₦99,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1008"
+  },
+  {
+   "id": "L-MP-0215",
+   "group": "A",
+   "record": "MP-0215 Moniepoint 2026-08-12 ₦754,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1147"
+  },
+  {
+   "id": "L-MP-0216",
+   "group": "A",
+   "record": "MP-0216 Moniepoint 2026-08-13 ₦2,040,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1148"
+  },
+  {
+   "id": "L-MP-0218",
+   "group": "A",
+   "record": "MP-0218 Moniepoint 2026-08-13 ₦1,071,740",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1149"
+  },
+  {
+   "id": "L-MP-0219",
+   "group": "A",
+   "record": "MP-0219 Moniepoint 2026-08-13 ₦13,230",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1150"
+  },
+  {
+   "id": "L-MP-0220",
+   "group": "A",
+   "record": "MP-0220 Moniepoint 2026-08-13 ₦-100,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1151"
+  },
+  {
+   "id": "L-MP-0223",
+   "group": "A",
+   "record": "MP-0223 Moniepoint 2026-08-13 ₦2,218,260",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1152"
+  },
+  {
+   "id": "L-MP-0224",
+   "group": "A",
+   "record": "MP-0224 Moniepoint 2026-08-13 ₦3,000,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1153"
+  },
+  {
+   "id": "L-MP-0225",
+   "group": "A",
+   "record": "MP-0225 Moniepoint 2026-08-13 ₦2,985",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1154"
+  },
+  {
+   "id": "L-MP-0226",
+   "group": "A",
+   "record": "MP-0226 Moniepoint 2026-08-13 ₦-150,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1155"
+  },
+  {
+   "id": "L-MP-0234",
+   "group": "A",
+   "record": "MP-0234 Moniepoint 2026-08-13 ₦-36,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1156"
+  },
+  {
+   "id": "L-MP-0236",
+   "group": "A",
+   "record": "MP-0236 Moniepoint 2026-08-13 ₦-106,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1157"
+  },
+  {
+   "id": "L-MP-0239",
+   "group": "A",
+   "record": "MP-0239 Moniepoint 2026-08-13 ₦-1,826,623",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1158"
+  },
+  {
+   "id": "L-MP-0241",
+   "group": "A",
+   "record": "MP-0241 Moniepoint 2026-08-14 ₦46,120",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1159"
+  },
+  {
+   "id": "L-MP-0242",
+   "group": "A",
+   "record": "MP-0242 Moniepoint 2026-08-14 ₦14,925",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1160"
+  },
+  {
+   "id": "L-MP-0243",
+   "group": "A",
+   "record": "MP-0243 Moniepoint 2026-08-14 ₦47,900",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1161"
+  },
+  {
+   "id": "L-MP-0244",
+   "group": "A",
+   "record": "MP-0244 Moniepoint 2026-08-14 ₦97,400",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1162"
+  },
+  {
+   "id": "L-MP-0245",
+   "group": "A",
+   "record": "MP-0245 Moniepoint 2026-08-14 ₦231,865",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1163"
+  },
+  {
+   "id": "L-MP-0248",
+   "group": "A",
+   "record": "MP-0248 Moniepoint 2026-08-14 ₦-2,300,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1164"
+  },
+  {
+   "id": "L-MP-0251",
+   "group": "A",
+   "record": "MP-0251 Moniepoint 2026-08-14 ₦-20,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1165"
+  },
+  {
+   "id": "L-MP-0254",
+   "group": "A",
+   "record": "MP-0254 Moniepoint 2026-08-14 ₦-23,280",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1166"
+  },
+  {
+   "id": "L-MP-0255",
+   "group": "A",
+   "record": "MP-0255 Moniepoint 2026-08-14 ₦-4,590",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1167"
+  },
+  {
+   "id": "L-MP-0257",
+   "group": "A",
+   "record": "MP-0257 Moniepoint 2026-08-14 ₦-230,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1168"
+  },
+  {
+   "id": "L-MP-0261",
+   "group": "A",
+   "record": "MP-0261 Moniepoint 2026-08-15 ₦-357,033",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1169"
+  },
+  {
+   "id": "L-MP-0262",
+   "group": "A",
+   "record": "MP-0262 Moniepoint 2026-08-15 ₦-420,200",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1170"
+  },
+  {
+   "id": "L-MP-0265",
+   "group": "A",
+   "record": "MP-0265 Moniepoint 2026-08-15 ₦139,240",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1171"
+  },
+  {
+   "id": "L-MP-0266",
+   "group": "A",
+   "record": "MP-0266 Moniepoint 2026-08-15 ₦6,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1172"
+  },
+  {
+   "id": "L-MP-0267",
+   "group": "A",
+   "record": "MP-0267 Moniepoint 2026-08-15 ₦436,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1009"
+  },
+  {
+   "id": "L-MP-0268",
+   "group": "A",
+   "record": "MP-0268 Moniepoint 2026-08-15 ₦12,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "skipped",
+   "why": "already linked on BKR-KD-26-1010"
+  },
+  {
+   "id": "L-MP-0269",
+   "group": "A",
+   "record": "MP-0269 Moniepoint 2026-08-15 ₦43,100",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1173"
+  },
+  {
+   "id": "L-MP-0271",
+   "group": "A",
+   "record": "MP-0271 Moniepoint 2026-08-15 ₦-17,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1174"
+  },
+  {
+   "id": "L-MP-0274",
+   "group": "A",
+   "record": "MP-0274 Moniepoint 2026-08-15 ₦-6,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1175"
+  },
+  {
+   "id": "L-MP-0275",
+   "group": "A",
+   "record": "MP-0275 Moniepoint 2026-08-15 ₦-12,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1176"
+  },
+  {
+   "id": "L-MP-0279",
+   "group": "A",
+   "record": "MP-0279 Moniepoint 2026-08-16 ₦-100,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1177"
+  },
+  {
+   "id": "L-MP-0281",
+   "group": "A",
+   "record": "MP-0281 Moniepoint 2026-08-17 ₦90,100",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1178"
+  },
+  {
+   "id": "L-MP-0282",
+   "group": "A",
+   "record": "MP-0282 Moniepoint 2026-08-17 ₦39,000",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1179"
+  },
+  {
+   "id": "L-MP-0283",
+   "group": "A",
+   "record": "MP-0283 Moniepoint 2026-08-17 ₦147,500",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1180"
+  },
+  {
+   "id": "L-MP-0284",
+   "group": "A",
+   "record": "MP-0284 Moniepoint 2026-08-17 ₦140,230",
+   "field": "bank reconciliation link",
+   "op": "reconLinkUpsert",
+   "outcome": "applied",
+   "action": "inserted BKR-KD-26-1181"
+  }
+ ]
+}

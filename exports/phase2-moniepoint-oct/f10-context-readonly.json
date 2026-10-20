@@ -1,0 +1,185 @@
+{
+ "moves": [
+  {
+   "id": "TM-KD-26-3169",
+   "type": "AP_PAYMENT",
+   "a": 4,
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "amount_ngn": -4913000,
+   "source_kind": "ACCOUNTS_PAYABLE",
+   "source_id": "AP-PO-PO-KD-26-0089",
+   "counterparty_name": "Flutterwave/jack Bjy Enterprise",
+   "note": "Bank Transfer"
+  },
+  {
+   "id": "TM-KD-26-3026",
+   "type": "RECEIPT_IN",
+   "a": 4,
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "amount_ngn": 42000,
+   "source_kind": "LEDGER_RECEIPT",
+   "source_id": "LE-KD-26-1968",
+   "counterparty_name": "NUHU SHITTU",
+   "note": "Finance correction: Finance reconciliation confirmed amount"
+  },
+  {
+   "id": "TM-KD-26-3184",
+   "type": "TRANSPORT_PAYMENT",
+   "a": 4,
+   "posted_at_iso": "2026-10-09T12:36:24.006Z",
+   "amount_ngn": -120000,
+   "source_kind": "PURCHASE_ORDER",
+   "source_id": "PO-KD-26-0089",
+   "counterparty_name": "Bashir Idris",
+   "note": "PO transport / haulage"
+  },
+  {
+   "id": "TM-KD-26-3192",
+   "type": "PAYMENT_REQUEST_OUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": -170000,
+   "source_kind": "PAYMENT_REQUEST",
+   "source_id": "PREQ-KD-26-0355",
+   "counterparty_name": "trasport",
+   "note": ""
+  },
+  {
+   "id": "TM-KD-26-3138",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": -899000,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9726",
+   "counterparty_name": "Aminu Ibrahim",
+   "note": ""
+  },
+  {
+   "id": "TM-KD-26-3139",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "amount_ngn": -34952,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9726",
+   "counterparty_name": "Aminu Ibrahim",
+   "note": ""
+  },
+  {
+   "id": "TM-KD-26-3187",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": -84840,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9752",
+   "counterparty_name": "Ibrahim Zaria",
+   "note": ""
+  },
+  {
+   "id": "TM-KD-26-3190",
+   "type": "REFUND_PAYOUT",
+   "a": 4,
+   "posted_at_iso": "2026-10-08T12:00:00.000Z",
+   "amount_ngn": -342000,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9752",
+   "counterparty_name": "Ibrahim Zaria",
+   "note": ""
+  },
+  {
+   "id": "TM-KD-26-3188",
+   "type": "REFUND_PAYOUT",
+   "a": 2,
+   "posted_at_iso": "2026-10-09T12:00:00.000Z",
+   "amount_ngn": -33950,
+   "source_kind": "REFUND",
+   "source_id": "RF-KD-26-9752",
+   "counterparty_name": "Ibrahim Zaria",
+   "note": ""
+  }
+ ],
+ "preq": [
+  {
+   "request_id": "PREQ-KD-26-0355",
+   "amount_requested_ngn": 170000,
+   "paid_amount_ngn": 170000,
+   "paid_at_iso": "2026-10-06",
+   "approval_status": "Approved",
+   "approved_by": "Suleiman Abdullahi Liman",
+   "d": "trasport"
+  }
+ ],
+ "refunds": [
+  {
+   "refund_id": "RF-KD-26-9726",
+   "customer_name": "Aminu Ibrahim",
+   "quotation_ref": "QT-KD-26-1739",
+   "approved_amount_ngn": 942690,
+   "paid_amount_ngn": 933952,
+   "status": "Paid"
+  },
+  {
+   "refund_id": "RF-KD-26-9752",
+   "customer_name": "Ibrahim Zaria",
+   "quotation_ref": "QT-KD-26-1750",
+   "approved_amount_ngn": 483050,
+   "paid_amount_ngn": 460790,
+   "status": "Paid"
+  }
+ ],
+ "po89": [
+  {
+   "po_id": "PO-KD-26-0089",
+   "supplier_name": "Flutterwave/jack Bjy Enterprise",
+   "transport_agent_id": "AG-004",
+   "transport_amount_ngn": 120000,
+   "transport_paid_ngn": 120000
+  }
+ ],
+ "gl": [
+  {
+   "id": "JE-KD-26-4528",
+   "entry_date_iso": "2026-10-06",
+   "source_kind": "CUSTOMER_REFUND_PAYOUT_GL",
+   "source_id": "RF-KD-26-9726:paid:TM-KD-26-3138"
+  },
+  {
+   "id": "JE-KD-26-4529",
+   "entry_date_iso": "2026-10-06",
+   "source_kind": "CUSTOMER_REFUND_PAYOUT_GL",
+   "source_id": "RF-KD-26-9726:paid:TM-KD-26-3139"
+  },
+  {
+   "id": "JE-KD-26-4589",
+   "entry_date_iso": "2026-10-07",
+   "source_kind": "SUPPLIER_PAYMENT_GL",
+   "source_id": "TM-KD-26-3169"
+  },
+  {
+   "id": "JE-KD-26-4665",
+   "entry_date_iso": "2026-10-08",
+   "source_kind": "CUSTOMER_REFUND_PAYOUT_GL",
+   "source_id": "RF-KD-26-9752:paid:TM-KD-26-3187"
+  },
+  {
+   "id": "JE-KD-26-4666",
+   "entry_date_iso": "2026-10-09",
+   "source_kind": "CUSTOMER_REFUND_PAYOUT_GL",
+   "source_id": "RF-KD-26-9752:paid:TM-KD-26-3188"
+  },
+  {
+   "id": "JE-KD-26-4668",
+   "entry_date_iso": "2026-10-08",
+   "source_kind": "CUSTOMER_REFUND_PAYOUT_GL",
+   "source_id": "RF-KD-26-9752:paid:TM-KD-26-3190"
+  },
+  {
+   "id": "JE-KD-26-4670",
+   "entry_date_iso": "2026-10-06",
+   "source_kind": "EXPENSE_PAYMENT_GL",
+   "source_id": "TM-KD-26-3192"
+  }
+ ]
+}

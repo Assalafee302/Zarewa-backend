@@ -1,0 +1,81 @@
+{
+  "meta": {
+    "host": "srv2078.hstgr.io",
+    "database": "u172282559_ZAREWA",
+    "branch": "BR-KD",
+    "generatedAt": "2026-10-08T12:26:00.441Z",
+    "readOnly": true,
+    "posted": false,
+    "quotationsScanned": 1455,
+    "quoteBranchFilter": true
+  },
+  "productCount": 57,
+  "setupAccessoriesNullInv": [],
+  "quoteAccessoryNames": 10,
+  "quoteAccessoriesNeverLeaveStock": [
+    "Hooks and bolts"
+  ],
+  "quoteAccessoriesUnmapped": [],
+  "previewRowCount": 30,
+  "uncountedLeave": [
+    {
+      "product_id": "ACC-SILICON-TUBE",
+      "name": "Silicone (tube)",
+      "unit": "tube",
+      "stock_level": -83,
+      "action": "LEAVE — not counted"
+    },
+    {
+      "product_id": "ACC-STONE-NAIL-PACK",
+      "name": "Stone nail (pack)",
+      "unit": "pack",
+      "stock_level": 16,
+      "action": "LEAVE — not counted"
+    }
+  ],
+  "stoneProductIds": [
+    "STONE-bond-black-0.18mm",
+    "STONE-bond-black-0.20mm",
+    "STONE-bond-black-0.22mm",
+    "STONE-bond-black-0.24mm",
+    "STONE-bond-bush-green-0.20mm",
+    "STONE-bond-red-mix-black-0.20mm",
+    "STONE-classic-black-0.18mm",
+    "STONE-classic-black-0.20mm",
+    "STONE-classic-p-red-0.18mm",
+    "STONE-classic-red-0.18mm",
+    "STONE-classic-red-0.20mm",
+    "STONE-classic-red-mix-black-0.20mm",
+    "STONE-FS-black-1p4m",
+    "STONE-FS-black-2m",
+    "STONE-FS-black-patch-white-2m",
+    "STONE-FS-coffee-brown-2m",
+    "STONE-FS-coffee-mix-black-2m",
+    "STONE-FS-red-2m",
+    "STONE-FS-red-mix-black-2m",
+    "STONE-FS-red-patch-black-1p4m",
+    "STONE-FS-red-patch-black-2m",
+    "STONE-milano-black-0.18mm",
+    "STONE-milano-black-0.20mm",
+    "STONE-milano-coffee-mix-black-0.20mm",
+    "STONE-milano-red-0.20mm",
+    "STONE-milano-red-mix-black-0.20mm",
+    "STONE-milano-red-patch-black-0.18mm",
+    "STONE-milano-red-patch-black-0.20mm",
+    "STONE-roman-black-0.20mm",
+    "STONE-shingle-black-0.18mm",
+    "STONE-shingle-black-patch-white-0.20mm",
+    "STONE-shingle-red-patch-black-0.18mm",
+    "STONE-shingle-red-patch-black-0.20mm",
+    "STONE-single-black-0.20mm",
+    "STONE-single-black-patch-white-0.18mm",
+    "STONE-single-black-patch-white-0.20mm",
+    "STONE-single-red-mix-black-0.18mm",
+    "STONE-single-red-mix-black-0.20mm",
+    "STONE-single-red-patch-black-0.18mm",
+    "STONE-single-red-patch-black-0.20mm",
+    "STONE-single-red-patch-black-0.24mm",
+    "STONE-stone-coated-black-0.20mm"
+  ],
+  "xlsxPath": "C:\\Users\\USER\\OneDrive\\Desktop\\Zarewa-backend-main\\exports\\KD-ACC-STONE-stock-report-2026-10-08-12-26-00.xlsx"
+}

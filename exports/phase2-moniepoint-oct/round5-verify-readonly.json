@@ -1,0 +1,229 @@
+{
+ "takenAt": "2026-10-16T13:51:00.777Z",
+ "expenses": [
+  {
+   "expense_id": "EXP-KD-26-0465",
+   "date": "2026-10-01",
+   "amount_ngn": 15000,
+   "category": "Maintenance",
+   "expense_type": "Bricklayer labour — Adamu Hayatu (book EX-312; no PREQ-KD-26-0312 in the ERP)",
+   "tm": "TM-KD-26-3295",
+   "acct": 4,
+   "tmNgn": -15000,
+   "journal": "JE-KD-26-4878",
+   "auditCreate": 1,
+   "auditPhase2": 1
+  },
+  {
+   "expense_id": "EXP-KD-26-0466",
+   "date": "2026-10-03",
+   "amount_ngn": 222000,
+   "category": "Maintenance",
+   "expense_type": "Accommodation & transport — Engr Walter (Anietie Walter Umoh)",
+   "tm": "TM-KD-26-3299",
+   "acct": 4,
+   "tmNgn": -222000,
+   "journal": "JE-KD-26-4880",
+   "auditCreate": 1,
+   "auditPhase2": 1
+  },
+  {
+   "expense_id": "EXP-KD-26-0467",
+   "date": "2026-10-07",
+   "amount_ngn": 20000,
+   "category": "Staff loan",
+   "expense_type": "GM IOU — Bala Muazu Suleiman",
+   "tm": "TM-KD-26-3302",
+   "acct": 4,
+   "tmNgn": -20000,
+   "journal": "JE-KD-26-4881",
+   "auditCreate": 1,
+   "auditPhase2": 1
+  },
+  {
+   "expense_id": "EXP-KD-26-0468",
+   "date": "2026-10-09",
+   "amount_ngn": 417236,
+   "category": "Fuel & lubricant",
+   "expense_type": "Diesel — Matrix Energy Ltd (bank ₦417,235.80)",
+   "tm": "TM-KD-26-3304",
+   "acct": 4,
+   "tmNgn": -417236,
+   "journal": "JE-KD-26-4882",
+   "auditCreate": 1,
+   "auditPhase2": 1
+  },
+  {
+   "expense_id": "EXP-KD-26-0469",
+   "date": "2026-10-13",
+   "amount_ngn": 550000,
+   "category": "Carriage inward",
+   "expense_type": "Transport — Bashir Idris",
+   "tm": "TM-KD-26-3309",
+   "acct": 4,
+   "tmNgn": -550000,
+   "journal": "JE-KD-26-4883",
+   "auditCreate": 1,
+   "auditPhase2": 1
+  },
+  {
+   "expense_id": "EXP-KD-26-0470",
+   "date": "2026-10-13",
+   "amount_ngn": 22500,
+   "category": "Maintenance",
+   "expense_type": "NEPA work — Haruna Yusuf",
+   "tm": "TM-KD-26-3310",
+   "acct": 4,
+   "tmNgn": -22500,
+   "journal": "JE-KD-26-4884",
+   "auditCreate": 1,
+   "auditPhase2": 1
+  },
+  {
+   "expense_id": "EXP-KD-26-0471",
+   "date": "2026-10-15",
+   "amount_ngn": 8340,
+   "category": "Bank charges",
+   "expense_type": "Bank charges — Moniepoint, Oct 2026",
+   "tm": "TM-KD-26-3311",
+   "acct": 4,
+   "tmNgn": -8340,
+   "journal": "JE-KD-26-4885",
+   "auditCreate": 1,
+   "auditPhase2": 1
+  }
+ ],
+ "transfers": [
+  {
+   "batch": "TR-26-00042",
+   "legs": [
+    {
+     "id": "TM-KD-26-3293",
+     "type": "INTERNAL_TRANSFER_OUT",
+     "a": 4,
+     "n": -2411727,
+     "posted_at_iso": "2026-10-01T10:54:00.000Z"
+    },
+    {
+     "id": "TM-KD-26-3294",
+     "type": "INTERNAL_TRANSFER_IN",
+     "a": 2,
+     "n": 2411727,
+     "posted_at_iso": "2026-10-01T10:54:00.000Z"
+    }
+   ],
+   "net": 0,
+   "auditPhase2": 1
+  },
+  {
+   "batch": "TR-26-00043",
+   "legs": [
+    {
+     "id": "TM-KD-26-3300",
+     "type": "INTERNAL_TRANSFER_OUT",
+     "a": 4,
+     "n": -100000,
+     "posted_at_iso": "2026-10-05T12:41:00.000Z"
+    },
+    {
+     "id": "TM-KD-26-3301",
+     "type": "INTERNAL_TRANSFER_IN",
+     "a": 3,
+     "n": 100000,
+     "posted_at_iso": "2026-10-05T12:41:00.000Z"
+    }
+   ],
+   "net": 0,
+   "auditPhase2": 1
+  },
+  {
+   "batch": "TR-26-00044",
+   "legs": [
+    {
+     "id": "TM-KD-26-3305",
+     "type": "INTERNAL_TRANSFER_OUT",
+     "a": 4,
+     "n": -10000000,
+     "posted_at_iso": "2026-10-09T11:44:00.000Z"
+    },
+    {
+     "id": "TM-KD-26-3306",
+     "type": "INTERNAL_TRANSFER_IN",
+     "a": 2,
+     "n": 10000000,
+     "posted_at_iso": "2026-10-09T11:44:00.000Z"
+    }
+   ],
+   "net": 0,
+   "auditPhase2": 1
+  },
+  {
+   "batch": "TR-26-00045",
+   "legs": [
+    {
+     "id": "TM-KD-26-3307",
+     "type": "INTERNAL_TRANSFER_OUT",
+     "a": 4,
+     "n": -4000000,
+     "posted_at_iso": "2026-10-13T11:05:00.000Z"
+    },
+    {
+     "id": "TM-KD-26-3308",
+     "type": "INTERNAL_TRANSFER_IN",
+     "a": 2,
+     "n": 4000000,
+     "posted_at_iso": "2026-10-13T11:05:00.000Z"
+    }
+   ],
+   "net": 0,
+   "auditPhase2": 1
+  }
+ ],
+ "checks": {
+  "rf9730": [
+   {
+    "id": "JE-KD-26-4533",
+    "entry_date_iso": "2026-10-05",
+    "source_id": "RF-KD-26-9730:paid:TM-KD-26-3143"
+   },
+   {
+    "id": "JE-KD-26-4874",
+    "entry_date_iso": "2026-10-05",
+    "source_id": "RF-KD-26-9730:JE-KD-26-4533"
+   },
+   {
+    "id": "JE-KD-26-4879",
+    "entry_date_iso": "2026-10-04",
+    "source_id": "RF-KD-26-9730:paid:TM-KD-26-3143#R4-A38"
+   }
+  ],
+  "lock": [
+   {
+    "period_key": "2026-09",
+    "reason": "Sales phase 1 September 2026. Later changes post as October adjustments.",
+    "locked_at_iso": "2026-10-16T13:50:25.657Z"
+   }
+  ],
+  "align": [
+   {
+    "id": "TM-KD-26-3312"
+   }
+  ],
+  "acct4": {
+   "sep30": 3411799,
+   "oct16_0944": 9912414,
+   "now": {
+    "ledger": 10024494,
+    "stored": 10024494
+   }
+  },
+  "taj": {
+   "ledger": 11046275,
+   "stored": 19580056
+  },
+  "cash": {
+   "ledger": 359686,
+   "stored": 359686
+  }
+ }
+}

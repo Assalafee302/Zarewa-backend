@@ -1,0 +1,8 @@
+bank_date,account,payee_on_bank,amount_ngn,tag,note
+2026-08-10,Moniepoint,BABANGIDA YUSUF BAITA (GTB),1400000,check supplier,"Same GTB account got 1,300,000 on 18 Aug, booked as AP payment to Iconstruct Global Services (PO-KD-26-0066). Likely a supplier payment, not a refund. Only near overpaid quote: QT-KD-26-0200 Jibril Sule (1,420,400 over) - weak."
+2026-08-21,Moniepoint,NUHU SOLOMON (OPay),16000,staff - confirm with HR,"15 Aug 12,000 to him is overtime OT-KD-26-0003; Sept payments 'offload' and 'servicing forklift'. No overpaid quotation."
+2026-08-29,Moniepoint,NUHU SOLOMON (OPay),20000,staff - confirm with HR,"As above."
+2026-08-13,Moniepoint,ABUBAKAR ABDULLAHI (OPay),106000,confirm,"Customer CUS-KD-26-0901 has only refund RF-KD-26-9477 (8,000, 14 Aug). He also sends money in (Fairmoney) for other customers (Khalid, Kabiru Cap, Ahmad JJ) - may be an agent. No quote overpaid by ~106,000."
+2026-08-08,Moniepoint,MUHAMMAD ABUBAKAR,35000,confirm,"Customer CUS-KD-26-0524 has no overpayment. Nearest: QT-KD-26-0451 Turkey Farm (33,995 over) - weak."
+2026-08-05,Moniepoint,SIMEON IKECHUKWU ALEKE (PalmPay),7000,confirm,"Nearest: QT-KD-26-0125 Hebass Global (6,120 over) - weak."
+2026-08-29,Moniepoint,KAYODE JIMOHA AYENI (Access),5000,confirm,"21 Aug 4,000 to him is PREQ-KD-26-0174 'UNICOILLER' - likely a technician. Nearest quote: QT-KD-26-1113 Mansur Alhassan (4,600 over) - weak."

@@ -1,0 +1,536 @@
+{
+ "takenAt": "2026-10-16T15:05:06.242Z",
+ "rf9782": [
+  {
+   "refund_id": "RF-KD-26-9782",
+   "quotation_ref": "QT-KD-26-1794",
+   "amount_ngn": 1237015,
+   "approved_amount_ngn": 139095,
+   "paid_amount_ngn": 139095,
+   "paid_at_iso": "",
+   "paid_by": "",
+   "payee_name": "jibril sule",
+   "status": "Paid",
+   "pn": "Credit confirmation: ₦1,097,920 applied to QT-KD-26-1795. ₦139,095 still awaits approval for cash payout."
+  },
+  {
+   "refund_id": "RF-KD-26-9785",
+   "quotation_ref": "QT-KD-26-1792",
+   "amount_ngn": 353184,
+   "approved_amount_ngn": 353184,
+   "paid_amount_ngn": 0,
+   "paid_at_iso": "",
+   "paid_by": "",
+   "payee_name": "ENGR ATTAH NICHOLAS",
+   "status": "Approved",
+   "pn": ""
+  }
+ ],
+ "rf9782lines": [],
+ "po93": [
+  {
+   "po_id": "PO-KD-26-0093",
+   "supplier_name": "Sectook Aluminium Abuja",
+   "order_date_iso": "2026-10-15",
+   "status": "Pending",
+   "product_name": "Aluzinc coil (kg)",
+   "qty_ordered": 2594,
+   "unit_price_ngn": 1700
+  }
+ ],
+ "po93ap": [
+  {
+   "ap_id": "AP-PO-PO-KD-26-0093",
+   "supplier_name": "Sectook Aluminium Abuja",
+   "po_ref": "PO-KD-26-0093",
+   "invoice_ref": "",
+   "amount_ngn": 4409800,
+   "paid_ngn": 1409800,
+   "due_date_iso": "2026-10-16",
+   "payment_method": "Bank Transfer"
+  }
+ ],
+ "po93pay": [
+  {
+   "id": "TM-KD-26-3288",
+   "type": "AP_PAYMENT",
+   "a": 2,
+   "posted_at_iso": "2026-10-15T12:00:00.000Z",
+   "amount_ngn": -1409800,
+   "created_by": "Mustapha Ibn Sali",
+   "n": "Bank Transfer"
+  }
+ ],
+ "fixedAssets": [
+  {
+   "id": "FA-1791991186487-6gzuen",
+   "name": "Transformer (EXP-KD-26-0362 + 0397 + 0453)",
+   "cost_ngn": 9677950,
+   "acquisition_date_iso": "2026-10-14",
+   "notes": "Transformer, paid in 3 parts: first payment 25 Aug 2026 (Moniepoint), then 10 Se",
+   "source_expense_id": "EXP-KD-26-0362"
+  }
+ ],
+ "qt1777": [
+  {
+   "id": "QT-KD-26-1777",
+   "total_ngn": 10218200,
+   "paid_ngn": 12000000,
+   "ln": "{\"products\":[{\"id\":\"L1791632758347-dqxx37g\",\"name\":\"Roofing Sheet\",\"qty\":\"1751\",\"unitPrice\":\"5700\",\"customLine\":false,\"gauge\":\"0.28mm\",\"colour\":\"Bush Green\",\"design\":\"Longspan (Indus6)\",\"profile\":\"Longspan (Indus6)\",\"lineKind\":\"roofing\",\"floorPricePerMeter\":5750,\"recommendedPricePerMeter\":5750}],\"accessories\":[{\"id\":\"L1791632758347-xr12j5t\",\"name\":\"Drive screw nail\",\"qty\":\"95\",\"unitPrice\":\"2500\",\"customLine\":false,\"setupQuoteItemId\":\"SQI-012\",\"unit\":\"pack\",\"inventoryProductId\":\"ACC-DRIVE-SCREW-PACK\",\"floorUnitPriceNgn\":0}],\"services\":[{\"id\":\"L1791632758347-l9la7o4\",\"name\":\"\",\"qty\":\"\",\"unitPrice\":\"\",\"customLine\":false,\"gauge\":\"0.28mm\",\"colour\":\"Bush Green\",\"design\":\"Longspan (Indus6)\",\"profile\":\"Longspan (Indus6)\",\"assigneeAssociatedStaffID\":\"\",\"assigneeCustomerID\":\"\",\"assigneeName\":\"\",\"assigneeRole\":\"\"}],\"materialGauge\":\"0.28mm\",\"materialColor\":\"Bush Green\",\"materialDesign\":\"Longspan (Indus6)\",\"materialTypeId\":\"MAT-002\"}"
+  },
+  {
+   "id": "QT-KD-26-1782",
+   "total_ngn": 29200,
+   "paid_ngn": 29200,
+   "ln": "{\"products\":[{\"id\":\"L1791658312063-6m342m1\",\"name\":\"Flat sheet\",\"qty\":\"8\",\"unitPrice\":\"3650\",\"customLine\":false,\"gauge\":\"0.18mm\",\"colour\":\"Ivory Beige\",\"design\":\"Flat sheet\",\"profile\":\"Flat sheet\",\"lineKind\":\"roofing\",\"floorPricePerMeter\":3650,\"recommendedPricePerMeter\":3650}],\"accessories\":[],\"services\":[{\"id\":\"L1791658312063-nl15w63\",\"name\":\"\",\"qty\":\"\",\"unitPrice\":\"\",\"customLine\":false,\"gauge\":\"0.18mm\",\"colour\":\"Ivory Beige\",\"design\":\"Flat sheet\",\"profile\":\"Flat sheet\",\"assigneeAssociatedStaffID\":\"\",\"assigneeCustomerID\":\"\",\"assigneeName\":\"\",\"assigneeRole\":\"\"}],\"materialGauge\":\"0.18mm\",\"materialColor\":\"Ivory Beige\",\"materialDesign\":\"Flat sheet\",\"materialTypeId\":\"MAT-002\"}"
+  }
+ ],
+ "qt1765refunds": [
+  {
+   "refund_id": "RF-KD-26-9578",
+   "reason_category": "[\"Overpayment\"]",
+   "amount_ngn": 7425560,
+   "approved_amount_ngn": 7425560,
+   "paid_amount_ngn": 7425560,
+   "status": "Paid"
+  },
+  {
+   "refund_id": "RF-KD-26-9786",
+   "reason_category": "[\"Overpayment\",\"Unproduced meterage\"]",
+   "amount_ngn": 4659453,
+   "approved_amount_ngn": 0,
+   "paid_amount_ngn": 0,
+   "status": "Pending"
+  },
+  {
+   "refund_id": "RF-KD-26-9753",
+   "reason_category": "[\"Overpayment\"]",
+   "amount_ngn": 1499410,
+   "approved_amount_ngn": 1499410,
+   "paid_amount_ngn": 0,
+   "status": "Approved"
+  }
+ ],
+ "qt1765receipts": [
+  {
+   "id": "LE-KD-26-2046",
+   "at_iso": "2026-10-09T12:00:00.000Z",
+   "type": "RECEIPT",
+   "amount_ngn": 12359280,
+   "payment_method": "Bank — Zaps Aluminum Enterprises",
+   "br": "yusuf  aliyu ₦13,389,200 Bank:Zaps Aluminum Enterprises"
+  },
+  {
+   "id": "LE-KD-26-2047",
+   "at_iso": "2026-10-09T12:00:00.000Z",
+   "type": "OVERPAY_ADVANCE",
+   "amount_ngn": 1029920,
+   "payment_method": "Bank — Zaps Aluminum Enterprises",
+   "br": "yusuf  aliyu ₦13,389,200 Bank:Zaps Aluminum Enterprises"
+  }
+ ],
+ "haruna": [
+  {
+   "id": "TM-KD-26-3287",
+   "a": 4,
+   "posted_at_iso": "2026-10-15T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 193410,
+   "counterparty_name": "HARUNA USMAN INDA",
+   "source_id": "LE-KD-26-2129"
+  },
+  {
+   "id": "TM-KD-26-3249",
+   "a": 4,
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 84000,
+   "counterparty_name": "sani haruna",
+   "source_id": "LE-KD-26-2120"
+  },
+  {
+   "id": "TM-KD-26-3250",
+   "a": 3,
+   "posted_at_iso": "2026-10-14T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 2240,
+   "counterparty_name": "sani haruna",
+   "source_id": "LE-KD-26-2120"
+  },
+  {
+   "id": "TM-KD-26-3181",
+   "a": 4,
+   "posted_at_iso": "2026-10-09T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 1351540,
+   "counterparty_name": "mohammed haruna",
+   "source_id": "LE-KD-26-2044"
+  },
+  {
+   "id": "TM-KD-26-3166",
+   "a": 4,
+   "posted_at_iso": "2026-10-07T16:08:51.017Z",
+   "type": "RECEIPT_REVERSAL_OUT",
+   "amount_ngn": -10000,
+   "counterparty_name": "HARUNA MOHD",
+   "source_id": "LE-KD-26-2025"
+  },
+  {
+   "id": "TM-KD-26-3155",
+   "a": 4,
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 448000,
+   "counterparty_name": "HARUNA MOHD",
+   "source_id": "LE-KD-26-2023"
+  },
+  {
+   "id": "TM-KD-26-3164",
+   "a": 4,
+   "posted_at_iso": "2026-10-07T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 10000,
+   "counterparty_name": "HARUNA MOHD",
+   "source_id": "LE-KD-26-2025"
+  }
+ ],
+ "harunaLedger": [
+  {
+   "id": "LE-KD-26-2023",
+   "at_iso": "2026-10-07T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "HARUNA MOHD",
+   "amount_ngn": 424880,
+   "quotation_ref": "QT-KD-26-1752",
+   "payment_method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "br": "muhammad haruna abdullahi ₦448,000 Bank:Zarewa Aluminum & Plastics Ltd"
+  },
+  {
+   "id": "LE-KD-26-2025",
+   "at_iso": "2026-10-07T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "HARUNA MOHD",
+   "amount_ngn": 0,
+   "quotation_ref": "QT-KD-26-1754",
+   "payment_method": "Refund fund",
+   "br": "haruna muhammed ₦10,000 Bank:Zarewa Aluminum & Plastics Ltd"
+  },
+  {
+   "id": "LE-KD-26-2028",
+   "at_iso": "2026-10-07T12:00:00.000Z",
+   "type": "OVERPAY_REVERSAL",
+   "customer_name": "HARUNA MOHD",
+   "amount_ngn": 10000,
+   "quotation_ref": "QT-KD-26-1752",
+   "payment_method": "Internal",
+   "br": "CREDIT_APPLY:RCA-1791389331127-sou8un"
+  },
+  {
+   "id": "LE-KD-26-2029",
+   "at_iso": "2026-10-07T12:00:00.000Z",
+   "type": "OVERPAY_APPLIED",
+   "customer_name": "HARUNA MOHD",
+   "amount_ngn": 10000,
+   "quotation_ref": "QT-KD-26-1754",
+   "payment_method": "Internal",
+   "br": "CREDIT_APPLY:RCA-1791389331127-sou8un"
+  },
+  {
+   "id": "LE-KD-26-2044",
+   "at_iso": "2026-10-09T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "mohammed haruna",
+   "amount_ngn": 1305079,
+   "quotation_ref": "QT-KD-26-1764",
+   "payment_method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "br": "haruna mohd ₦1,351,540 Bank:Zarewa Aluminum & Plastics Ltd"
+  },
+  {
+   "id": "LE-KD-26-2048",
+   "at_iso": "2026-10-09T12:00:00.000Z",
+   "type": "OVERPAY_ADVANCE",
+   "customer_name": "mohammed haruna",
+   "amount_ngn": 46461,
+   "quotation_ref": "QT-KD-26-1764",
+   "payment_method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "br": "haruna mohd ₦1,351,540 Bank:Zarewa Aluminum & Plastics Ltd"
+  },
+  {
+   "id": "LE-KD-26-2120",
+   "at_iso": "2026-10-14T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "sani haruna",
+   "amount_ngn": 84280,
+   "quotation_ref": "QT-KD-26-1804",
+   "payment_method": "Split (2 lines)",
+   "br": "sani haruna ₦84,000 Bank:Zarewa Aluminum & Plastics Ltd | sani harua ₦2,240 Cash:Cash Offi"
+  },
+  {
+   "id": "LE-KD-26-2129",
+   "at_iso": "2026-10-15T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "HARUNA USMAN INDA",
+   "amount_ngn": 185378,
+   "quotation_ref": "QT-KD-26-1810",
+   "payment_method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "br": "HARUNA USMAN ₦193,410 Bank:Zarewa Aluminum & Plastics Ltd"
+  },
+  {
+   "id": "LE-KD-26-2145",
+   "at_iso": "2026-10-15T12:00:00.000Z",
+   "type": "OVERPAY_ADVANCE",
+   "customer_name": "HARUNA USMAN INDA",
+   "amount_ngn": 8032,
+   "quotation_ref": "QT-KD-26-1810",
+   "payment_method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "br": "HARUNA USMAN ₦193,410 Bank:Zarewa Aluminum & Plastics Ltd"
+  },
+  {
+   "id": "LE-KD-26-2147",
+   "at_iso": "2026-10-14T12:00:00.000Z",
+   "type": "OVERPAY_ADVANCE",
+   "customer_name": "sani haruna",
+   "amount_ngn": 1960,
+   "quotation_ref": "QT-KD-26-1804",
+   "payment_method": "Split (2 lines)",
+   "br": "sani haruna ₦84,000 Bank:Zarewa Aluminum & Plastics Ltd | sani harua ₦2,240 Cash:Cash Offi"
+  }
+ ],
+ "c6": [
+  {
+   "id": "TM-KD-26-2919",
+   "a": 4,
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 4700,
+   "counterparty_name": "Anas Cap Zaria",
+   "source_id": "LE-KD-26-1926",
+   "reverses_movement_id": null,
+   "n": ""
+  },
+  {
+   "id": "TM-KD-26-3103",
+   "a": 4,
+   "posted_at_iso": "2026-10-05T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 4000,
+   "counterparty_name": "Sanusi Dangiwa",
+   "source_id": "LE-KD-26-1981",
+   "reverses_movement_id": null,
+   "n": ""
+  },
+  {
+   "id": "TM-KD-26-3106",
+   "a": 4,
+   "posted_at_iso": "2026-10-05T10:44:47.075Z",
+   "type": "RECEIPT_REVERSAL_OUT",
+   "amount_ngn": -4000,
+   "counterparty_name": "Sanusi Dangiwa",
+   "source_id": "LE-KD-26-1981",
+   "reverses_movement_id": "TM-KD-26-3103",
+   "n": "Reversed — receipt confirmed from refund fund, not new bank or cash"
+  },
+  {
+   "id": "TM-KD-26-3117",
+   "a": 4,
+   "posted_at_iso": "2026-10-05T11:58:19.639Z",
+   "type": "RECEIPT_REVERSAL_OUT",
+   "amount_ngn": -4700,
+   "counterparty_name": "Anas Cap Zaria",
+   "source_id": "LE-KD-26-1926",
+   "reverses_movement_id": "TM-KD-26-2919",
+   "n": "Reversed — receipt confirmed from refund fund, not new bank or cash"
+  },
+  {
+   "id": "TM-KD-26-3124",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 34650,
+   "counterparty_name": "SURAJO",
+   "source_id": "LE-KD-26-2005",
+   "reverses_movement_id": null,
+   "n": ""
+  },
+  {
+   "id": "TM-KD-26-3125",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 57750,
+   "counterparty_name": "babalele",
+   "source_id": "LE-KD-26-2006",
+   "reverses_movement_id": null,
+   "n": ""
+  },
+  {
+   "id": "TM-KD-26-3127",
+   "a": 4,
+   "posted_at_iso": "2026-10-06T09:50:55.526Z",
+   "type": "RECEIPT_REVERSAL_OUT",
+   "amount_ngn": -34650,
+   "counterparty_name": "SURAJO",
+   "source_id": "LE-KD-26-2005",
+   "reverses_movement_id": "TM-KD-26-3124",
+   "n": "Reversed — receipt confirmed from refund fund, not new bank or cash"
+  },
+  {
+   "id": "TM-KD-26-3221",
+   "a": 4,
+   "posted_at_iso": "2026-10-12T12:00:00.000Z",
+   "type": "RECEIPT_IN",
+   "amount_ngn": 15400,
+   "counterparty_name": "bashir cap",
+   "source_id": "LE-KD-26-2084",
+   "reverses_movement_id": null,
+   "n": ""
+  }
+ ],
+ "c6ledger": [
+  {
+   "id": "LE-KD-26-1926",
+   "at_iso": "2026-10-01T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "Anas Cap Zaria",
+   "amount_ngn": 0,
+   "quotation_ref": "QT-KD-26-1685",
+   "payment_method": "Refund fund",
+   "br": "anas hamisu ₦4,700 Bank:Zarewa Aluminum & Plastics Ltd",
+   "note": "Full settlement (receipt)"
+  },
+  {
+   "id": "LE-KD-26-1981",
+   "at_iso": "2026-10-05T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "Sanusi Dangiwa",
+   "amount_ngn": 0,
+   "quotation_ref": "QT-KD-26-1717",
+   "payment_method": "Refund fund",
+   "br": "sanusi dangiwa ₦4,000 Bank:Zarewa Aluminum & Plastics Ltd",
+   "note": "Full settlement (receipt)"
+  },
+  {
+   "id": "LE-KD-26-1985",
+   "at_iso": "2026-10-05T12:00:00.000Z",
+   "type": "OVERPAY_APPLIED",
+   "customer_name": "Sanusi Dangiwa",
+   "amount_ngn": 4000,
+   "quotation_ref": "QT-KD-26-1717",
+   "payment_method": "Internal",
+   "br": "CREDIT_APPLY:RCA-1791197087156-iyysr6",
+   "note": "Credit confirmation: ₦4,000 applied to QT-KD-26-1717 from QT-KD-26-1700 (not ban"
+  },
+  {
+   "id": "LE-KD-26-2000",
+   "at_iso": "2026-10-01T12:00:00.000Z",
+   "type": "OVERPAY_APPLIED",
+   "customer_name": "ANAS CAP ZARIA",
+   "amount_ngn": 4700,
+   "quotation_ref": "QT-KD-26-1685",
+   "payment_method": "Internal",
+   "br": "CREDIT_APPLY:RCA-1791201499744-jge8r6",
+   "note": "Credit confirmation: ₦4,700 applied to QT-KD-26-1685 from QT-KD-26-1433 (not ban"
+  },
+  {
+   "id": "LE-KD-26-2005",
+   "at_iso": "2026-10-06T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "SURAJO",
+   "amount_ngn": 0,
+   "quotation_ref": "QT-KD-26-1734",
+   "payment_method": "Refund fund",
+   "br": "surajo ₦34,650 Bank:Zarewa Aluminum & Plastics Ltd",
+   "note": "Full settlement (receipt)"
+  },
+  {
+   "id": "LE-KD-26-2006",
+   "at_iso": "2026-10-06T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "babalele",
+   "amount_ngn": 57750,
+   "quotation_ref": "QT-KD-26-1735",
+   "payment_method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "br": "auwal ibrahim ₦57,750 Bank:Zarewa Aluminum & Plastics Ltd",
+   "note": "Full settlement (receipt)"
+  },
+  {
+   "id": "LE-KD-26-2009",
+   "at_iso": "2026-10-06T12:00:00.000Z",
+   "type": "OVERPAY_APPLIED",
+   "customer_name": "SURAJO",
+   "amount_ngn": 34650,
+   "quotation_ref": "QT-KD-26-1734",
+   "payment_method": "Internal",
+   "br": "CREDIT_APPLY:RCA-1791280255627-5ay5gx",
+   "note": "Credit confirmation: ₦34,650 applied to QT-KD-26-1734 from QT-KD-26-0825 (not ba"
+  },
+  {
+   "id": "LE-KD-26-2084",
+   "at_iso": "2026-10-12T12:00:00.000Z",
+   "type": "RECEIPT",
+   "customer_name": "bashir cap",
+   "amount_ngn": 15400,
+   "quotation_ref": "QT-KD-26-1786",
+   "payment_method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "br": "bashir cap ₦15,400 Bank:Zarewa Aluminum & Plastics Ltd",
+   "note": "Full settlement (receipt)"
+  }
+ ],
+ "c6receipts": [
+  {
+   "id": "LE-KD-26-1926",
+   "status": "Reversed",
+   "amount_ngn": 0,
+   "method": "Refund fund",
+   "ledger_entry_id": "LE-KD-26-1926",
+   "bank_received_amount_ngn": 0
+  },
+  {
+   "id": "LE-KD-26-1981",
+   "status": "Reversed",
+   "amount_ngn": 0,
+   "method": "Refund fund",
+   "ledger_entry_id": "LE-KD-26-1981",
+   "bank_received_amount_ngn": 0
+  },
+  {
+   "id": "LE-KD-26-2005",
+   "status": "Reversed",
+   "amount_ngn": 0,
+   "method": "Refund fund",
+   "ledger_entry_id": "LE-KD-26-2005",
+   "bank_received_amount_ngn": 0
+  },
+  {
+   "id": "LE-KD-26-2006",
+   "status": "Pending clearance",
+   "amount_ngn": 57750,
+   "method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "ledger_entry_id": "LE-KD-26-2006",
+   "bank_received_amount_ngn": null
+  },
+  {
+   "id": "LE-KD-26-2084",
+   "status": "Pending clearance",
+   "amount_ngn": 15400,
+   "method": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "ledger_entry_id": "LE-KD-26-2084",
+   "bank_received_amount_ngn": null
+  }
+ ],
+ "qt1786": [
+  {
+   "id": "QT-KD-26-1735",
+   "customer_name": "babalele",
+   "total_ngn": 57750,
+   "paid_ngn": 57750
+  },
+  {
+   "id": "QT-KD-26-1786",
+   "customer_name": "bashir cap",
+   "total_ngn": 15400,
+   "paid_ngn": 15400
+  }
+ ],
+ "preqFns": null
+}

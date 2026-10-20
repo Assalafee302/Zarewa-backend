@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-12",
+  "ack": {
+    "ackId": "PPCA-MUQYSSR7-GDJR",
+    "status": "Acknowledged"
+  },
+  "glCorrection": "JE-KD-26-4752",
+  "a5": {
+    "movementId": "MV-26-00735",
+    "glJournalId": "JE-KD-26-4753",
+    "lot": {
+      "coil_no": "CL-26-2096",
+      "colour": "Ivory Beige",
+      "gauge_label": "0.20mm",
+      "qty_remaining": 2782,
+      "unit_cost_ngn_per_kg": 1720,
+      "landed_cost_ngn": 4785040,
+      "received_at_iso": "2026-10-12"
+    },
+    "poStatus": "Received",
+    "load": {
+      "status": "received",
+      "received_at_iso": "2026-10-12T12:00:00"
+    }
+  }
+}

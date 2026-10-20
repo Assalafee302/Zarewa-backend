@@ -1,0 +1,712 @@
+{
+ "database": "zarewa_phase2_rehearsal",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-14T14:21:17.506Z",
+ "plan": "phase2-dry-run-2026-10-14.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "A02",
+   "group": "A",
+   "record": "coil CL-26-2107 (PO-KD-26-0087)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A03",
+   "group": "A",
+   "record": "coil CL-26-2047 (PO-KD-26-0030)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A04",
+   "group": "A",
+   "record": "coil CL-26-2022 (PO-KD-26-0013)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A05",
+   "group": "A",
+   "record": "coil CL-26-2052 (PO-KD-26-0043)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A06",
+   "group": "A",
+   "record": "coil CL-26-2051 (PO-KD-26-0044)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A07",
+   "group": "A",
+   "record": "coil CL-26-2081 (PO-KD-26-0064)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A08",
+   "group": "A",
+   "record": "coil CL-26-2016 (PO-KD-26-0003)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A09",
+   "group": "A",
+   "record": "coil CL-26-2017 (PO-KD-26-0011)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A10",
+   "group": "A",
+   "record": "coil CL-26-2108 (PO-KD-26-0087)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A11",
+   "group": "A",
+   "record": "coil CL-26-2044 (PO-KD-26-0028)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A12",
+   "group": "A",
+   "record": "coil CL-26-2084 (PO-KD-26-0069)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A13",
+   "group": "A",
+   "record": "coil CL-26-2205 (PO-KD-26-0077)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A14",
+   "group": "A",
+   "record": "coil CL-26-2069 (PO-KD-26-0057)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A15",
+   "group": "A",
+   "record": "coil CL-KD-APR-2002 (ZN 0.24mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A16",
+   "group": "A",
+   "record": "coil CL-KD-APR-1989 (ZN 0.20mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A17",
+   "group": "A",
+   "record": "coil CL-KD-APR-1962 (ZN 0.20mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A18",
+   "group": "A",
+   "record": "coil CL-KD-APR-2001 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A19",
+   "group": "A",
+   "record": "coil CL-KD-APR-1997 (ZN 0.40mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A20",
+   "group": "A",
+   "record": "coil CL-KD-APR-1996 (ZN 0.18mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A21",
+   "group": "A",
+   "record": "coil CL-KD-APR-1993 (ALU 0.55mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A22",
+   "group": "A",
+   "record": "coil CL-KD-APR-1992 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A23",
+   "group": "A",
+   "record": "coil CL-KD-APR-1991 (ZN 0.24mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A24",
+   "group": "A",
+   "record": "coil CL-KD-APR-1980 (ALU 0.55mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A25",
+   "group": "A",
+   "record": "coil CL-KD-APR-1975 (ZN 0.22mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A26",
+   "group": "A",
+   "record": "coil CL-KD-APR-1961 (ZN 0.20mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A27",
+   "group": "A",
+   "record": "coil CL-KD-APR-1937 (ZN 0.18mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A28",
+   "group": "A",
+   "record": "coil CL-KD-APR-1918 (ALU 0.70mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A29",
+   "group": "A",
+   "record": "coil CL-KD-APR-1914 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A30",
+   "group": "A",
+   "record": "coil CL-KD-APR-1907 (ZN 0.20mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A31",
+   "group": "A",
+   "record": "coil CL-KD-APR-1889 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A32",
+   "group": "A",
+   "record": "coil CL-KD-APR-1882 (ZN 0.24mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A33",
+   "group": "A",
+   "record": "coil CL-KD-APR-1755 (ZN 0.18mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A34",
+   "group": "A",
+   "record": "coil CL-KD-APR-1731 (ZN 0.18mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A35",
+   "group": "A",
+   "record": "coil CL-KD-APR-1613 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A36",
+   "group": "A",
+   "record": "coil CL-26-2096 (PO-KD-26-0078)",
+   "field": "coil_lots.received_at_iso + STORE_GRN movement date",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A36",
+   "group": "A",
+   "record": "coil CL-26-2096 (PO-KD-26-0078)",
+   "field": "coil_lots.received_at_iso + STORE_GRN movement date",
+   "op": "grnDate",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A37",
+   "group": "A",
+   "record": "coil CL-26-2082 (PO-KD-26-0070)",
+   "field": "STORE_GRN movement date",
+   "op": "grnDate",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "A38",
+   "group": "A",
+   "record": "coil CL-26-2065 (PO-KD-26-0056)",
+   "field": "coil_lots.gauge_label",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D70",
+   "group": "D",
+   "record": "expense EXP-KD-26-0367",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D71",
+   "group": "D",
+   "record": "expense EXP-KD-26-0362",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D72",
+   "group": "D",
+   "record": "expense EXP-KD-26-0352",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D73",
+   "group": "D",
+   "record": "expense EXP-KD-26-0397",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D74",
+   "group": "D",
+   "record": "expense EXP-KD-26-0325",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D75",
+   "group": "D",
+   "record": "expense EXP-KD-26-0315",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D76",
+   "group": "D",
+   "record": "expense EXP-KD-26-0324",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D77",
+   "group": "D",
+   "record": "expense EXP-KD-26-0337",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D78",
+   "group": "D",
+   "record": "expense EXP-KD-26-0342",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D79",
+   "group": "D",
+   "record": "expense EXP-KD-26-0333",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D80",
+   "group": "D",
+   "record": "expense EXP-KD-26-0343",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D81",
+   "group": "D",
+   "record": "expense EXP-KD-26-0353",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D82",
+   "group": "D",
+   "record": "expense EXP-KD-26-0345",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D83",
+   "group": "D",
+   "record": "expense EXP-KD-26-0346",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D84",
+   "group": "D",
+   "record": "expense EXP-KD-26-0350",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D85",
+   "group": "D",
+   "record": "expense EXP-KD-26-0401",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D86",
+   "group": "D",
+   "record": "expense EXP-KD-26-0360",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D87",
+   "group": "D",
+   "record": "expense EXP-KD-26-0298",
+   "field": "expenses.category",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "D88",
+   "group": "D",
+   "record": "expense EXP-KD-26-0398",
+   "field": "expenses.expense_type",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C46",
+   "group": "C",
+   "record": "treasury TM-KD-26-1499 (LE-KD-26-1154, Mal Sani)",
+   "field": "new RECEIPT_REVERSAL_OUT linked to TM-KD-26-1499",
+   "op": "reverseTreasuryLine",
+   "outcome": "skipped",
+   "why": "already reversed by TM-KD-26-3249"
+  },
+  {
+   "id": "C47",
+   "group": "C",
+   "record": "receipt LE-KD-26-1613 (Md)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C49",
+   "group": "C",
+   "record": "receipt LE-KD-26-1720 (Engr Attah Nicholas)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C51",
+   "group": "C",
+   "record": "receipt LE-KD-26-1563 (Qs Isa)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C52",
+   "group": "C",
+   "record": "receipt LE-KD-26-1619 (Sangir Abdullahi)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C53",
+   "group": "C",
+   "record": "receipt LE-KD-26-1627 (Aminu Ibrahim)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C54",
+   "group": "C",
+   "record": "receipt LE-KD-26-1653 (Qs Isa)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C55",
+   "group": "C",
+   "record": "receipt LE-KD-26-1699 (Alh Kaloma)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C56",
+   "group": "C",
+   "record": "receipt LE-KD-26-1726 (Suleiman Adam)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C57",
+   "group": "C",
+   "record": "receipt LE-KD-26-1757 (Saidu)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C58",
+   "group": "C",
+   "record": "receipt LE-KD-26-1759 (Najeeb Uzairu)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C60",
+   "group": "C",
+   "record": "receipt LE-KD-26-1811 (Ramaran Garkuwa)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C61",
+   "group": "C",
+   "record": "receipt LE-KD-26-1814 (Abdullahi Alhassan)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C62",
+   "group": "C",
+   "record": "receipt LE-KD-26-1870 (Abdul)",
+   "field": "sales_receipts.method (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C63",
+   "group": "C",
+   "record": "receipt LE-KD-26-2051 (SULEMAN BELLO ZARIA)",
+   "field": "sales_receipts.status (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C64",
+   "group": "C",
+   "record": "receipt LE-KD-26-1778 (Yusuf)",
+   "field": "sales_receipts.status (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C65",
+   "group": "C",
+   "record": "receipt LE-KD-26-1767 (Yusuf)",
+   "field": "sales_receipts.status (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C66",
+   "group": "C",
+   "record": "receipt LE-KD-26-1597 (Alhaji Mrido)",
+   "field": "sales_receipts.status (text)",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "C67",
+   "group": "C",
+   "record": "Yusuf (CUS-KD-26-1069): LE-KD-26-1767, LE-KD-26-1778",
+   "field": "investigation_cases + investigation_links",
+   "op": "investigationCase",
+   "outcome": "skipped",
+   "why": "already on case INV-KD-26-0001"
+  },
+  {
+   "id": "B40",
+   "group": "B",
+   "record": "job PRO-KD-26-1349 (QT-KD-26-1643)",
+   "field": "production_jobs.status",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  },
+  {
+   "id": "B41",
+   "group": "B",
+   "record": "job PRO-KD-26-1272 (QT-KD-26-1558)",
+   "field": "production_jobs.status",
+   "op": "update",
+   "outcome": "skipped",
+   "why": "already at the planned value"
+  }
+ ]
+}

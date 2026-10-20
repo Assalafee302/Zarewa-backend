@@ -1,0 +1,76 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-14T20:46:21.205Z",
+ "plan": "chairman-aug-2026-10-14.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "W1",
+   "group": "D",
+   "record": "Taj 10 Aug ₦1,160,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "applied",
+   "expenseID": "EXP-KD-26-0446",
+   "treasuryMovementId": "TM-KD-26-3255"
+  },
+  {
+   "id": "W2",
+   "group": "D",
+   "record": "Taj 15 Aug ₦300,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "applied",
+   "expenseID": "EXP-KD-26-0447",
+   "treasuryMovementId": "TM-KD-26-3256"
+  },
+  {
+   "id": "W3",
+   "group": "D",
+   "record": "Moniepoint 1 Aug ₦50,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "applied",
+   "expenseID": "EXP-KD-26-0448",
+   "treasuryMovementId": "TM-KD-26-3257"
+  },
+  {
+   "id": "W4",
+   "group": "D",
+   "record": "Moniepoint 7 Aug ₦50,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "applied",
+   "expenseID": "EXP-KD-26-0449",
+   "treasuryMovementId": "TM-KD-26-3258"
+  },
+  {
+   "id": "W5",
+   "group": "D",
+   "record": "Moniepoint 7 Aug ₦20,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "applied",
+   "expenseID": "EXP-KD-26-0450",
+   "treasuryMovementId": "TM-KD-26-3259"
+  },
+  {
+   "id": "T1",
+   "group": "C",
+   "record": "TM-KD-26-1969 (LE-KD-26-1366, Engr Yaro, ₦13,000,000, Taj)",
+   "field": "treasury_movements.posted_at_iso",
+   "op": "redateTreasury",
+   "outcome": "applied"
+  },
+  {
+   "id": "T2",
+   "group": "C",
+   "record": "TM-KD-26-1974 (PREQ-KD-26-0159, forklift, ₦20,000, Moniepoint)",
+   "field": "treasury_movements.posted_at_iso",
+   "op": "redateTreasury",
+   "outcome": "applied"
+  }
+ ]
+}

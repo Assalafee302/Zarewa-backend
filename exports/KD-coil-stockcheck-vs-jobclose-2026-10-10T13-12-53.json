@@ -1,0 +1,392 @@
+{
+  "ok": true,
+  "readOnly": true,
+  "branch": "BR-KD",
+  "gapThresholdKg": 20,
+  "scannedAvailableCoilsWithJobs": 86,
+  "candidateCount": 1,
+  "likelySameIssueCount": 0,
+  "likelySameIssue": [],
+  "otherGaps": [
+    {
+      "coilNo": "CL-KD-APR-1512",
+      "colour": "Gray Beige",
+      "gauge": "0.22mm",
+      "status": "Available",
+      "received": 345,
+      "onHand": 261,
+      "lastClose": 191,
+      "gapToLastClose": -70,
+      "expectedFromJobs": 261,
+      "gapToJobMath": 0,
+      "prodUsed": 84,
+      "metres": 40,
+      "lastJobId": "PRO-KD-26-0632",
+      "lastJobClose": 191,
+      "ancillaryNetKg": 0,
+      "ancillaryByType": {},
+      "explainedByAncillary": false,
+      "stockCheckEventCount": 0,
+      "stockCheckEvents": [],
+      "likelySameIssue": false,
+      "suggestedRestoreKg": 0
+    }
+  ],
+  "stockCheckLanguageOnly": [
+    {
+      "coilNo": "CL-KD-APR-1399",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 575,
+      "events": [
+        {
+          "id": "MV-26-00654",
+          "type": "COIL_SCRAP",
+          "qty": -100.69,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 1.319 (aluminium 0.45) — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0040",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -100.69,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 1.319 (aluminium 0.45) — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2102",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 1546,
+      "events": [
+        {
+          "id": "MV-26-00655",
+          "type": "COIL_SCRAP",
+          "qty": -111.5,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 2.270, after October production — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0041",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -111.5,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 2.270, after October production — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2094",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 2615,
+      "events": [
+        {
+          "id": "MV-26-00652",
+          "type": "COIL_SCRAP",
+          "qty": -492.11,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 1.935. Jobs were booked at 1.18 kg/m — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0038",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -492.11,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 1.935. Jobs were booked at 1.18 kg/m — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-KD-APR-1975",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 64,
+      "events": [
+        {
+          "id": "MV-26-00664",
+          "type": "COIL_SCRAP",
+          "qty": -64,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0050",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -64,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-KD-APR-1991",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 61,
+      "events": [
+        {
+          "id": "MV-26-00663",
+          "type": "COIL_SCRAP",
+          "qty": -61,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0049",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -61,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-KD-APR-1992",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 60,
+      "events": [
+        {
+          "id": "MV-26-00662",
+          "type": "COIL_SCRAP",
+          "qty": -60,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0048",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -60,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2013",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 60,
+      "events": [
+        {
+          "id": "MV-26-00661",
+          "type": "COIL_SCRAP",
+          "qty": -60,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0047",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -60,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2019",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 66,
+      "events": [
+        {
+          "id": "MV-26-00660",
+          "type": "COIL_SCRAP",
+          "qty": -66,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0046",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -66,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2039",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 61,
+      "events": [
+        {
+          "id": "MV-26-00659",
+          "type": "COIL_SCRAP",
+          "qty": -61,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0045",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -61,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2046",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 86,
+      "events": [
+        {
+          "id": "MV-26-00658",
+          "type": "COIL_SCRAP",
+          "qty": -86,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0044",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -86,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2064",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 55,
+      "events": [
+        {
+          "id": "MV-26-00657",
+          "type": "COIL_SCRAP",
+          "qty": -55,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0043",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -55,
+          "date": "2026-10-07",
+          "detail": "End-of-roll tail – scrap — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2056",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 55,
+      "events": [
+        {
+          "id": "MV-26-00653",
+          "type": "COIL_SCRAP",
+          "qty": -317.76,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 2.644. Reverses the 425 kg restore of 25 Sep, net of kg already used since — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0060",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -427,
+          "date": "2026-10-08",
+          "detail": "Physical count 5 Oct 2026 (posted 8 Oct ADJUSTMENT)"
+        },
+        {
+          "id": "CCR-KD-26-0039",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -317.76,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 2.644. Reverses the 425 kg restore of 25 Sep, net of kg already used since — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-KD-APR-1741",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 41.25,
+      "events": [
+        {
+          "id": "MV-26-00656",
+          "type": "COIL_SCRAP",
+          "qty": -98.75,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 1.746 — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0042",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -98.75,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 1.746 — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-KD-APR-1997",
+      "branchId": "BR-KD",
+      "status": "Available",
+      "onHand": 1634,
+      "events": [
+        {
+          "id": "MV-26-00651",
+          "type": "COIL_SCRAP",
+          "qty": -1039.33,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 3.78. Reverses the +1,000 kg master-data entry of 30 Jul and the remaining excess — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0037",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -1039.33,
+          "date": "2026-10-07",
+          "detail": "ERP above received − metres × 3.78. Reverses the +1,000 kg master-data entry of 30 Jul and the remaining excess — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    },
+    {
+      "coilNo": "CL-26-2040",
+      "branchId": "BR-KD",
+      "status": "Consumed",
+      "onHand": 0,
+      "events": [
+        {
+          "id": "MV-26-00650",
+          "type": "COIL_SCRAP",
+          "qty": -3540,
+          "date": "2026-10-07",
+          "detail": "Coil finished – phantom stock from repeated restore entries — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        },
+        {
+          "id": "CCR-KD-26-0036",
+          "type": "CCR:adjust_remove_kg",
+          "qty": -3540,
+          "date": "2026-10-07",
+          "detail": "Coil finished – phantom stock from repeated restore entries — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali"
+        }
+      ]
+    }
+  ],
+  "pjcCols": [
+    "id",
+    "job_id",
+    "sequence_no",
+    "coil_no",
+    "product_id",
+    "colour",
+    "gauge_label",
+    "opening_weight_kg",
+    "closing_weight_kg",
+    "consumed_weight_kg",
+    "meters_produced",
+    "actual_conversion_kg_per_m",
+    "allocation_status",
+    "spec_mismatch",
+    "note",
+    "allocated_at_iso"
+  ]
+}

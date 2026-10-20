@@ -1,0 +1,602 @@
+{
+ "createdAtISO": "2026-10-14",
+ "source": "Owner decisions 14 Oct 2026 on the August dry run (round 2b).",
+ "items": [
+  {
+   "id": "A8c",
+   "group": "A",
+   "record": "Moniepoint Aug ₦20 transfer fees (137 × ₦20)",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint Aug 2026 transfer fees 137 x 20 (with EXP for stamp duty + VAT: 9,196)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-08-31",
+     "amountNgn": 2740,
+     "category": "Bank charges",
+     "expenseType": "Moniepoint Aug 2026 transfer fees 137 x 20 (with EXP for stamp duty + VAT: 9,196)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MONIEPOINT-2026-08-31",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "B12d",
+   "group": "B",
+   "record": "TM-KD-26-2162 (RF-KD-26-9500, ₦15,350, Moniepoint 19 Aug)",
+   "field": "treasury_movements.note",
+   "reason": "Bank paid Abdulrahman Uthman Sali, not Tahir",
+   "ops": [
+    {
+     "kind": "setNote",
+     "movementId": "TM-KD-26-2162",
+     "before": "",
+     "after": "Paid to Abdulrahman Uthman Sali on behalf of Tahir Isiya"
+    }
+   ]
+  },
+  {
+   "id": "B13d",
+   "group": "B",
+   "record": "Taj 4 Aug Chancellors Farms ₦1,062,080 − Oga Ali receipts ₦1,047,080",
+   "field": "customer advance (unapplied credit)",
+   "reason": "excess received 4 Aug — confirm with customer",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerName": "Chancellors Farms Ltd",
+     "amountNgn": 15000,
+     "date": "2026-08-04",
+     "treasuryAccountId": 2,
+     "paymentMethod": "Bank — Zaps Aluminum Enterprises",
+     "bankReference": "NIP FRM CHANCELLORS FARMS LTD 4 Aug",
+     "note": "excess received 4 Aug — confirm with customer",
+     "reconForMovementId": "TM-KD-26-1904",
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P01",
+   "group": "B",
+   "record": "Taj 2026-08-10 ₦5,689,333 LE-KD-26-1395 (% Boni)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ABUBAKAR SADEEQ MUSA ≠ ERP customer % Boni",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-10",
+     "amountNgn": 5689333,
+     "description": "NIP FRM ABUBAKAR SADEEQ MUSA MOBILE TRF — Paid by: ABUBAKAR SADEEQ MUSA",
+     "movementIds": [
+      "TM-KD-26-2020"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P02",
+   "group": "B",
+   "record": "Taj 2026-08-11 ₦486,000 LE-KD-26-1400 (Engr Yakubu Mohd)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ISAH KABIR ≠ ERP customer Engr Yakubu Mohd",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-11",
+     "amountNgn": 486000,
+     "description": "NIP FRM ISAH KABIR Transfer from ISAH KA — Paid by: ISAH KABIR",
+     "movementIds": [
+      "TM-KD-26-2032"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P03",
+   "group": "B",
+   "record": "Taj 2026-08-11 ₦17,500 LE-KD-26-1400 (Engr Yakubu Mohd)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer TIGER METAL WORKS AND GENERAL EN ≠ ERP customer Engr Yakubu Mohd",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-11",
+     "amountNgn": 17500,
+     "description": "NIP FRM TIGER METAL WORKS AND GENERAL EN — Paid by: TIGER METAL WORKS AND GENERAL EN",
+     "movementIds": [
+      "TM-KD-26-2033"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P04",
+   "group": "B",
+   "record": "Taj 2026-08-14 ₦2,295,900 LE-KD-26-1426 (Murtala Cap)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ISAH TIJJANI AUWAL ≠ ERP customer Murtala Cap",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-14",
+     "amountNgn": 2295900,
+     "description": "NIP FRM ISAH TIJJANI AUWAL Transfer from — Paid by: ISAH TIJJANI AUWAL",
+     "movementIds": [
+      "TM-KD-26-2128"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P05",
+   "group": "B",
+   "record": "Taj 2026-08-15 ₦1,132,400 LE-KD-26-1423 (Farouq)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer UMAR MOHAMMED ≠ ERP customer Farouq",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-15",
+     "amountNgn": 1132400,
+     "description": "NIP FRM UMAR MOHAMMED payment for roof a — Paid by: UMAR MOHAMMED",
+     "movementIds": [
+      "TM-KD-26-2109"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P06",
+   "group": "B",
+   "record": "Taj 2026-08-19 ₦36,000 LE-KD-26-1443 (Karderam B Dikkuwa)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ABUBAKAR MAIGIDA ABDULLAHI ≠ ERP customer Karderam B Dikkuwa",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-19",
+     "amountNgn": 36000,
+     "description": "NIP FRM ABUBAKAR MAIGIDA ABDULLAHI For 3 — Paid by: ABUBAKAR MAIGIDA ABDULLAHI",
+     "movementIds": [
+      "TM-KD-26-2152"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P07",
+   "group": "B",
+   "record": "Taj 2026-08-24 ₦975,000 LE-KD-26-1522 (Mrs Solomon)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer DEE 4 COUNTRY YARD ENTERPRISE ≠ ERP customer Mrs Solomon",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-24",
+     "amountNgn": 975000,
+     "description": "NIP FRM DEE 4 COUNTRY YARD ENTERPRISE FI — Paid by: DEE 4 COUNTRY YARD ENTERPRISE",
+     "movementIds": [
+      "TM-KD-26-2285"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P08",
+   "group": "B",
+   "record": "Taj 2026-08-24 ₦1,300,000 LE-KD-26-1493 (Haruna)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer MOHAMMED SHINGA HASSAN ≠ ERP customer Haruna",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-24",
+     "amountNgn": 1300000,
+     "description": "NIP FRM MOHAMMED SHINGA HASSAN MOB To TA — Paid by: MOHAMMED SHINGA HASSAN",
+     "movementIds": [
+      "TM-KD-26-2243"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P09",
+   "group": "B",
+   "record": "Taj 2026-08-27 ₦339,100 LE-KD-26-1522 (Mrs Solomon)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer DEE 4 COUNTRY YARD ENTERPRISE ≠ ERP customer Mrs Solomon",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 2,
+     "bankDateISO": "2026-08-27",
+     "amountNgn": 339100,
+     "description": "NIP FRM DEE 4 COUNTRY YARD ENTERPRISE FI — Paid by: DEE 4 COUNTRY YARD ENTERPRISE",
+     "movementIds": [
+      "TM-KD-26-2286"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P10",
+   "group": "B",
+   "record": "Moniepoint 2026-08-03 ₦76,800 LE-KD-26-1320 (Muhammaed Abddulahi)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ABDULRAHMAN UTHMAN SALI ≠ ERP customer Muhammaed Abddulahi",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-03",
+     "amountNgn": 76800,
+     "description": "Transfer from ABDULRAHMAN UTHMAN SALI — Paid by: ABDULRAHMAN UTHMAN SALI",
+     "movementIds": [
+      "TM-KD-26-1885"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P11",
+   "group": "B",
+   "record": "Moniepoint 2026-08-04 ₦238,700 LE-KD-26-1336 (Engr Abubakar)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer MUSA MAGAG ≠ ERP customer Engr Abubakar",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-04",
+     "amountNgn": 238700,
+     "description": "TRF BO MUSA MAGAGA ABUBAKAR/MOBILE Inter bank TRF FROM MUSA MAGAG TO ZAREWA ALU — Paid by: MUSA MAGAG",
+     "movementIds": [
+      "TM-KD-26-1901"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P12",
+   "group": "B",
+   "record": "Moniepoint 2026-08-04 ₦300,000 LE-KD-26-1337 (Engr Abubakar)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer MUSA MAGAG ≠ ERP customer Engr Abubakar",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-04",
+     "amountNgn": 300000,
+     "description": "TRF BO MUSA MAGAGA ABUBAKAR/MOBILE Inter bank TRF FROM MUSA MAGAG TO ZAREWA ALU — Paid by: MUSA MAGAG",
+     "movementIds": [
+      "TM-KD-26-1902"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P13",
+   "group": "B",
+   "record": "Moniepoint 2026-08-06 ₦158,760 LE-KD-26-1358 (Abdul Salisu)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ISIAKU IBRAHIM ≠ ERP customer Abdul Salisu",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-06",
+     "amountNgn": 158760,
+     "description": "Transfer from ISIAKU IBRAHIM — Paid by: ISIAKU IBRAHIM",
+     "movementIds": [
+      "TM-KD-26-1954"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P14",
+   "group": "B",
+   "record": "Moniepoint 2026-08-08 ₦73,950 LE-KD-26-1370 (Hussaini Jalo)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer BAKARI MOHAMMED IBRAHIM ≠ ERP customer Hussaini Jalo",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-08",
+     "amountNgn": 73950,
+     "description": "FIPMBBAKARI MOHAMMED IBZAREWA ALUMINIUM AND PLASTICS LIMITED   ZAREWA ALMINIUM A — Paid by: BAKARI MOHAMMED IBRAHIM",
+     "movementIds": [
+      "TM-KD-26-1987"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P15",
+   "group": "B",
+   "record": "Moniepoint 2026-08-08 ₦60,900 LE-KD-26-1362 (Hussaini Jalo)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer BAKARI MOHAMMED IBRAHIM ≠ ERP customer Hussaini Jalo",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-08",
+     "amountNgn": 60900,
+     "description": "FIPMBBAKARI MOHAMMED IBZAREWA ALUMINIUM AND PLASTICS LIMITED   ZAREWA ALMINIUM A — Paid by: BAKARI MOHAMMED IBRAHIM",
+     "movementIds": [
+      "TM-KD-26-1959"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P16",
+   "group": "B",
+   "record": "Moniepoint 2026-08-10 ₦420,000.09 LE-KD-26-1386 (Bashir)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer BAHUZA ENTERPRISES COMPANY LTD ≠ ERP customer Bashir",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-10",
+     "amountNgn": 420000,
+     "description": "NIP/Bashir |__INTER_BANK_TRANSFER|ZAREWA ALUMINIUM - FROM BAHUZA ENTERPRISES COM — Paid by: BAHUZA ENTERPRISES COMPANY LTD",
+     "movementIds": [
+      "TM-KD-26-2011"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P17",
+   "group": "B",
+   "record": "Moniepoint 2026-08-12 ₦99,900 LE-KD-26-1408 (Ibrahim Mahmud)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer LAWAL SHUAIBU ≠ ERP customer Ibrahim Mahmud",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-12",
+     "amountNgn": 99900,
+     "description": "Transfer from LAWAL SHUAIBU — Paid by: LAWAL SHUAIBU",
+     "movementIds": [
+      "TM-KD-26-2042"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P18",
+   "group": "B",
+   "record": "Moniepoint 2026-08-15 ₦436,000 LE-KD-26-1428 (Hussaini Jalo)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ABUBAKAR KANKIA MUHAMMAD ≠ ERP customer Hussaini Jalo",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-15",
+     "amountNgn": 436000,
+     "description": "Transfer from ABUBAKAR KANKIA MUHAMMAD — Paid by: ABUBAKAR KANKIA MUHAMMAD",
+     "movementIds": [
+      "TM-KD-26-2130"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P19",
+   "group": "B",
+   "record": "Moniepoint 2026-08-15 ₦12,500 LE-KD-26-1424 (Hussaini Jalo)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ABUBAKAR KANKIA MUHAMMAD ≠ ERP customer Hussaini Jalo",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-15",
+     "amountNgn": 12500,
+     "description": "Transfer from ABUBAKAR KANKIA MUHAMMAD — Paid by: ABUBAKAR KANKIA MUHAMMAD",
+     "movementIds": [
+      "TM-KD-26-2111"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P20",
+   "group": "B",
+   "record": "Moniepoint 2026-08-18 ₦15,000 LE-KD-26-1437 (% Khalid)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ABUBAKAR ABDULLAHI ≠ ERP customer % Khalid",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-18",
+     "amountNgn": 15000,
+     "description": "Transfer from ABUBAKAR ABDULLAHI — Paid by: ABUBAKAR ABDULLAHI",
+     "movementIds": [
+      "TM-KD-26-2144"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P21",
+   "group": "B",
+   "record": "Moniepoint 2026-08-18 ₦192,540 LE-KD-26-1440 (Salisu U/rimi)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer BILYAMINU ABDULLAHI ABDULLAHI ≠ ERP customer Salisu U/rimi",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-18",
+     "amountNgn": 192540,
+     "description": "Transfer from BILYAMINU ABDULLAHI ABDULLAHI — Paid by: BILYAMINU ABDULLAHI ABDULLAHI",
+     "movementIds": [
+      "TM-KD-26-2148"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P22",
+   "group": "B",
+   "record": "Moniepoint 2026-08-19 ₦18,750 LE-KD-26-1391 (Kabiru Cap % K)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer Abubakar Abdullahi ≠ ERP customer Kabiru Cap % K",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-19",
+     "amountNgn": 18750,
+     "description": "Sent from Fairmoney - FROM Abubakar Abdullahi — Paid by: Abubakar Abdullahi",
+     "movementIds": [
+      "TM-KD-26-2016"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P23",
+   "group": "B",
+   "record": "Moniepoint 2026-08-19 ₦10,000 LE-KD-26-1451 (Ahmad Jj)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer Abubakar Abdullahi ≠ ERP customer Ahmad Jj",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-19",
+     "amountNgn": 10000,
+     "description": "Sent from Fairmoney - FROM Abubakar Abdullahi — Paid by: Abubakar Abdullahi",
+     "movementIds": [
+      "TM-KD-26-2159"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P24",
+   "group": "B",
+   "record": "Moniepoint 2026-08-20 ₦56,640 LE-KD-26-1328 (Usman Ahmad)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer ABDULRAHMAN UTHMAN SALI ≠ ERP customer Usman Ahmad",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-20",
+     "amountNgn": 56640,
+     "description": "Transfer from ABDULRAHMAN UTHMAN SALI — Paid by: ABDULRAHMAN UTHMAN SALI",
+     "movementIds": [
+      "TM-KD-26-1893"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P25",
+   "group": "B",
+   "record": "Moniepoint 2026-08-27 ₦315,000 LE-KD-26-1521 (Bashir Shehu)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer SUHAIL HAMISU ≠ ERP customer Bashir Shehu",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-27",
+     "amountNgn": 315000,
+     "description": "Transfer from SUHAIL HAMISU — Paid by: SUHAIL HAMISU",
+     "movementIds": [
+      "TM-KD-26-2284"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P26",
+   "group": "B",
+   "record": "Moniepoint 2026-08-29 ₦24,000 LE-KD-26-1541 (% Khalid)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer Abubakar Abdullahi ≠ ERP customer % Khalid",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-29",
+     "amountNgn": 24000,
+     "description": "Sent from Fairmoney - FROM Abubakar Abdullahi — Paid by: Abubakar Abdullahi",
+     "movementIds": [
+      "TM-KD-26-2320"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "P27",
+   "group": "B",
+   "record": "Moniepoint 2026-08-31 ₦196,620 LE-KD-26-1556 (Baba Isa)",
+   "field": "bank reconciliation link + paid by",
+   "reason": "Bank payer YAKUBU MUSA ENTERPRISE ≠ ERP customer Baba Isa",
+   "ops": [
+    {
+     "kind": "reconLink",
+     "treasuryAccountId": 4,
+     "bankDateISO": "2026-08-31",
+     "amountNgn": 196620,
+     "description": "Transfer from YAKUBU MUSA ENTERPRISE — Paid by: YAKUBU MUSA ENTERPRISE",
+     "movementIds": [
+      "TM-KD-26-2342"
+     ],
+     "branchId": "BR-KD"
+    }
+   ]
+  }
+ ]
+}

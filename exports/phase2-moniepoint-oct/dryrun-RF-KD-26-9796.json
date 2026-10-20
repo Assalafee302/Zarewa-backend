@@ -1,0 +1,170 @@
+{
+ "generatedAt": "2026-10-19T10:44:12.626Z",
+ "mode": "DRY RUN — nothing written",
+ "partA_bankReceivedFix": [
+  {
+   "receipt": "LE-KD-26-1968",
+   "quotation": "QT-KD-26-1705",
+   "customer": "NUHU SHITTU",
+   "bankReceivedBefore": 22000,
+   "bankReceivedAfter": 42000,
+   "quotePaidBefore": 36455,
+   "quotePaidAfter": 56455,
+   "quoteTotal": 36455,
+   "delta": 20000
+  },
+  {
+   "receipt": "LE-KD-26-1986",
+   "quotation": "QT-KD-26-1720",
+   "customer": "aliyu mohd",
+   "bankReceivedBefore": 204880,
+   "bankReceivedAfter": 204980,
+   "quotePaidBefore": 208918,
+   "quotePaidAfter": 209018,
+   "quoteTotal": 111836,
+   "delta": 100
+  },
+  {
+   "receipt": "LE-KD-26-2026",
+   "quotation": "QT-KD-26-1755",
+   "customer": "shamsudeen",
+   "bankReceivedBefore": 43428,
+   "bankReceivedAfter": 43450,
+   "quotePaidBefore": 43428,
+   "quotePaidAfter": 43450,
+   "quoteTotal": 43428,
+   "delta": 22
+  },
+  {
+   "receipt": "LE-KD-26-2042",
+   "quotation": "QT-KD-26-1763",
+   "customer": "HAKIMI",
+   "bankReceivedBefore": 942700,
+   "bankReceivedAfter": 965000,
+   "quotePaidBefore": 952200,
+   "quotePaidAfter": 974500,
+   "quoteTotal": 952200,
+   "delta": 22300
+  },
+  {
+   "receipt": "LE-KD-26-2044",
+   "quotation": "QT-KD-26-1764",
+   "customer": "mohammed haruna",
+   "bankReceivedBefore": 1351540,
+   "bankReceivedAfter": 1001540,
+   "quotePaidBefore": 1351540,
+   "quotePaidAfter": 1001540,
+   "quoteTotal": 1305079,
+   "delta": -350000
+  },
+  {
+   "receipt": "LE-KD-26-2092",
+   "quotation": "QT-KD-26-1791",
+   "customer": "HAKIMI",
+   "bankReceivedBefore": 4000,
+   "bankReceivedAfter": 4015,
+   "quotePaidBefore": 4000,
+   "quotePaidAfter": 4015,
+   "quoteTotal": 4015,
+   "delta": 15
+  },
+  {
+   "receipt": "LE-KD-26-2093",
+   "quotation": "QT-KD-26-1792",
+   "customer": "ENGR ATTAH NICHOLAS",
+   "bankReceivedBefore": 353184,
+   "bankReceivedAfter": 353000,
+   "quotePaidBefore": 353184,
+   "quotePaidAfter": 353000,
+   "quoteTotal": 353158,
+   "delta": -184
+  },
+  {
+   "receipt": "LE-KD-26-2094",
+   "quotation": "QT-KD-26-1793",
+   "customer": "IBRAHIM  WELDER",
+   "bankReceivedBefore": 142550,
+   "bankReceivedAfter": 146250,
+   "quotePaidBefore": 143750,
+   "quotePaidAfter": 147450,
+   "quoteTotal": 143750,
+   "delta": 3700
+  },
+  {
+   "receipt": "LE-KD-26-2150",
+   "quotation": "QT-KD-26-1818",
+   "customer": "Adam suleiman",
+   "bankReceivedBefore": 1679000,
+   "bankReceivedAfter": 1714000,
+   "quotePaidBefore": 1679000,
+   "quotePaidAfter": 1714000,
+   "quoteTotal": 1439040,
+   "delta": 35000
+  }
+ ],
+ "partB_refund": {
+  "refundId": "RF-KD-26-9796",
+  "status": "Pending (unchanged)",
+  "before": {
+   "amountNgn": 268120,
+   "lines": [
+    {
+     "category": "Overpayment",
+     "amountNgn": 239960
+    },
+    {
+     "category": "Customer commission",
+     "amountNgn": 28160
+    }
+   ],
+   "splits": [
+    {
+     "payee": "Adam Suleiman (customer)",
+     "gross": 216000,
+     "cut": 0,
+     "net": 216000
+    },
+    {
+     "payee": "Suleiman Abdullahi Liman (staff, 20%)",
+     "gross": 52120,
+     "cut": 10424,
+     "net": 41696
+    }
+   ],
+   "cashInNgn": 1679000,
+   "overpaymentExcessNgn": 239960
+  },
+  "after": {
+   "amountNgn": 303120,
+   "lines": [
+    {
+     "category": "Overpayment",
+     "amountNgn": 274960
+    },
+    {
+     "category": "Customer commission",
+     "amountNgn": 28160
+    }
+   ],
+   "splits": [
+    {
+     "payee": "Adam Suleiman (customer)",
+     "gross": 251000,
+     "cut": 0,
+     "net": 251000
+    },
+    {
+     "payee": "Suleiman Abdullahi Liman (staff, 20%)",
+     "gross": 52120,
+     "cut": 10424,
+     "net": 41696
+    }
+   ],
+   "cashInNgn": 1714000,
+   "overpaymentExcessNgn": 274960,
+   "maxDefensibleRefundNgn": 359120
+  },
+  "payableBefore": 257696,
+  "payableAfter": 292696
+ }
+}

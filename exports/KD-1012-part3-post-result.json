@@ -1,0 +1,457 @@
+{
+  "date": "2026-10-12",
+  "journals": [
+    {
+      "poId": "PO-KD-26-0078",
+      "amountNgn": 263160,
+      "journalId": "JE-KD-26-4754"
+    },
+    {
+      "poId": "PO-KD-26-0079",
+      "amountNgn": 86000,
+      "journalId": "JE-KD-26-4755"
+    },
+    {
+      "poId": "PO-KD-26-0030",
+      "amountNgn": 816000,
+      "journalId": "JE-KD-26-4756"
+    }
+  ],
+  "recon": {
+    "createdCount": 86,
+    "first": "BKR-KD-26-0001",
+    "last": "BKR-KD-26-0086",
+    "created": [
+      {
+        "line": 1,
+        "id": "BKR-KD-26-0001",
+        "status": "Matched"
+      },
+      {
+        "line": 2,
+        "id": "BKR-KD-26-0002",
+        "status": "Matched"
+      },
+      {
+        "line": 3,
+        "id": "BKR-KD-26-0003",
+        "status": "Matched"
+      },
+      {
+        "line": 4,
+        "id": "BKR-KD-26-0004",
+        "status": "Matched"
+      },
+      {
+        "line": 5,
+        "id": "BKR-KD-26-0005",
+        "status": "Matched"
+      },
+      {
+        "line": 6,
+        "id": "BKR-KD-26-0006",
+        "status": "Matched"
+      },
+      {
+        "line": 7,
+        "id": "BKR-KD-26-0007",
+        "status": "Matched"
+      },
+      {
+        "line": 8,
+        "id": "BKR-KD-26-0008",
+        "status": "Matched"
+      },
+      {
+        "line": 9,
+        "id": "BKR-KD-26-0009",
+        "status": "Matched"
+      },
+      {
+        "line": 10,
+        "id": "BKR-KD-26-0010",
+        "status": "Matched"
+      },
+      {
+        "line": 11,
+        "id": "BKR-KD-26-0011",
+        "status": "Matched"
+      },
+      {
+        "line": 12,
+        "id": "BKR-KD-26-0012",
+        "status": "Matched"
+      },
+      {
+        "line": 13,
+        "id": "BKR-KD-26-0013",
+        "status": "Matched"
+      },
+      {
+        "line": 14,
+        "id": "BKR-KD-26-0014",
+        "status": "Matched"
+      },
+      {
+        "line": 15,
+        "id": "BKR-KD-26-0015",
+        "status": "Matched"
+      },
+      {
+        "line": 16,
+        "id": "BKR-KD-26-0016",
+        "status": "Matched"
+      },
+      {
+        "line": 17,
+        "id": "BKR-KD-26-0017",
+        "status": "Matched"
+      },
+      {
+        "line": 18,
+        "id": "BKR-KD-26-0018",
+        "status": "Matched"
+      },
+      {
+        "line": 19,
+        "id": "BKR-KD-26-0019",
+        "status": "Matched"
+      },
+      {
+        "line": 20,
+        "id": "BKR-KD-26-0020",
+        "status": "Matched"
+      },
+      {
+        "line": 21,
+        "id": "BKR-KD-26-0021",
+        "status": "Matched"
+      },
+      {
+        "line": 22,
+        "id": "BKR-KD-26-0022",
+        "status": "Matched"
+      },
+      {
+        "line": 23,
+        "id": "BKR-KD-26-0023",
+        "status": "Matched"
+      },
+      {
+        "line": 24,
+        "id": "BKR-KD-26-0024",
+        "status": "Matched"
+      },
+      {
+        "line": 25,
+        "id": "BKR-KD-26-0025",
+        "status": "Review"
+      },
+      {
+        "line": 26,
+        "id": "BKR-KD-26-0026",
+        "status": "Matched"
+      },
+      {
+        "line": 27,
+        "id": "BKR-KD-26-0027",
+        "status": "Matched"
+      },
+      {
+        "line": 28,
+        "id": "BKR-KD-26-0028",
+        "status": "Matched"
+      },
+      {
+        "line": 29,
+        "id": "BKR-KD-26-0029",
+        "status": "Matched"
+      },
+      {
+        "line": 30,
+        "id": "BKR-KD-26-0030",
+        "status": "Matched"
+      },
+      {
+        "line": 31,
+        "id": "BKR-KD-26-0031",
+        "status": "Matched"
+      },
+      {
+        "line": 32,
+        "id": "BKR-KD-26-0032",
+        "status": "Matched"
+      },
+      {
+        "line": 33,
+        "id": "BKR-KD-26-0033",
+        "status": "Matched"
+      },
+      {
+        "line": 34,
+        "id": "BKR-KD-26-0034",
+        "status": "Matched"
+      },
+      {
+        "line": 35,
+        "id": "BKR-KD-26-0035",
+        "status": "Matched"
+      },
+      {
+        "line": 36,
+        "id": "BKR-KD-26-0036",
+        "status": "Matched"
+      },
+      {
+        "line": 37,
+        "id": "BKR-KD-26-0037",
+        "status": "Matched"
+      },
+      {
+        "line": 38,
+        "id": "BKR-KD-26-0038",
+        "status": "Matched"
+      },
+      {
+        "line": 39,
+        "id": "BKR-KD-26-0039",
+        "status": "Matched"
+      },
+      {
+        "line": 40,
+        "id": "BKR-KD-26-0040",
+        "status": "Matched"
+      },
+      {
+        "line": 41,
+        "id": "BKR-KD-26-0041",
+        "status": "Matched"
+      },
+      {
+        "line": 42,
+        "id": "BKR-KD-26-0042",
+        "status": "Matched"
+      },
+      {
+        "line": 43,
+        "id": "BKR-KD-26-0043",
+        "status": "Matched"
+      },
+      {
+        "line": 44,
+        "id": "BKR-KD-26-0044",
+        "status": "Matched"
+      },
+      {
+        "line": 45,
+        "id": "BKR-KD-26-0045",
+        "status": "Matched"
+      },
+      {
+        "line": 46,
+        "id": "BKR-KD-26-0046",
+        "status": "Matched"
+      },
+      {
+        "line": 47,
+        "id": "BKR-KD-26-0047",
+        "status": "Matched"
+      },
+      {
+        "line": 48,
+        "id": "BKR-KD-26-0048",
+        "status": "Matched"
+      },
+      {
+        "line": 49,
+        "id": "BKR-KD-26-0049",
+        "status": "Matched"
+      },
+      {
+        "line": 50,
+        "id": "BKR-KD-26-0050",
+        "status": "Matched"
+      },
+      {
+        "line": 51,
+        "id": "BKR-KD-26-0051",
+        "status": "Matched"
+      },
+      {
+        "line": 52,
+        "id": "BKR-KD-26-0052",
+        "status": "Matched"
+      },
+      {
+        "line": 53,
+        "id": "BKR-KD-26-0053",
+        "status": "Matched"
+      },
+      {
+        "line": 54,
+        "id": "BKR-KD-26-0054",
+        "status": "Matched"
+      },
+      {
+        "line": 55,
+        "id": "BKR-KD-26-0055",
+        "status": "Matched"
+      },
+      {
+        "line": 56,
+        "id": "BKR-KD-26-0056",
+        "status": "Matched"
+      },
+      {
+        "line": 57,
+        "id": "BKR-KD-26-0057",
+        "status": "Matched"
+      },
+      {
+        "line": 58,
+        "id": "BKR-KD-26-0058",
+        "status": "Matched"
+      },
+      {
+        "line": 59,
+        "id": "BKR-KD-26-0059",
+        "status": "Matched"
+      },
+      {
+        "line": 60,
+        "id": "BKR-KD-26-0060",
+        "status": "Matched"
+      },
+      {
+        "line": 61,
+        "id": "BKR-KD-26-0061",
+        "status": "Matched"
+      },
+      {
+        "line": 62,
+        "id": "BKR-KD-26-0062",
+        "status": "Review"
+      },
+      {
+        "line": 63,
+        "id": "BKR-KD-26-0063",
+        "status": "Review"
+      },
+      {
+        "line": 64,
+        "id": "BKR-KD-26-0064",
+        "status": "Matched"
+      },
+      {
+        "line": 65,
+        "id": "BKR-KD-26-0065",
+        "status": "Matched"
+      },
+      {
+        "line": 66,
+        "id": "BKR-KD-26-0066",
+        "status": "Matched"
+      },
+      {
+        "line": 67,
+        "id": "BKR-KD-26-0067",
+        "status": "Matched"
+      },
+      {
+        "line": 68,
+        "id": "BKR-KD-26-0068",
+        "status": "Matched"
+      },
+      {
+        "line": 69,
+        "id": "BKR-KD-26-0069",
+        "status": "Matched"
+      },
+      {
+        "line": 70,
+        "id": "BKR-KD-26-0070",
+        "status": "Matched"
+      },
+      {
+        "line": 71,
+        "id": "BKR-KD-26-0071",
+        "status": "Matched"
+      },
+      {
+        "line": 72,
+        "id": "BKR-KD-26-0072",
+        "status": "Matched"
+      },
+      {
+        "line": 73,
+        "id": "BKR-KD-26-0073",
+        "status": "Matched"
+      },
+      {
+        "line": 74,
+        "id": "BKR-KD-26-0074",
+        "status": "Matched"
+      },
+      {
+        "line": 75,
+        "id": "BKR-KD-26-0075",
+        "status": "Matched"
+      },
+      {
+        "line": 76,
+        "id": "BKR-KD-26-0076",
+        "status": "Matched"
+      },
+      {
+        "line": 77,
+        "id": "BKR-KD-26-0077",
+        "status": "Matched"
+      },
+      {
+        "line": 78,
+        "id": "BKR-KD-26-0078",
+        "status": "Matched"
+      },
+      {
+        "line": 79,
+        "id": "BKR-KD-26-0079",
+        "status": "Matched"
+      },
+      {
+        "line": 80,
+        "id": "BKR-KD-26-0080",
+        "status": "Matched"
+      },
+      {
+        "line": 81,
+        "id": "BKR-KD-26-0081",
+        "status": "Matched"
+      },
+      {
+        "line": 82,
+        "id": "BKR-KD-26-0082",
+        "status": "Matched"
+      },
+      {
+        "line": 83,
+        "id": "BKR-KD-26-0083",
+        "status": "Review"
+      },
+      {
+        "line": 84,
+        "id": "BKR-KD-26-0084",
+        "status": "Review"
+      },
+      {
+        "line": 85,
+        "id": "BKR-KD-26-0085",
+        "status": "Matched"
+      },
+      {
+        "line": 86,
+        "id": "BKR-KD-26-0086",
+        "status": "Matched"
+      }
+    ]
+  }
+}

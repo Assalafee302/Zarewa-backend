@@ -1,0 +1,284 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-14T22:13:35.730Z",
+ "plan": "phase2-aug2b-2026-10-14.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "A8c",
+   "group": "A",
+   "record": "Moniepoint Aug ₦20 transfer fees (137 × ₦20)",
+   "field": "new expense (Bank charges)",
+   "op": "postExpense",
+   "outcome": "applied",
+   "expenseID": "EXP-KD-26-0461",
+   "treasuryMovementId": "TM-KD-26-3270"
+  },
+  {
+   "id": "B12d",
+   "group": "B",
+   "record": "TM-KD-26-2162 (RF-KD-26-9500, ₦15,350, Moniepoint 19 Aug)",
+   "field": "treasury_movements.note",
+   "op": "setNote",
+   "outcome": "applied"
+  },
+  {
+   "id": "B13d",
+   "group": "B",
+   "record": "Taj 4 Aug Chancellors Farms ₦1,062,080 − Oga Ali receipts ₦1,047,080",
+   "field": "customer advance (unapplied credit)",
+   "op": "customerAdvance",
+   "outcome": "applied",
+   "ledgerEntryId": "LE-KD-26-2126",
+   "customer": "CUS-KD-26-1151",
+   "treasuryMovementIds": [
+    "TM-KD-26-3271"
+   ]
+  },
+  {
+   "id": "BKR-KD-26-0992",
+   "group": "B",
+   "record": "Taj 2026-08-10 ₦5,689,333 LE-KD-26-1395 (% Boni)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-0993",
+   "group": "B",
+   "record": "Taj 2026-08-11 ₦486,000 LE-KD-26-1400 (Engr Yakubu Mohd)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-0994",
+   "group": "B",
+   "record": "Taj 2026-08-11 ₦17,500 LE-KD-26-1400 (Engr Yakubu Mohd)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-0995",
+   "group": "B",
+   "record": "Taj 2026-08-14 ₦2,295,900 LE-KD-26-1426 (Murtala Cap)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-0996",
+   "group": "B",
+   "record": "Taj 2026-08-15 ₦1,132,400 LE-KD-26-1423 (Farouq)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-0997",
+   "group": "B",
+   "record": "Taj 2026-08-19 ₦36,000 LE-KD-26-1443 (Karderam B Dikkuwa)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-0998",
+   "group": "B",
+   "record": "Taj 2026-08-24 ₦975,000 LE-KD-26-1522 (Mrs Solomon)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-0999",
+   "group": "B",
+   "record": "Taj 2026-08-24 ₦1,300,000 LE-KD-26-1493 (Haruna)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1000",
+   "group": "B",
+   "record": "Taj 2026-08-27 ₦339,100 LE-KD-26-1522 (Mrs Solomon)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1001",
+   "group": "B",
+   "record": "Moniepoint 2026-08-03 ₦76,800 LE-KD-26-1320 (Muhammaed Abddulahi)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1002",
+   "group": "B",
+   "record": "Moniepoint 2026-08-04 ₦238,700 LE-KD-26-1336 (Engr Abubakar)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1003",
+   "group": "B",
+   "record": "Moniepoint 2026-08-04 ₦300,000 LE-KD-26-1337 (Engr Abubakar)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1004",
+   "group": "B",
+   "record": "Moniepoint 2026-08-06 ₦158,760 LE-KD-26-1358 (Abdul Salisu)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1005",
+   "group": "B",
+   "record": "Moniepoint 2026-08-08 ₦73,950 LE-KD-26-1370 (Hussaini Jalo)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1006",
+   "group": "B",
+   "record": "Moniepoint 2026-08-08 ₦60,900 LE-KD-26-1362 (Hussaini Jalo)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1007",
+   "group": "B",
+   "record": "Moniepoint 2026-08-10 ₦420,000.09 LE-KD-26-1386 (Bashir)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1008",
+   "group": "B",
+   "record": "Moniepoint 2026-08-12 ₦99,900 LE-KD-26-1408 (Ibrahim Mahmud)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1009",
+   "group": "B",
+   "record": "Moniepoint 2026-08-15 ₦436,000 LE-KD-26-1428 (Hussaini Jalo)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1010",
+   "group": "B",
+   "record": "Moniepoint 2026-08-15 ₦12,500 LE-KD-26-1424 (Hussaini Jalo)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1011",
+   "group": "B",
+   "record": "Moniepoint 2026-08-18 ₦15,000 LE-KD-26-1437 (% Khalid)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1012",
+   "group": "B",
+   "record": "Moniepoint 2026-08-18 ₦192,540 LE-KD-26-1440 (Salisu U/rimi)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1013",
+   "group": "B",
+   "record": "Moniepoint 2026-08-19 ₦18,750 LE-KD-26-1391 (Kabiru Cap % K)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1014",
+   "group": "B",
+   "record": "Moniepoint 2026-08-19 ₦10,000 LE-KD-26-1451 (Ahmad Jj)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1015",
+   "group": "B",
+   "record": "Moniepoint 2026-08-20 ₦56,640 LE-KD-26-1328 (Usman Ahmad)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1016",
+   "group": "B",
+   "record": "Moniepoint 2026-08-27 ₦315,000 LE-KD-26-1521 (Bashir Shehu)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1017",
+   "group": "B",
+   "record": "Moniepoint 2026-08-29 ₦24,000 LE-KD-26-1541 (% Khalid)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-1018",
+   "group": "B",
+   "record": "Moniepoint 2026-08-31 ₦196,620 LE-KD-26-1556 (Baba Isa)",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 0
+  }
+ ]
+}

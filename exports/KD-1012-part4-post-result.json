@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-12",
+  "lines": [
+    {
+      "coilNo": "CL-26-2060",
+      "step": "complete PRO-KD-26-1122",
+      "kg": -34,
+      "movementId": "MV-1791813257631-zbf48",
+      "afterKg": 154,
+      "reservedAfter": 0
+    },
+    {
+      "coilNo": "CL-26-2060",
+      "step": "COIL_SCRAP",
+      "kg": -154,
+      "movementId": "MV-26-00736"
+    },
+    {
+      "coilNo": "CL-KD-APR-1512",
+      "step": "ADJUSTMENT",
+      "kg": -102,
+      "movementId": "MV-26-00737",
+      "glJournalId": "JE-KD-26-4764",
+      "valueNgn": 177276
+    },
+    {
+      "coilNo": "CL-26-2038",
+      "step": "COIL_SCRAP",
+      "kg": -203,
+      "movementId": "MV-26-00738"
+    },
+    {
+      "coilNo": "CL-26-2062",
+      "step": "COIL_SCRAP",
+      "kg": -105,
+      "movementId": "MV-26-00739"
+    }
+  ],
+  "mvFix": {
+    "id": "MV-26-00497",
+    "date_iso": "2026-09-15",
+    "at_iso": "2026-09-15T12:00:00",
+    "qty": 71,
+    "value_ngn": 461500
+  }
+}

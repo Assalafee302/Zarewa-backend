@@ -1,0 +1,41 @@
+{
+  "ok": true,
+  "posted": true,
+  "postDate": "2026-10-10",
+  "branch": "BR-KD",
+  "results": [
+    {
+      "coilNo": "CL-26-2102",
+      "ok": true,
+      "erpBefore": 1434.5,
+      "restoreKg": 111.5,
+      "erpAfter": 1546,
+      "targetKg": 1546,
+      "hitTarget": true,
+      "status": "Available",
+      "scrapMv": "MV-26-00655"
+    },
+    {
+      "coilNo": "CL-KD-APR-1399",
+      "ok": true,
+      "erpBefore": 474.31,
+      "restoreKg": 100.69,
+      "erpAfter": 575,
+      "targetKg": 575,
+      "hitTarget": true,
+      "status": "Available",
+      "scrapMv": "MV-26-00654"
+    },
+    {
+      "coilNo": "CL-KD-APR-1997",
+      "ok": true,
+      "erpBefore": 1594.67,
+      "restoreKg": 39.33,
+      "erpAfter": 1634,
+      "targetKg": 1634,
+      "hitTarget": true,
+      "status": "Available",
+      "scrapMv": "MV-26-00651"
+    }
+  ]
+}

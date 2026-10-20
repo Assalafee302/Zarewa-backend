@@ -1,0 +1,3 @@
+{"at":"2026-10-17T18:00:58.872Z","event":"start","mode":"check","plan":"mp-round4c-2026-10-17.plan.json","balances":{"2":{"ledger":12749735,"stored":21283516},"3":{"ledger":240021,"stored":240021},"4":{"ledger":7759619,"stored":7759619}}}
+{"at":"2026-10-17T18:01:02.975Z","event":"item","item":"R4-G1","outcomes":["receiptReverse:would apply"],"expectDeltaNgn":{"2":0,"3":0,"4":-1562900},"itemDelta":{"2":0,"3":0,"4":0},"concurrent":[],"before":{"2":{"ledger":12749735,"stored":21283516},"3":{"ledger":240021,"stored":240021},"4":{"ledger":7759619,"stored":7759619}},"after":{"2":{"ledger":12749735,"stored":21283516},"3":{"ledger":240021,"stored":240021},"4":{"ledger":7759619,"stored":7759619}},"mismatch":[]}
+{"at":"2026-10-17T18:01:02.975Z","event":"done","failed":null}

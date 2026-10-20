@@ -1,0 +1,87 @@
+{
+ "at": "2026-10-13T10:54:15.452Z",
+ "processlist": [
+  {
+   "ID": 198287007,
+   "HOST": "105.117.0.137:58424",
+   "COMMAND": "Query",
+   "TIME": 0,
+   "STATE": "Filling schema table",
+   "info": "SELECT ID, HOST, COMMAND, TIME, STATE, LEFT(INFO,80) info FROM information_schem"
+  },
+  {
+   "ID": 198275894,
+   "HOST": "105.117.0.137:9587",
+   "COMMAND": "Sleep",
+   "TIME": 0,
+   "STATE": "",
+   "info": null
+  }
+ ],
+ "yolaOnHand": {
+  "coils": 121,
+  "kg": 119611,
+  "heldKg": 248,
+  "reservedKg": 842
+ },
+ "yolaAllLots": {
+  "lots": 130,
+  "kg": 119611
+ },
+ "byProduct": [
+  {
+   "product_id": "COIL-ALU",
+   "lots": 8,
+   "kg": 1710,
+   "reservedKg": 0
+  },
+  {
+   "product_id": "PRD-102",
+   "lots": 122,
+   "kg": 117901,
+   "reservedKg": 842
+  }
+ ],
+ "products": [
+  {
+   "product_id": "COIL-ALU",
+   "name": "Aluminium coil (kg)",
+   "stock_level": 4893,
+   "unit": "kg",
+   "low_stock_threshold": 10000,
+   "reorder_qty": 20000,
+   "gauge": "Per PO / coil",
+   "colour": "Per PO / coil (HMB, GB, TB, …)",
+   "material_type": "Aluminium",
+   "dashboard_attrs_json": "{\"gauge\":\"Per PO / coil\",\"colour\":\"Per PO / coil (HMB, GB, TB, …)\",\"materialType\":\"Aluminium\"}",
+   "branch_id": "",
+   "base_unit": null
+  },
+  {
+   "product_id": "PRD-102",
+   "name": "Aluzinc (PPGI) coil (kg)",
+   "stock_level": 168214,
+   "unit": "kg",
+   "low_stock_threshold": 15000,
+   "reorder_qty": 20000,
+   "gauge": "Per PO / coil",
+   "colour": "Per PO / coil",
+   "material_type": "Aluzinc (PPGI)",
+   "dashboard_attrs_json": "{\"gauge\":\"Per PO / coil\",\"colour\":\"Per PO / coil\",\"materialType\":\"Aluzinc (PPGI)\"}",
+   "branch_id": "",
+   "base_unit": null
+  }
+ ],
+ "cvYola": {
+  "n": 1,
+  "kg": -9
+ },
+ "maxMv": 742,
+ "maxAud": 40524,
+ "jeYl": [
+  {
+   "scope": "JE|YL|2026",
+   "v": 1144
+  }
+ ]
+}

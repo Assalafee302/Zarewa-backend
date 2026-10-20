@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "customerID": "CUS-KD-26-1128",
+  "customerReused": true,
+  "customerName": "Ocholi Onuche",
+  "quotationId": "QT-KD-26-1762",
+  "quoteTotalNgn": 1141865,
+  "receiptId": "LE-KD-26-2040",
+  "receiptStatus": "Pending clearance",
+  "cuttingListId": "CL-KD-26-1448",
+  "totalM": 265.55,
+  "printHint": "Sales desk → Cutting lists → open CL-KD-26-1448 → Print. After print: POST /api/cutting-lists/CL-KD-26-1448/record-print",
+  "production": "NOT started (as requested)"
+}

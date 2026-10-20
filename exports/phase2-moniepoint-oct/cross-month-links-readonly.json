@@ -1,0 +1,889 @@
+[
+ {
+  "tm": {
+   "id": "TM-KD-26-2946",
+   "type": "PAYMENT_REQUEST_OUT",
+   "amount_ngn": -35000,
+   "posted_at_iso": "2026-10-01T12:00:00.000Z",
+   "source_kind": "PAYMENT_REQUEST",
+   "source_id": "PREQ-KD-26-0313",
+   "counterparty_name": "Khalifa school registration",
+   "note": ""
+  },
+  "preq": {
+   "request_id": "PREQ-KD-26-0313",
+   "description": "Khalifa school registration",
+   "payee_name": "mustapha sali",
+   "amount_requested_ngn": 35000,
+   "paid_at_iso": "2026-10-01",
+   "request_date": "2026-10-01"
+  },
+  "sep": {
+   "id": "BKR-KD-26-0868",
+   "bank_date_iso": "2026-09-28",
+   "description": "care of MD",
+   "amount_ngn": -35020,
+   "system_match": "TM-KD-26-2946 · fee 20 (ERP 2026-10-01)",
+   "status": "Matched"
+  },
+  "octRow": {
+   "id": "BKR-KD-26-1381",
+   "bank_date_iso": "2026-10-01",
+   "description": "khalifah school registration — to MUSTAPHA USMAN SALI (Moniepoint MFB)",
+   "amount_ngn": -35000,
+   "system_match": "— · MP-TRF|2MPT2dqhf|2105711914826272768_CBA_DEBIT_0 · matches TM-KD-26-2946; TM-KD-26-2946 is linke",
+   "status": "Review"
+  },
+  "stmt": [
+   {
+    "at": "2026-09-28T16:28:34.000Z",
+    "ref": "TRF|2MPT2dqhf|2104609221692399616_DEBIT_0",
+    "debit": 35020,
+    "credit": 0,
+    "txn": 35000,
+    "beneficiary": "KADIRI MUTARI",
+    "inst": "First Bank of Nigeria",
+    "narration": "care of MD"
+   }
+  ],
+  "candidates": [
+   {
+    "id": "TM-KD-26-2696",
+    "type": "PAYMENT_REQUEST_OUT",
+    "amount_ngn": -35000,
+    "posted_at_iso": "2026-09-19T12:00:00.000Z",
+    "source_id": "PREQ-KD-26-0262",
+    "counterparty_name": "IOU",
+    "links": 1,
+    "preq": {
+     "description": "IOU",
+     "payee_name": ""
+    },
+    "refund": null
+   }
+  ]
+ },
+ {
+  "tm": {
+   "id": "TM-KD-26-3014",
+   "type": "PAYMENT_REQUEST_OUT",
+   "amount_ngn": -20000,
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "source_kind": "PAYMENT_REQUEST",
+   "source_id": "PREQ-KD-26-0326",
+   "counterparty_name": "PR for tax clerance certificate",
+   "note": ""
+  },
+  "preq": {
+   "request_id": "PREQ-KD-26-0326",
+   "description": "PR for tax clerance certificate",
+   "payee_name": "",
+   "amount_requested_ngn": 20000,
+   "paid_at_iso": "2026-10-02",
+   "request_date": "2026-10-02"
+  },
+  "sep": {
+   "id": "BKR-KD-26-0989",
+   "bank_date_iso": "2026-09-30",
+   "description": "TRANSFER TO ONUCHE ALI First Bank of Nigeria *****87804/TRF|2MPTjxi41|2105391709690060800",
+   "amount_ngn": -20020,
+   "system_match": "TM-KD-26-3014 · fee 20 (ERP 2026-10-02)",
+   "status": "Matched"
+  },
+  "octRow": {
+   "id": "BKR-KD-26-1394",
+   "bank_date_iso": "2026-10-02",
+   "description": "TRANSFER — Gm request through Abdulrahman — to Bala Muazu Suleiman (OPay)",
+   "amount_ngn": -20020,
+   "system_match": "— · MP-TRF|2MPT2dqhf|2106051002244837376_DEBIT_0 · matches TM-KD-26-3014; fee 20; TM-KD-26-3014 is l",
+   "status": "Review"
+  },
+  "stmt": [
+   {
+    "at": "2026-09-30T16:44:21.000Z",
+    "ref": "TRF|2MPT2dqhf|2105337966582231040_DEBIT_0",
+    "debit": 20020,
+    "credit": 0,
+    "txn": 20000,
+    "beneficiary": "ABDULRAHMAN UTHMAN SALI",
+    "inst": "OPay",
+    "narration": "Suleiman Zaria refund"
+   },
+   {
+    "at": "2026-09-30T20:16:18.000Z",
+    "ref": "TRF|2MPT2dqhf|2105391306323963904_DEBIT_0",
+    "debit": 20020,
+    "credit": 0,
+    "txn": 20000,
+    "beneficiary": "ABDULLAHI SULEIMAN LIMAN",
+    "inst": "First Bank of Nigeria",
+    "narration": "remaining refund of usman tijjani"
+   },
+   {
+    "at": "2026-09-30T20:17:54.000Z",
+    "ref": "TRF|2MPTjxi41|2105391709690060800_DEBIT_0",
+    "debit": 20020,
+    "credit": 0,
+    "txn": 20000,
+    "beneficiary": "ONUCHE ALI",
+    "inst": "First Bank of Nigeria",
+    "narration": "TRANSFER TO ONUCHE ALI First Bank of Nigeria *****87804/TRF|2MPTjxi41|2105391709690060800"
+   }
+  ],
+  "candidates": [
+   {
+    "id": "TM-KD-26-2635",
+    "type": "PAYMENT_REQUEST_OUT",
+    "amount_ngn": -20000,
+    "posted_at_iso": "2026-09-16T12:00:00.000Z",
+    "source_id": "PREQ-KD-26-0237",
+    "counterparty_name": "FACTORY BOYS",
+    "links": 1,
+    "preq": {
+     "description": "FACTORY BOYS",
+     "payee_name": ""
+    },
+    "refund": null
+   },
+   {
+    "id": "TM-KD-26-2618",
+    "type": "PAYMENT_REQUEST_OUT",
+    "amount_ngn": -20000,
+    "posted_at_iso": "2026-09-17T12:00:00.000Z",
+    "source_id": "PREQ-KD-26-0238",
+    "counterparty_name": "stone coated",
+    "links": 1,
+    "preq": {
+     "description": "stone coated",
+     "payee_name": ""
+    },
+    "refund": null
+   },
+   {
+    "id": "TM-KD-26-2710",
+    "type": "PAYMENT_REQUEST_OUT",
+    "amount_ngn": -20000,
+    "posted_at_iso": "2026-09-19T12:00:00.000Z",
+    "source_id": "PREQ-KD-26-0271",
+    "counterparty_name": "10U",
+    "links": 1,
+    "preq": {
+     "description": "10U",
+     "payee_name": ""
+    },
+    "refund": null
+   },
+   {
+    "id": "TM-KD-26-2915",
+    "type": "PAYMENT_REQUEST_OUT",
+    "amount_ngn": -20000,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "PREQ-KD-26-0296",
+    "counterparty_name": "monthly imprese sept 26",
+    "links": 1,
+    "preq": {
+     "description": "monthly imprese sept 26",
+     "payee_name": ""
+    },
+    "refund": null
+   },
+   {
+    "id": "TM-KD-26-3008",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -20000,
+    "posted_at_iso": "2026-09-30T17:44:00.000Z",
+    "source_id": "RF-KD-26-9702",
+    "counterparty_name": "Abdulrahman Uthman Sali",
+    "links": 1,
+    "preq": null,
+    "refund": {
+     "customer_name": "Suleiman Zaria",
+     "payee_name": "Suleiman zaria"
+    }
+   }
+  ]
+ },
+ {
+  "tm": {
+   "id": "TM-KD-26-3042",
+   "type": "PAYMENT_REQUEST_OUT",
+   "amount_ngn": -6000,
+   "posted_at_iso": "2026-10-02T12:00:00.000Z",
+   "source_kind": "PAYMENT_REQUEST",
+   "source_id": "PREQ-KD-26-0318",
+   "counterparty_name": "pure water",
+   "note": ""
+  },
+  "preq": {
+   "request_id": "PREQ-KD-26-0318",
+   "description": "pure water",
+   "payee_name": "",
+   "amount_requested_ngn": 6000,
+   "paid_at_iso": "2026-10-02",
+   "request_date": "2026-10-02"
+  },
+  "sep": {
+   "id": "BKR-KD-26-0905",
+   "bank_date_iso": "2026-09-30",
+   "description": "refund",
+   "amount_ngn": -6020,
+   "system_match": "TM-KD-26-3042 · fee 20 (ERP 2026-10-02)",
+   "status": "Matched"
+  },
+  "octRow": {
+   "id": "BKR-KD-26-1398",
+   "bank_date_iso": "2026-10-02",
+   "description": "TRANSFER — pure water and delievery of cement — to SHAIBU  ABDULLAHI (OPay)",
+   "amount_ngn": -6020,
+   "system_match": "— · MP-TRF|2MPT2dqhf|2106062366167941120_DEBIT_0 · matches TM-KD-26-3042; fee 20; TM-KD-26-3042 is l",
+   "status": "Review"
+  },
+  "stmt": [
+   {
+    "at": "2026-09-30T09:00:06.000Z",
+    "ref": "TRF|2MPT2dqhf|2105221134612373504_DEBIT_0",
+    "debit": 6020,
+    "credit": 0,
+    "txn": 6000,
+    "beneficiary": "MOHAMMED HARUNA",
+    "inst": "Access Bank",
+    "narration": "refund"
+   }
+  ],
+  "candidates": [
+   {
+    "id": "TM-KD-26-2666",
+    "type": "PAYMENT_REQUEST_OUT",
+    "amount_ngn": -6000,
+    "posted_at_iso": "2026-09-21T12:00:00.000Z",
+    "source_id": "PREQ-KD-26-0257",
+    "counterparty_name": "FORK LIFT",
+    "links": 1,
+    "preq": {
+     "description": "FORK LIFT",
+     "payee_name": ""
+    },
+    "refund": null
+   },
+   {
+    "id": "TM-KD-26-2786",
+    "type": "PAYMENT_REQUEST_OUT",
+    "amount_ngn": -6000,
+    "posted_at_iso": "2026-09-25T12:00:00.000Z",
+    "source_id": "PREQ-KD-26-0273",
+    "counterparty_name": "pure water",
+    "links": 1,
+    "preq": {
+     "description": "pure water",
+     "payee_name": ""
+    },
+    "refund": null
+   }
+  ]
+ },
+ {
+  "tm": {
+   "id": "TM-KD-26-3044",
+   "type": "PAYMENT_REQUEST_OUT",
+   "amount_ngn": -16000,
+   "posted_at_iso": "2026-10-03T12:00:00.000Z",
+   "source_kind": "PAYMENT_REQUEST",
+   "source_id": "PREQ-KD-26-0333",
+   "counterparty_name": "METRAL MACHINE",
+   "note": ""
+  },
+  "preq": {
+   "request_id": "PREQ-KD-26-0333",
+   "description": "METRAL MACHINE",
+   "payee_name": "",
+   "amount_requested_ngn": 16000,
+   "paid_at_iso": "2026-10-03",
+   "request_date": "2026-10-03"
+  },
+  "sep": {
+   "id": "BKR-KD-26-0898",
+   "bank_date_iso": "2026-09-29",
+   "description": "md refund",
+   "amount_ngn": -16020,
+   "system_match": "TM-KD-26-3044 · fee 20 (ERP 2026-10-03)",
+   "status": "Matched"
+  },
+  "octRow": {
+   "id": "BKR-KD-26-1410",
+   "bank_date_iso": "2026-10-03",
+   "description": "TRANSFER — Metral machine — to SULEIMAN HAMMED (United Bank For Africa)",
+   "amount_ngn": -16020,
+   "system_match": "— · MP-TRF|2MPT2dqhf|2106410908143763456_DEBIT_0 · matches TM-KD-26-3044; fee 20; TM-KD-26-3044 is l",
+   "status": "Review"
+  },
+  "stmt": [
+   {
+    "at": "2026-09-29T15:55:33.000Z",
+    "ref": "TRF|2MPT2dqhf|2104963298790371328_DEBIT_0",
+    "debit": 16020,
+    "credit": 0,
+    "txn": 16000,
+    "beneficiary": "BAKARI MOHAMMED IBRAHIM",
+    "inst": "First Bank of Nigeria",
+    "narration": "md refund"
+   }
+  ],
+  "candidates": []
+ },
+ {
+  "sepUnlinkedErp": [
+   {
+    "id": "TM-KD-26-2357",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-01T12:00:00.000Z",
+    "source_id": "LE-KD-26-1564",
+    "counterparty_name": "Muawiya M Sambo"
+   },
+   {
+    "id": "TM-KD-26-2254",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 5050,
+    "posted_at_iso": "2026-09-02T12:00:00.000Z",
+    "source_id": "LE-KD-26-1502",
+    "counterparty_name": "Ali Adamu Ardo"
+   },
+   {
+    "id": "TM-KD-26-2400",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 20000,
+    "posted_at_iso": "2026-09-02T12:00:00.000Z",
+    "source_id": "LE-KD-26-1609",
+    "counterparty_name": "Abdullahi"
+   },
+   {
+    "id": "TM-KD-26-2035",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 4150,
+    "posted_at_iso": "2026-09-03T12:00:00.000Z",
+    "source_id": "LE-KD-26-1402",
+    "counterparty_name": "Abubakar Abdullahi"
+   },
+   {
+    "id": "TM-KD-26-2423",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -515000,
+    "posted_at_iso": "2026-09-04T12:00:00.000Z",
+    "source_id": "RF-KD-26-9577",
+    "counterparty_name": "Alhaji Mrido"
+   },
+   {
+    "id": "TM-KD-26-2479",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 13160,
+    "posted_at_iso": "2026-09-08T12:00:00.000Z",
+    "source_id": "LE-KD-26-1663",
+    "counterparty_name": "Umar Umar"
+   },
+   {
+    "id": "TM-KD-26-2897",
+    "type": "RECEIPT_REVERSAL_OUT",
+    "amount_ngn": -13160,
+    "posted_at_iso": "2026-09-08T12:00:00.000Z",
+    "source_id": "LE-KD-26-1663",
+    "counterparty_name": "Umar Umar"
+   },
+   {
+    "id": "TM-KD-26-2489",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 5000000,
+    "posted_at_iso": "2026-09-09T12:00:00.000Z",
+    "source_id": "LE-KD-26-1681",
+    "counterparty_name": "Qs Isa"
+   },
+   {
+    "id": "TM-KD-26-2509",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -32688,
+    "posted_at_iso": "2026-09-11T12:00:00.000Z",
+    "source_id": "RF-KD-26-9581",
+    "counterparty_name": "Aminu Ibrahim"
+   },
+   {
+    "id": "TM-KD-26-2530",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 7520,
+    "posted_at_iso": "2026-09-12T12:00:00.000Z",
+    "source_id": "LE-KD-26-1706",
+    "counterparty_name": "Hannatu Thomas"
+   },
+   {
+    "id": "TM-KD-26-2531",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 445500,
+    "posted_at_iso": "2026-09-12T12:00:00.000Z",
+    "source_id": "LE-KD-26-1707",
+    "counterparty_name": "Qs Isa"
+   },
+   {
+    "id": "TM-KD-26-2680",
+    "type": "RECEIPT_REVERSAL_OUT",
+    "amount_ngn": -445500,
+    "posted_at_iso": "2026-09-12T12:00:00.000Z",
+    "source_id": "LE-KD-26-1707",
+    "counterparty_name": "Qs Isa"
+   },
+   {
+    "id": "TM-KD-26-2548",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-14T12:00:00.000Z",
+    "source_id": "LE-KD-26-1720",
+    "counterparty_name": "Engr Attah Nicholas"
+   },
+   {
+    "id": "TM-KD-26-2625",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 26800,
+    "posted_at_iso": "2026-09-14T12:00:00.000Z",
+    "source_id": "LE-KD-26-1771",
+    "counterparty_name": "Ismail"
+   },
+   {
+    "id": "TM-KD-26-3094",
+    "type": "RECEIPT_REVERSAL_OUT",
+    "amount_ngn": -26800,
+    "posted_at_iso": "2026-09-14T12:00:00.000Z",
+    "source_id": "LE-KD-26-1725",
+    "counterparty_name": "Ahmad Jj"
+   },
+   {
+    "id": "TM-KD-26-2612",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 232620,
+    "posted_at_iso": "2026-09-15T12:00:00.000Z",
+    "source_id": "LE-KD-26-1764",
+    "counterparty_name": "Surajo"
+   },
+   {
+    "id": "TM-KD-26-3093",
+    "type": "RECEIPT_REVERSAL_OUT",
+    "amount_ngn": -232620,
+    "posted_at_iso": "2026-09-15T12:00:00.000Z",
+    "source_id": "LE-KD-26-1692",
+    "counterparty_name": "Ahmad Jj"
+   },
+   {
+    "id": "TM-KD-26-2598",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 5000,
+    "posted_at_iso": "2026-09-17T12:00:00.000Z",
+    "source_id": "LE-KD-26-1751",
+    "counterparty_name": "Ahmad Jj"
+   },
+   {
+    "id": "TM-KD-26-2608",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-17T12:00:00.000Z",
+    "source_id": "LE-KD-26-1761",
+    "counterparty_name": "Arma Yau"
+   },
+   {
+    "id": "TM-KD-26-2623",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-17T12:00:00.000Z",
+    "source_id": "LE-KD-26-1770",
+    "counterparty_name": "Arma Yau"
+   },
+   {
+    "id": "TM-KD-26-3095",
+    "type": "RECEIPT_REVERSAL_OUT",
+    "amount_ngn": -5000,
+    "posted_at_iso": "2026-09-17T12:00:00.000Z",
+    "source_id": "LE-KD-26-1751",
+    "counterparty_name": "Ahmad Jj"
+   },
+   {
+    "id": "TM-KD-26-2600",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 55825,
+    "posted_at_iso": "2026-09-18T12:00:00.000Z",
+    "source_id": "LE-KD-26-1753",
+    "counterparty_name": "Flavio Academy"
+   },
+   {
+    "id": "TM-KD-26-2626",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -55825,
+    "posted_at_iso": "2026-09-18T12:00:00.000Z",
+    "source_id": "RF-KD-26-9616",
+    "counterparty_name": "Flavio Academy"
+   },
+   {
+    "id": "TM-KD-26-2671",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-21T12:00:00.000Z",
+    "source_id": "LE-KD-26-1797",
+    "counterparty_name": "Engr Yaro"
+   },
+   {
+    "id": "TM-KD-26-2727",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -48960,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9553",
+    "counterparty_name": "Bashir Shehu"
+   },
+   {
+    "id": "TM-KD-26-2728",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -11440,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9555",
+    "counterparty_name": "Panteka Guy"
+   },
+   {
+    "id": "TM-KD-26-2729",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1920,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9557",
+    "counterparty_name": "Abubakar Adamu"
+   },
+   {
+    "id": "TM-KD-26-2730",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -9384,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9574",
+    "counterparty_name": "Sangir Abdullahi"
+   },
+   {
+    "id": "TM-KD-26-2731",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -13160,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9581",
+    "counterparty_name": "Aminu Ibrahim"
+   },
+   {
+    "id": "TM-KD-26-2732",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -13160,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9587",
+    "counterparty_name": "Alkasim Cap"
+   },
+   {
+    "id": "TM-KD-26-2733",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -9836,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9588",
+    "counterparty_name": "Yakubu Abdullahi"
+   },
+   {
+    "id": "TM-KD-26-2734",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -5130,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9589",
+    "counterparty_name": "Ibrahim Tall"
+   },
+   {
+    "id": "TM-KD-26-2736",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1504,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9593",
+    "counterparty_name": "Hassan Wake"
+   },
+   {
+    "id": "TM-KD-26-2737",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -17859,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9599",
+    "counterparty_name": "Shiinkafi Couture"
+   },
+   {
+    "id": "TM-KD-26-2738",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -5358,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9600",
+    "counterparty_name": "Adamu Lawal"
+   },
+   {
+    "id": "TM-KD-26-2739",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -2112,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9601",
+    "counterparty_name": "Umar Umar"
+   },
+   {
+    "id": "TM-KD-26-2740",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -10528,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9601",
+    "counterparty_name": "Umar Umar"
+   },
+   {
+    "id": "TM-KD-26-2741",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1302,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9602",
+    "counterparty_name": "Abubakar Twins"
+   },
+   {
+    "id": "TM-KD-26-2742",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -2970,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9604",
+    "counterparty_name": "Abubakar Mohammed"
+   },
+   {
+    "id": "TM-KD-26-2743",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1192,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9606",
+    "counterparty_name": "Sani Rabiu"
+   },
+   {
+    "id": "TM-KD-26-2746",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -21600,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9609",
+    "counterparty_name": "Muhammadu Nuradeen Isa"
+   },
+   {
+    "id": "TM-KD-26-2747",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -8000,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9610",
+    "counterparty_name": "Alh Ibrahim"
+   },
+   {
+    "id": "TM-KD-26-2748",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -12328,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9611",
+    "counterparty_name": "Mustapha Magaji Zubairu"
+   },
+   {
+    "id": "TM-KD-26-2749",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -6750,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9612",
+    "counterparty_name": "Mustapha Musa"
+   },
+   {
+    "id": "TM-KD-26-2750",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1944,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9613",
+    "counterparty_name": "Ibrahim Shuiabu"
+   },
+   {
+    "id": "TM-KD-26-2752",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -23520,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9618",
+    "counterparty_name": "Saidu"
+   },
+   {
+    "id": "TM-KD-26-2753",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -2832,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9619",
+    "counterparty_name": "Yaks"
+   },
+   {
+    "id": "TM-KD-26-2754",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -16200,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9620",
+    "counterparty_name": "Shamsudeen Yusuf"
+   },
+   {
+    "id": "TM-KD-26-2756",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -53904,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9643",
+    "counterparty_name": "Engr Nasir Nda"
+   },
+   {
+    "id": "TM-KD-26-2757",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -3720,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9644",
+    "counterparty_name": "Usama Zaria"
+   },
+   {
+    "id": "TM-KD-26-2759",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1984,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9646",
+    "counterparty_name": "Sammmeul"
+   },
+   {
+    "id": "TM-KD-26-2760",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -43760,
+    "posted_at_iso": "2026-09-24T12:00:00.000Z",
+    "source_id": "RF-KD-26-9647",
+    "counterparty_name": "Murtala Rabiu Cap"
+   },
+   {
+    "id": "TM-KD-26-2845",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-25T12:00:00.000Z",
+    "source_id": "LE-KD-26-1865",
+    "counterparty_name": "Ramaran Garkuwa"
+   },
+   {
+    "id": "TM-KD-26-2818",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -67840,
+    "posted_at_iso": "2026-09-26T12:00:00.000Z",
+    "source_id": "RF-KD-26-9678",
+    "counterparty_name": "Usman Tijjani"
+   },
+   {
+    "id": "TM-KD-26-2819",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -67840,
+    "posted_at_iso": "2026-09-26T12:00:00.000Z",
+    "source_id": "RF-KD-26-9678",
+    "counterparty_name": "Usman Tijjani"
+   },
+   {
+    "id": "TM-KD-26-2850",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -67840,
+    "posted_at_iso": "2026-09-26T12:00:00.000Z",
+    "source_id": "RF-KD-26-9678",
+    "counterparty_name": "Usman Tijjani"
+   },
+   {
+    "id": "TM-KD-26-2913",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -46480,
+    "posted_at_iso": "2026-09-26T12:00:00.000Z",
+    "source_id": "RF-KD-26-9678",
+    "counterparty_name": "Usman Tijjani"
+   },
+   {
+    "id": "TM-KD-26-2869",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1000,
+    "posted_at_iso": "2026-09-29T12:00:00.000Z",
+    "source_id": "RF-KD-26-9689",
+    "counterparty_name": "Ali Cap Jos"
+   },
+   {
+    "id": "TM-KD-26-2764",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 19250,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "LE-KD-26-1837",
+    "counterparty_name": "Mustapha Cap 2"
+   },
+   {
+    "id": "TM-KD-26-2767",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 5000,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "LE-KD-26-1839",
+    "counterparty_name": "Bello Goma"
+   },
+   {
+    "id": "TM-KD-26-2828",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 2500,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "LE-KD-26-1856",
+    "counterparty_name": "Hussaini Jalo"
+   },
+   {
+    "id": "TM-KD-26-2863",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "LE-KD-26-1877",
+    "counterparty_name": "Ali Cap Jos"
+   },
+   {
+    "id": "TM-KD-26-2870",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "LE-KD-26-1887",
+    "counterparty_name": "Engr Attah Nicholas"
+   },
+   {
+    "id": "TM-KD-26-2873",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1600,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "RF-KD-26-9696",
+    "counterparty_name": "Bashir Zaria"
+   },
+   {
+    "id": "TM-KD-26-2875",
+    "type": "RECEIPT_IN",
+    "amount_ngn": 0,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "LE-KD-26-1889",
+    "counterparty_name": "Engr Attah Nicholas"
+   },
+   {
+    "id": "TM-KD-26-2878",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -234275,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "RF-KD-26-9693",
+    "counterparty_name": "Arma Yau"
+   },
+   {
+    "id": "TM-KD-26-2894",
+    "type": "REFUND_PAYOUT",
+    "amount_ngn": -1320,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "RF-KD-26-9701",
+    "counterparty_name": "Bashir"
+   },
+   {
+    "id": "TM-KD-26-2918",
+    "type": "PAYMENT_REQUEST_OUT",
+    "amount_ngn": -15000,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "PREQ-KD-26-0295",
+    "counterparty_name": "office toilet"
+   },
+   {
+    "id": "TM-KD-26-3312",
+    "type": "BANK_RECON_ADJUSTMENT",
+    "amount_ngn": 14165231,
+    "posted_at_iso": "2026-09-30T12:00:00.000Z",
+    "source_id": "REC-MP-2026-09",
+    "counterparty_name": "Bank reconciliation"
+   }
+  ]
+ }
+]

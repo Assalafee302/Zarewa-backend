@@ -1,0 +1,69 @@
+{
+ "held": [
+  {
+   "id": "L-MP-0535",
+   "record": "MP-0535 2026-08-27 ₦-105,000 → TM-KD-26-2321",
+   "why": "already linked to a later bank line on BKR-KD-26-0209 (2026-09-04); not linked twice"
+  },
+  {
+   "id": "L-MP-0583",
+   "record": "MP-0583 2026-08-29 ₦24,900 → TM-KD-26-2356",
+   "why": "already linked to a later bank line on BKR-KD-26-0087 (2026-09-01); not linked twice"
+  },
+  {
+   "id": "L-MP-0584",
+   "record": "MP-0584 2026-08-29 ₦7,720 → TM-KD-26-2390, TM-KD-26-2389, TM-KD-26-2386",
+   "why": "already linked to a later bank line on BKR-KD-26-0135 (2026-09-02), BKR-KD-26-0137 (2026-09-02), BKR-KD-26-0138 (2026-09-02); not linked twice"
+  },
+  {
+   "id": "L-MP-0590",
+   "record": "MP-0590 2026-08-29 ₦-20,000 → TM-KD-26-2414",
+   "why": "already linked to a later bank line on BKR-KD-26-0185 (2026-09-04); not linked twice"
+  },
+  {
+   "id": "B-TM-KD-26-2178",
+   "record": "TM-KD-26-2178 Moniepoint 2026-08-20 ₦31,030 LE-KD-26-1465 Farouq (credit ₦23,030)",
+   "why": "a bank credit of the same amount the same day exists (MP-0348 \"payment for Zink additional\") — may be real money; not reversed"
+  }
+ ],
+ "balances": [
+  {
+   "account": "Taj",
+   "erpBefore": -11065749,
+   "erpAfter": -11065749,
+   "bank": 132311.01,
+   "gapAfter": -11198060.01,
+   "plugLine": -13804390,
+   "plugIfBalanced": -2606330
+  },
+  {
+   "account": "Moniepoint",
+   "erpBefore": 132565,
+   "erpAfter": -3960123,
+   "bank": 8297144.24,
+   "gapAfter": -12257267.24,
+   "plugLine": -5110414,
+   "plugIfBalanced": 7146853
+  },
+  {
+   "account": "Cash Office",
+   "erpBefore": 992370,
+   "erpAfter": 940110,
+   "bank": 992370,
+   "gapAfter": -52260,
+   "plugLine": -13386280,
+   "plugIfBalanced": -13334020
+  }
+ ],
+ "matched": {
+  "Taj": {
+   "lines": 51,
+   "matched": 51
+  },
+  "Moniepoint": {
+   "lines": 638,
+   "matched": 591
+  }
+ },
+ "fullyConflicted": 4
+}

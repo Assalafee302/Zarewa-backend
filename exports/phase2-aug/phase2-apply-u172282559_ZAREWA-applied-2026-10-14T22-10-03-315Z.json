@@ -1,0 +1,162 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-14T22:10:03.315Z",
+ "plan": "phase2-aug-2026-10-14.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "A1a",
+   "group": "A",
+   "record": "Taj 24 Aug ₦1,620,000",
+   "field": "new expense (Admin salary)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0451"
+  },
+  {
+   "id": "A1b",
+   "group": "A",
+   "record": "Moniepoint 28 Aug ₦70,000 Shehu Yacham Joseph",
+   "field": "new expense (Admin salary)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0452"
+  },
+  {
+   "id": "A2",
+   "group": "A",
+   "record": "Moniepoint 25 Aug ₦6,800,000 Muhsin Best Engineering Services Ltd",
+   "field": "new capex expense (Plant and machinery) + transformer asset cost",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0453"
+  },
+  {
+   "id": "A3",
+   "group": "A",
+   "record": "Moniepoint 1 Aug ₦250,000 Rafiu Sunday Ismahil",
+   "field": "new expense (Accessories)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0454"
+  },
+  {
+   "id": "A4",
+   "group": "A",
+   "record": "Moniepoint 29 Aug ₦200,000 POS Transfer - Nuhu Mikiyan",
+   "field": "new expense (Carriage inward)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0455"
+  },
+  {
+   "id": "A5b",
+   "group": "A",
+   "record": "Moniepoint 25 Aug ₦3,500 (+₦20 fee) Godwin Obochi Emmanuel",
+   "field": "new expense (Maintenance)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0456"
+  },
+  {
+   "id": "A7",
+   "group": "A",
+   "record": "Moniepoint 31 Aug ₦395,900 Matrix Energy Ltd (no Sept expense of ₦395,900)",
+   "field": "new expense (Fuel & lubricant)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0457"
+  },
+  {
+   "id": "A7b",
+   "group": "A",
+   "record": "Moniepoint 31 Aug ₦3,000 Ibrahim Shaitu",
+   "field": "new expense (Fuel & lubricant)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0458"
+  },
+  {
+   "id": "A8a",
+   "group": "A",
+   "record": "Taj Aug bank charges ₦1,661.55",
+   "field": "new expense (Bank charges)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0459"
+  },
+  {
+   "id": "A8b",
+   "group": "A",
+   "record": "Moniepoint Aug bank charges ₦6,455.50",
+   "field": "new expense (Bank charges)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0460"
+  },
+  {
+   "id": "B10",
+   "group": "B",
+   "record": "RF-KD-26-9250 (QT-KD-26-0783, Tahir, ₦809,400 recorded paid 11 Jul to \"Abdulrahman\", TM-KD-26-1427 Moniepoint)",
+   "field": "refund payout",
+   "op": "refundRepay",
+   "outcome": "applied",
+   "status": "Partially paid"
+  },
+  {
+   "id": "B11",
+   "group": "B",
+   "record": "EXP-KD-26-0241 Matrix gas ₦357,033 (TM-KD-26-2142)",
+   "field": "treasury account + date",
+   "op": "moveTreasury",
+   "outcome": "applied",
+   "glReclassNgn": -357033
+  },
+  {
+   "id": "B12a",
+   "group": "B",
+   "record": "Security ₦10,000 (TM-KD-26-2327, PREQ-KD-26-0205)",
+   "field": "treasury account + date",
+   "op": "moveTreasury",
+   "outcome": "applied",
+   "glReclassNgn": -10000
+  },
+  {
+   "id": "B12b",
+   "group": "B",
+   "record": "Rafel transport ₦20,000 (TM-KD-26-2326, PREQ-KD-26-0210)",
+   "field": "treasury account + date",
+   "op": "moveTreasury",
+   "outcome": "applied",
+   "glReclassNgn": -20000
+  },
+  {
+   "id": "B12c",
+   "group": "B",
+   "record": "Tahir refund ₦15,350 (TM-KD-26-2162, RF-KD-26-9500)",
+   "field": "treasury account + date",
+   "op": "moveTreasury",
+   "outcome": "applied",
+   "glReclassNgn": 0
+  },
+  {
+   "id": "BKR-KD-26-0991",
+   "group": "B",
+   "record": "Oga Ali ₦599,400 (LE-KD-26-1339, TM-KD-26-1904) + ₦447,680 (LE-KD-26-1347, TM-KD-26-1942), both already on Taj",
+   "field": "bank reconciliation link + paid by",
+   "op": "reconLink",
+   "outcome": "applied",
+   "varianceNgn": 15000
+  },
+  {
+   "id": "B14",
+   "group": "B",
+   "record": "Taj (treasury account 2) opening balance",
+   "field": "treasury_accounts.opening_balance_ngn",
+   "op": "setOpening",
+   "outcome": "applied"
+  }
+ ]
+}

@@ -1,0 +1,30 @@
+{
+  "ok": true,
+  "deleted": {
+    "q": "QT-KD-26-1761",
+    "r": "LE-KD-26-2039",
+    "cl": "CL-KD-26-1447"
+  },
+  "kept": {
+    "quotation": {
+      "id": "QT-KD-26-1762",
+      "paid_ngn": 1141865,
+      "total_ngn": 1141865
+    },
+    "receipt": {
+      "id": "LE-KD-26-2040",
+      "status": "Pending clearance",
+      "amount_ngn": 1141865
+    },
+    "cuttingList": {
+      "id": "CL-KD-26-1448",
+      "total_meters": 265.55,
+      "status": "Waiting"
+    }
+  },
+  "moniepointBalance": {
+    "before": 17406297,
+    "afterReverse": 16264432,
+    "afterDelete": 16264432
+  }
+}

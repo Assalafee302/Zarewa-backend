@@ -1,0 +1,373 @@
+{
+ "gl355": [
+  {
+   "id": "JE-KD-26-4670",
+   "source_kind": "EXPENSE_PAYMENT_GL",
+   "source_id": "TM-KD-26-3192",
+   "entry_date_iso": "2026-10-06",
+   "memo": "trasport",
+   "account_id": "acc-carriage",
+   "debit_ngn": 170000,
+   "credit_ngn": 0
+  },
+  {
+   "id": "JE-KD-26-4670",
+   "source_kind": "EXPENSE_PAYMENT_GL",
+   "source_id": "TM-KD-26-3192",
+   "entry_date_iso": "2026-10-06",
+   "memo": "trasport",
+   "account_id": "acc-cash-4",
+   "debit_ngn": 0,
+   "credit_ngn": 170000
+  }
+ ],
+ "multiPayoutPreqs": [
+  {
+   "source_id": "PREQ-YL-26-0037",
+   "n": 2,
+   "s": "-234000"
+  },
+  {
+   "source_id": "PREQ-YL-26-0033",
+   "n": 2,
+   "s": "-458000"
+  },
+  {
+   "source_id": "PREQ-YL-26-0030",
+   "n": 2,
+   "s": "-40000"
+  },
+  {
+   "source_id": "PREQ-YL-26-0029",
+   "n": 2,
+   "s": "-95500"
+  },
+  {
+   "source_id": "PREQ-KD-26-0358",
+   "n": 3,
+   "s": "-30000"
+  },
+  {
+   "source_id": "PREQ-KD-26-0330",
+   "n": 3,
+   "s": "-32301084"
+  },
+  {
+   "source_id": "PREQ-KD-26-0282",
+   "n": 2,
+   "s": "-257000"
+  },
+  {
+   "source_id": "PREQ-KD-26-0205",
+   "n": 3,
+   "s": "-180000"
+  },
+  {
+   "source_id": "PREQ-KD-26-0180",
+   "n": 2,
+   "s": "-38500"
+  },
+  {
+   "source_id": "PREQ-KD-26-0177",
+   "n": 2,
+   "s": "-16000"
+  }
+ ],
+ "b4": [
+  {
+   "le": {
+    "id": "LE-KD-26-1926",
+    "at_iso": "2026-10-01T12:00:00.000Z",
+    "customer_id": "CUS-KD-26-0036",
+    "customer_name": "Anas Cap Zaria",
+    "amount_ngn": 0,
+    "quotation_ref": "QT-KD-26-1685",
+    "payment_method": "Refund fund",
+    "bank_reference": "anas hamisu ₦4,700 Bank:Zarewa Aluminum & Plastics Ltd",
+    "note": "Full settlement (receipt)"
+   },
+   "sr": {
+    "status": "Reversed",
+    "bank_confirmed_at_iso": "2026-10-05T11:58:19.629Z",
+    "bank_received_amount_ngn": 0
+   },
+   "quo": {
+    "id": "QT-KD-26-1685",
+    "total_ngn": 4700,
+    "paid_ngn": 4700,
+    "status": "Pending"
+   },
+   "quoLedger": [
+    {
+     "id": "LE-KD-26-1926",
+     "type": "RECEIPT",
+     "amount_ngn": 0,
+     "at_iso": "2026-10-01T12:00:00.000Z"
+    },
+    {
+     "id": "LE-KD-26-2000",
+     "type": "OVERPAY_APPLIED",
+     "amount_ngn": 4700,
+     "at_iso": "2026-10-01T12:00:00.000Z"
+    }
+   ],
+   "credit": [
+    {
+     "application_id": "RCA-1791201499744-jge8r6",
+     "customer_id": "CUS-KD-26-0036",
+     "target_quotation_ref": "QT-KD-26-1685",
+     "source_quotation_ref": "QT-KD-26-1433",
+     "refund_id": null,
+     "kind": "overpay",
+     "amount_ngn": 4700,
+     "status": "Credit confirmation",
+     "ledger_bank_reference": "CREDIT_APPLY:RCA-1791201499744-jge8r6",
+     "created_at_iso": "2026-10-01T12:00:00.000Z",
+     "created_by_user_id": "USR-D1B9D0F6017652C2",
+     "created_by_name": "Mansur Lawal Matazu",
+     "branch_id": "BR-KD",
+     "source_receipt_id": "LE-KD-26-1926",
+     "reversed_at_iso": null,
+     "reversed_by_user_id": null,
+     "reversed_by_name": null,
+     "reverse_reason": null,
+     "released_for_refund_id": null
+    }
+   ],
+   "tm": [
+    {
+     "id": "TM-KD-26-2919",
+     "type": "RECEIPT_IN",
+     "amount_ngn": 4700,
+     "posted_at_iso": "2026-10-01T12:00:00.000Z"
+    },
+    {
+     "id": "TM-KD-26-3117",
+     "type": "RECEIPT_REVERSAL_OUT",
+     "amount_ngn": -4700,
+     "posted_at_iso": "2026-10-05T11:58:19.639Z"
+    }
+   ],
+   "au": [
+    {
+     "action": "receipt.finance_amount_sync",
+     "occurred_at_iso": "2026-10-05T11:58:19.647Z",
+     "details_json": "{\"confirmedAmountNgn\":0,\"previousAmountNgn\":4700,\"quotationRef\":\"QT-KD-26-1685\",\"receiptLedgerNgn\":0,\"overpayLedgerNgn\":0}"
+    },
+    {
+     "action": "receipt.refund_fund_unwind",
+     "occurred_at_iso": "2026-10-05T11:58:19.864Z",
+     "details_json": "{\"keepCashNgn\":0,\"methodUpdated\":true,\"paymentMethod\":\"Refund fund\",\"depositLinksReleased\":0,\"glOk\":true,\"glSkipped\":false,\"glError\":null}"
+    },
+    {
+     "action": "receipt.finance_settlement",
+     "occurred_at_iso": "2026-10-05T11:58:19.932Z",
+     "details_json": "{\"bankReceivedAmountNgn\":0,\"bookAmountNgn\":4700,\"clearForDelivery\":true,\"paymentLineCorrectionCount\":0,\"refundCreditAppliedNgn\":4700,\"partialSplitConfirm\":false}"
+    },
+    {
+     "action": "receipt.treasury_reversal_status",
+     "occurred_at_iso": "2026-10-06T14:40:04.630Z",
+     "details_json": "{\"quotationRef\":\"QT-KD-26-1685\",\"amountNgn\":0,\"netNgn\":0,\"reversedNgn\":4700}"
+    }
+   ],
+   "recon": []
+  },
+  {
+   "le": {
+    "id": "LE-KD-26-1981",
+    "at_iso": "2026-10-05T12:00:00.000Z",
+    "customer_id": "CUS-KD-26-1103",
+    "customer_name": "Sanusi Dangiwa",
+    "amount_ngn": 0,
+    "quotation_ref": "QT-KD-26-1717",
+    "payment_method": "Refund fund",
+    "bank_reference": "sanusi dangiwa ₦4,000 Bank:Zarewa Aluminum & Plastics Ltd",
+    "note": "Full settlement (receipt)"
+   },
+   "sr": {
+    "status": "Reversed",
+    "bank_confirmed_at_iso": "2026-10-05T10:44:47.062Z",
+    "bank_received_amount_ngn": 0
+   },
+   "quo": {
+    "id": "QT-KD-26-1717",
+    "total_ngn": 4000,
+    "paid_ngn": 4000,
+    "status": "Pending"
+   },
+   "quoLedger": [
+    {
+     "id": "LE-KD-26-1981",
+     "type": "RECEIPT",
+     "amount_ngn": 0,
+     "at_iso": "2026-10-05T12:00:00.000Z"
+    },
+    {
+     "id": "LE-KD-26-1985",
+     "type": "OVERPAY_APPLIED",
+     "amount_ngn": 4000,
+     "at_iso": "2026-10-05T12:00:00.000Z"
+    }
+   ],
+   "credit": [
+    {
+     "application_id": "RCA-1791197087156-iyysr6",
+     "customer_id": "CUS-KD-26-1103",
+     "target_quotation_ref": "QT-KD-26-1717",
+     "source_quotation_ref": "QT-KD-26-1700",
+     "refund_id": null,
+     "kind": "overpay",
+     "amount_ngn": 4000,
+     "status": "Credit confirmation",
+     "ledger_bank_reference": "CREDIT_APPLY:RCA-1791197087156-iyysr6",
+     "created_at_iso": "2026-10-05T12:00:00.000Z",
+     "created_by_user_id": "USR-D1B9D0F6017652C2",
+     "created_by_name": "Mansur Lawal Matazu",
+     "branch_id": "BR-KD",
+     "source_receipt_id": "LE-KD-26-1981",
+     "reversed_at_iso": null,
+     "reversed_by_user_id": null,
+     "reversed_by_name": null,
+     "reverse_reason": null,
+     "released_for_refund_id": null
+    }
+   ],
+   "tm": [
+    {
+     "id": "TM-KD-26-3103",
+     "type": "RECEIPT_IN",
+     "amount_ngn": 4000,
+     "posted_at_iso": "2026-10-05T12:00:00.000Z"
+    },
+    {
+     "id": "TM-KD-26-3106",
+     "type": "RECEIPT_REVERSAL_OUT",
+     "amount_ngn": -4000,
+     "posted_at_iso": "2026-10-05T10:44:47.075Z"
+    }
+   ],
+   "au": [
+    {
+     "action": "receipt.finance_amount_sync",
+     "occurred_at_iso": "2026-10-05T10:44:47.082Z",
+     "details_json": "{\"confirmedAmountNgn\":0,\"previousAmountNgn\":4000,\"quotationRef\":\"QT-KD-26-1717\",\"receiptLedgerNgn\":0,\"overpayLedgerNgn\":0}"
+    },
+    {
+     "action": "receipt.refund_fund_unwind",
+     "occurred_at_iso": "2026-10-05T10:44:47.308Z",
+     "details_json": "{\"keepCashNgn\":0,\"methodUpdated\":true,\"paymentMethod\":\"Refund fund\",\"depositLinksReleased\":0,\"glOk\":true,\"glSkipped\":false,\"glError\":null}"
+    },
+    {
+     "action": "receipt.finance_settlement",
+     "occurred_at_iso": "2026-10-05T10:44:47.362Z",
+     "details_json": "{\"bankReceivedAmountNgn\":0,\"bookAmountNgn\":4000,\"clearForDelivery\":true,\"paymentLineCorrectionCount\":0,\"refundCreditAppliedNgn\":4000,\"partialSplitConfirm\":false}"
+    },
+    {
+     "action": "receipt.treasury_reversal_status",
+     "occurred_at_iso": "2026-10-06T14:40:16.233Z",
+     "details_json": "{\"quotationRef\":\"QT-KD-26-1717\",\"amountNgn\":0,\"netNgn\":0,\"reversedNgn\":4000}"
+    }
+   ],
+   "recon": []
+  },
+  {
+   "le": {
+    "id": "LE-KD-26-2005",
+    "at_iso": "2026-10-06T12:00:00.000Z",
+    "customer_id": "CUS-KD-26-0700",
+    "customer_name": "SURAJO",
+    "amount_ngn": 0,
+    "quotation_ref": "QT-KD-26-1734",
+    "payment_method": "Refund fund",
+    "bank_reference": "surajo ₦34,650 Bank:Zarewa Aluminum & Plastics Ltd",
+    "note": "Full settlement (receipt)"
+   },
+   "sr": {
+    "status": "Reversed",
+    "bank_confirmed_at_iso": "2026-10-06T09:50:55.501Z",
+    "bank_received_amount_ngn": 0
+   },
+   "quo": {
+    "id": "QT-KD-26-1734",
+    "total_ngn": 34650,
+    "paid_ngn": 34650,
+    "status": "Pending"
+   },
+   "quoLedger": [
+    {
+     "id": "LE-KD-26-2005",
+     "type": "RECEIPT",
+     "amount_ngn": 0,
+     "at_iso": "2026-10-06T12:00:00.000Z"
+    },
+    {
+     "id": "LE-KD-26-2009",
+     "type": "OVERPAY_APPLIED",
+     "amount_ngn": 34650,
+     "at_iso": "2026-10-06T12:00:00.000Z"
+    }
+   ],
+   "credit": [
+    {
+     "application_id": "RCA-1791280255627-5ay5gx",
+     "customer_id": "CUS-KD-26-0700",
+     "target_quotation_ref": "QT-KD-26-1734",
+     "source_quotation_ref": "QT-KD-26-0825",
+     "refund_id": null,
+     "kind": "overpay",
+     "amount_ngn": 34650,
+     "status": "Credit confirmation",
+     "ledger_bank_reference": "CREDIT_APPLY:RCA-1791280255627-5ay5gx",
+     "created_at_iso": "2026-10-06T12:00:00.000Z",
+     "created_by_user_id": "USR-D1B9D0F6017652C2",
+     "created_by_name": "Mansur Lawal Matazu",
+     "branch_id": "BR-KD",
+     "source_receipt_id": "LE-KD-26-2005",
+     "reversed_at_iso": null,
+     "reversed_by_user_id": null,
+     "reversed_by_name": null,
+     "reverse_reason": null,
+     "released_for_refund_id": null
+    }
+   ],
+   "tm": [
+    {
+     "id": "TM-KD-26-3124",
+     "type": "RECEIPT_IN",
+     "amount_ngn": 34650,
+     "posted_at_iso": "2026-10-06T12:00:00.000Z"
+    },
+    {
+     "id": "TM-KD-26-3127",
+     "type": "RECEIPT_REVERSAL_OUT",
+     "amount_ngn": -34650,
+     "posted_at_iso": "2026-10-06T09:50:55.526Z"
+    }
+   ],
+   "au": [
+    {
+     "action": "receipt.finance_amount_sync",
+     "occurred_at_iso": "2026-10-06T09:50:55.537Z",
+     "details_json": "{\"confirmedAmountNgn\":0,\"previousAmountNgn\":34650,\"quotationRef\":\"QT-KD-26-1734\",\"receiptLedgerNgn\":0,\"overpayLedgerNgn\":0}"
+    },
+    {
+     "action": "receipt.refund_fund_unwind",
+     "occurred_at_iso": "2026-10-06T09:50:55.774Z",
+     "details_json": "{\"keepCashNgn\":0,\"methodUpdated\":true,\"paymentMethod\":\"Refund fund\",\"depositLinksReleased\":0,\"glOk\":true,\"glSkipped\":false,\"glError\":null}"
+    },
+    {
+     "action": "receipt.finance_settlement",
+     "occurred_at_iso": "2026-10-06T09:50:55.843Z",
+     "details_json": "{\"bankReceivedAmountNgn\":0,\"bookAmountNgn\":34650,\"clearForDelivery\":true,\"paymentLineCorrectionCount\":0,\"refundCreditAppliedNgn\":34650,\"partialSplitConfirm\":false}"
+    },
+    {
+     "action": "receipt.treasury_reversal_status",
+     "occurred_at_iso": "2026-10-06T14:40:20.641Z",
+     "details_json": "{\"quotationRef\":\"QT-KD-26-1734\",\"amountNgn\":0,\"netNgn\":0,\"reversedNgn\":34650}"
+    }
+   ],
+   "recon": []
+  }
+ ],
+ "recon2051": []
+}

@@ -1,0 +1,196 @@
+{
+  "ok": true,
+  "ui": {
+    "openCredits": 122,
+    "totalBalanceNgn": 1151728
+  },
+  "live": {
+    "openCredits": 122,
+    "totalOpenNgn": 1151728,
+    "availableNgn": 1151728,
+    "heldNgn": 0,
+    "paidOutNgn": 0
+  },
+  "ledger": {
+    "creditRows": 125,
+    "openRows": 122,
+    "creditedTotalNgn": 1179576,
+    "openTotalNgn": 1151728
+  },
+  "withdrawals": [
+    {
+      "id": "RCW-KD-26-0001",
+      "status": "cancelled",
+      "amountNgn": 50000,
+      "requestedAtIso": "2026-09-17T09:01:45.122Z",
+      "paidAtIso": null,
+      "cancelledAtIso": "2026-09-29T10:02:36.763Z",
+      "note": "Company cut retention withdrawal"
+    }
+  ],
+  "gaps": {
+    "missingCount": 5,
+    "missingNgn": 35084,
+    "underCount": 0,
+    "underNgn": 0,
+    "matchedWithCutCount": 121,
+    "impliedOpenIfGapsFilledNgn": 1186812,
+    "closedWhileActiveCount": 2,
+    "closedWhileActiveNgn": 0
+  },
+  "missing": [
+    {
+      "refundId": "RF-KD-26-9522",
+      "status": "Paid",
+      "customerName": "Shamsu",
+      "expectedCutNgn": 1900,
+      "source": "split_json",
+      "recipientKinds": [
+        "customer"
+      ],
+      "approvedNgn": 9500,
+      "paidNgn": 9500,
+      "paymentNote": "",
+      "requestedAtIso": "2026-08-25T15:25:26.413Z",
+      "splitPreview": [
+        {
+          "kind": "customer",
+          "amount": 9500,
+          "cut": 1900,
+          "net": 0,
+          "waived": false
+        }
+      ]
+    },
+    {
+      "refundId": "RF-KD-26-9523",
+      "status": "Paid",
+      "customerName": "Benjamin Jaji Barrack",
+      "expectedCutNgn": 3921,
+      "source": "split_json",
+      "recipientKinds": [
+        "customer"
+      ],
+      "approvedNgn": 19605,
+      "paidNgn": 19605,
+      "paymentNote": "",
+      "requestedAtIso": "2026-08-25T15:29:48.125Z",
+      "splitPreview": [
+        {
+          "kind": "customer",
+          "amount": 19605,
+          "cut": 3921,
+          "net": 15684,
+          "waived": false
+        }
+      ]
+    },
+    {
+      "refundId": "RF-KD-26-9531",
+      "status": "Paid",
+      "customerName": "Ali Adamu Ardo",
+      "expectedCutNgn": 4570,
+      "source": "split_json",
+      "recipientKinds": [
+        "customer"
+      ],
+      "approvedNgn": 22850,
+      "paidNgn": 22850,
+      "paymentNote": "",
+      "requestedAtIso": "2026-08-25T16:40:55.763Z",
+      "splitPreview": [
+        {
+          "kind": "customer",
+          "amount": 22850,
+          "cut": 4570,
+          "net": 0,
+          "waived": false
+        }
+      ]
+    },
+    {
+      "refundId": "RF-KD-26-9537",
+      "status": "Paid",
+      "customerName": "Abubakar Abba",
+      "expectedCutNgn": 15955,
+      "source": "split_json",
+      "recipientKinds": [
+        "customer"
+      ],
+      "approvedNgn": 79775,
+      "paidNgn": 79775,
+      "paymentNote": "",
+      "requestedAtIso": "2026-08-25T17:08:24.319Z",
+      "splitPreview": [
+        {
+          "kind": "customer",
+          "amount": 79775,
+          "cut": 15955,
+          "net": 63820,
+          "waived": false
+        }
+      ]
+    },
+    {
+      "refundId": "RF-KD-26-9737",
+      "status": "Partially paid",
+      "customerName": "Aminu Ibrahim",
+      "expectedCutNgn": 8738,
+      "source": "split_json",
+      "recipientKinds": [
+        "customer"
+      ],
+      "approvedNgn": 942690,
+      "paidNgn": 899000,
+      "paymentNote": "Settled at approval: company cut ₦8,738 → retention ledger. OM confirmed 1739 and 1751 are separate supplied jobs; 1751 overpay ₦939,610. Paid from Moniepoint 6",
+      "requestedAtIso": "2026-10-07T16:59:03.620Z",
+      "splitPreview": [
+        {
+          "kind": "customer",
+          "amount": 899000,
+          "cut": 0,
+          "net": 899000,
+          "waived": false
+        },
+        {
+          "kind": "customer",
+          "amount": 43690,
+          "cut": 8738,
+          "net": 34952,
+          "waived": false
+        }
+      ]
+    }
+  ],
+  "under": [],
+  "closedWhileActive": [
+    {
+      "refundId": "RF-KD-26-9680",
+      "status": "Partially paid",
+      "amountNgn": 0,
+      "openNgn": 0,
+      "note": "Company cut ₦64,709 from refund RF-KD-26-9680 — Released ₦64,709 back into the customer share. No staff split. Sept recon.",
+      "customerName": "Maimuna Farouk"
+    },
+    {
+      "refundId": "RF-KD-26-9690",
+      "status": "Partially paid",
+      "amountNgn": 0,
+      "openNgn": 0,
+      "note": "Company cut ₦28,986 from refund RF-KD-26-9690 — Released ₦28,986 into the customer share. No staff split. Sept 2026 bank reconciliation – investigation",
+      "customerName": "Ramaran Garkuwa"
+    }
+  ],
+  "releasedOrVoidedNotes": [
+    {
+      "refundId": "RF-KD-26-9680",
+      "amountNgn": 0,
+      "note": "Company cut ₦64,709 from refund RF-KD-26-9680 — Released ₦64,709 back into the customer share. No staff split. Sept recon."
+    },
+    {
+      "refundId": "RF-KD-26-9690",
+      "amountNgn": 0,
+      "note": "Company cut ₦28,986 from refund RF-KD-26-9690 — Released ₦28,986 into the customer share. No staff split. Sept 2026 bank reconciliation – investigation"
+    }
+  ]
+}

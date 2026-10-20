@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "customerID": "CUS-004",
+  "customerName": "HAKIMI",
+  "quotationId": "QT-KD-26-1763",
+  "quoteTotalNgn": 952200,
+  "receiptId": "LE-KD-26-2042",
+  "receiptAmountNgn": 952200,
+  "receiptStatus": "Pending clearance",
+  "overpayAdvanceId": "LE-KD-26-2043",
+  "overpayAdvanceNgn": 12800,
+  "cashInNgn": 965000,
+  "cuttingListId": "CL-KD-26-1449",
+  "totalM": 165.6,
+  "printHint": "Sales desk → Cutting lists → open CL-KD-26-1449 → Print",
+  "production": "NOT started"
+}

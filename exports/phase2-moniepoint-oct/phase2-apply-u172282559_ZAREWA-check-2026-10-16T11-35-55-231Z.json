@@ -1,0 +1,184 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T11:35:55.231Z",
+ "plan": "round4-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-3253",
+   "group": "A",
+   "record": "TM-KD-26-3253 RECEIPT_REVERSAL_OUT −₦1,500,000 (Mal Sani Abdulrahman Zaria, LE-KD-26-1154)",
+   "field": "treasury posting date",
+   "op": "redateTreasury",
+   "outcome": "would apply"
+  },
+  {
+   "id": "R4-A38",
+   "group": "A",
+   "record": "RF-KD-26-9730 Suleiman Zaria (QT-KD-26-1715), TM-KD-26-3143 −₦1,753,330 on 5 Oct",
+   "field": "refund amount + payout date",
+   "op": "update",
+   "outcome": "would apply"
+  },
+  {
+   "id": "R4-A38",
+   "group": "A",
+   "record": "RF-KD-26-9730 Suleiman Zaria (QT-KD-26-1715), TM-KD-26-3143 −₦1,753,330 on 5 Oct",
+   "field": "refund amount + payout date",
+   "op": "update",
+   "outcome": "would apply"
+  },
+  {
+   "id": "R4-A38",
+   "group": "A",
+   "record": "RF-KD-26-9730 Suleiman Zaria (QT-KD-26-1715), TM-KD-26-3143 −₦1,753,330 on 5 Oct",
+   "field": "refund amount + payout date",
+   "op": "refundRepay",
+   "outcome": "would apply",
+   "current": {
+    "paidNgn": 1753330,
+    "paidAt": "2026-10-05",
+    "payee": "Suleiman zaria",
+    "status": "Paid",
+    "line": "TM-KD-26-3143 acct 4 2026-10-05T12:00:00.000Z ₦-1753330",
+    "slices": [],
+    "journals": [
+     "JE-KD-26-4533"
+    ]
+   }
+  },
+  {
+   "id": "R4-A103",
+   "group": "A",
+   "record": "RF-KD-26-9724 Abu Cap, TM-KD-26-3182 −₦1,941 on Taj 8 Oct",
+   "field": "treasury account",
+   "op": "moveTreasury",
+   "outcome": "would apply",
+   "amountNgn": -1941,
+   "glReclassNgn": 0
+  },
+  {
+   "id": "R4-A149",
+   "group": "A",
+   "record": "LE-KD-26-2094 Ibrahim Welder (QT-KD-26-1793), TM-KD-26-3230 ₦142,550",
+   "field": "receipt amount (finance-confirmed)",
+   "op": "receiptConfirmedAmount",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1793"
+  },
+  {
+   "id": "R4-A5",
+   "group": "B",
+   "record": "Moniepoint 2026-10-01 11:54 ₦2,411,727 → Taj",
+   "field": "internal transfer (both sides)",
+   "op": "internalTransfer",
+   "outcome": "would apply",
+   "from": "Zarewa Aluminum & Plastics Ltd",
+   "to": "Zaps Aluminum Enterprises"
+  },
+  {
+   "id": "R4-A14",
+   "group": "B",
+   "record": "Moniepoint 2026-10-01 18:20 ₦15,000",
+   "field": "new expense (Maintenance)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R4-A36",
+   "group": "B",
+   "record": "Moniepoint 2026-10-03 20:30 ₦222,000",
+   "field": "new expense (Maintenance)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R4-A49",
+   "group": "B",
+   "record": "Moniepoint 2026-10-05 13:41 ₦100,000 → Cash Office",
+   "field": "internal transfer (both sides)",
+   "op": "internalTransfer",
+   "outcome": "would apply",
+   "from": "Zarewa Aluminum & Plastics Ltd",
+   "to": "Cash Office"
+  },
+  {
+   "id": "R4-A86",
+   "group": "B",
+   "record": "Moniepoint 2026-10-07 16:21 ₦20,000",
+   "field": "new expense (Staff loan)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R4-A105",
+   "group": "B",
+   "record": "Moniepoint 2026-10-09 09:46 ₦417,236",
+   "field": "new expense (Fuel & lubricant)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R4-A109",
+   "group": "B",
+   "record": "Moniepoint 2026-10-09 12:44 ₦10,000,000 → Taj",
+   "field": "internal transfer (both sides)",
+   "op": "internalTransfer",
+   "outcome": "would apply",
+   "from": "Zarewa Aluminum & Plastics Ltd",
+   "to": "Zaps Aluminum Enterprises"
+  },
+  {
+   "id": "R4-A153",
+   "group": "B",
+   "record": "Moniepoint 2026-10-13 12:05 ₦4,000,000 → Taj",
+   "field": "internal transfer (both sides)",
+   "op": "internalTransfer",
+   "outcome": "would apply",
+   "from": "Zarewa Aluminum & Plastics Ltd",
+   "to": "Zaps Aluminum Enterprises"
+  },
+  {
+   "id": "R4-A158",
+   "group": "B",
+   "record": "Moniepoint 2026-10-13 17:25 ₦550,000",
+   "field": "new expense (Carriage inward)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R4-A164",
+   "group": "B",
+   "record": "Moniepoint 2026-10-13 17:50 ₦22,500",
+   "field": "new expense (Maintenance)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R4-FEES",
+   "group": "B",
+   "record": "Moniepoint 2026-10-15 23:59 ₦8,340",
+   "field": "new expense (Bank charges)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R4-ALIGN",
+   "group": "E",
+   "record": "Moniepoint (treasury account 4) at 30 Sep 2026",
+   "field": "statement alignment (BANK_RECON_ADJUSTMENT)",
+   "op": "bankAdjustment",
+   "outcome": "BLOCKED",
+   "why": "Alignment date falls in locked period 2026-09. Reason: Sales phase 1 September 2026. Later changes post as October adjustments."
+  }
+ ]
+}

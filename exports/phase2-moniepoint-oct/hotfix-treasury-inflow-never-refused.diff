@@ -1,0 +1,80 @@
+diff --git a/server/finance/treasuryBalanceCheck.pure.test.js b/server/finance/treasuryBalanceCheck.pure.test.js
+new file mode 100644
+index 0000000..fa6cb32
+--- /dev/null
++++ b/server/finance/treasuryBalanceCheck.pure.test.js
+@@ -0,0 +1,43 @@
++import { describe, expect, it } from 'vitest';
++import { adjustTreasuryBalanceTx } from './treasuryMovementWrite.js';
++
++/** Minimal db stub: one treasury account row whose stored balance moves on UPDATE. */
++function fakeDb(balance) {
++  const row = { id: 1, name: 'Zarewa Aluminum & Plastics Ltd.', balance, strict_cache_enabled: 0 };
++  return {
++    row,
++    prepare(sql) {
++      return {
++        get: () => ({ ...row }),
++        run: (next) => {
++          if (/UPDATE treasury_accounts/.test(sql)) row.balance = next;
++        },
++      };
++    },
++  };
++}
++
++describe('adjustTreasuryBalanceTx insufficient-balance check', () => {
++  it('accepts a receipt into an account whose stored balance is already negative', () => {
++    const db = fakeDb(-5_000_000);
++    const out = adjustTreasuryBalanceTx(db, 1, 200_000);
++    expect(out.storedAfter).toBe(-4_800_000);
++    expect(db.row.balance).toBe(-4_800_000);
++  });
++
++  it('still refuses an outflow that would end below zero', () => {
++    const db = fakeDb(100_000);
++    expect(() => adjustTreasuryBalanceTx(db, 1, -150_000)).toThrow(/Insufficient balance/);
++    expect(db.row.balance).toBe(100_000);
++  });
++
++  it('refuses an outflow from an already-negative account', () => {
++    const db = fakeDb(-10_000);
++    expect(() => adjustTreasuryBalanceTx(db, 1, -1)).toThrow(/Insufficient balance/);
++  });
++
++  it('allows an outflow below zero when allowNegativeBalance is set', () => {
++    const db = fakeDb(100_000);
++    expect(adjustTreasuryBalanceTx(db, 1, -150_000, { allowNegativeBalance: true }).storedAfter).toBe(-50_000);
++  });
++});
+diff --git a/server/finance/treasuryMovementWrite.js b/server/finance/treasuryMovementWrite.js
+index bfdf32d..64c6d3a 100644
+--- a/server/finance/treasuryMovementWrite.js
++++ b/server/finance/treasuryMovementWrite.js
+@@ -132,7 +132,8 @@ export function adjustTreasuryBalanceTx(db, treasuryAccountId, deltaNgn, opts =
+     }
+   }
+   const nextBalance = storedBefore + delta;
+-  if (nextBalance < 0 && !opts.allowNegativeBalance) {
++  // Money in never makes a balance insufficient: only refuse outflows that end below zero.
++  if (delta < 0 && nextBalance < 0 && !opts.allowNegativeBalance) {
+     throw new Error(`Insufficient balance in ${row.name}.`);
+   }
+   db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(nextBalance, treasuryAccountId);
+diff --git a/server/writeOps.js b/server/writeOps.js
+index d3ed41a..2969316 100644
+--- a/server/writeOps.js
++++ b/server/writeOps.js
+@@ -959,8 +959,10 @@ function treasuryAccountRow(db, treasuryAccountId) {
+ function adjustTreasuryBalanceTx(db, treasuryAccountId, deltaNgn, opts = {}) {
+   const row = treasuryAccountRow(db, treasuryAccountId);
+   if (!row) throw new Error('Treasury account not found.');
+-  const nextBalance = roundMoney(row.balance) + roundMoney(deltaNgn);
+-  if (nextBalance < 0 && !opts.allowNegativeBalance) {
++  const delta = roundMoney(deltaNgn);
++  const nextBalance = roundMoney(row.balance) + delta;
++  // Money in never makes a balance insufficient: only refuse outflows that end below zero.
++  if (delta < 0 && nextBalance < 0 && !opts.allowNegativeBalance) {
+     throw new Error(`Insufficient balance in ${row.name}.`);
+   }
+   db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(nextBalance, treasuryAccountId);

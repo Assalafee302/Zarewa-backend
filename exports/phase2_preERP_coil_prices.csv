@@ -1,0 +1,31 @@
+coilNo,mat,gaugeLabel,old_db_gauge,old_db_purchase_date,erp_cost_per_kg,proposed_cost_per_kg,source
+CL-KD-APR-2002,ZN,0.24mm,,,1738.0,1800.0,inferred: Mar 2026 purchases (bought ~Apr 2026)
+CL-KD-APR-1989,ZN,0.20mm,,,1738.0,1800.0,inferred: Mar 2026 purchases (bought ~Apr 2026)
+CL-KD-APR-1962,ZN,0.20mm,AZ/0.20,2026-02-25,1738.0,1780.0,old DB price
+CL-KD-APR-2001,ZN,0.28mm,,,1738.0,1800.0,inferred: Mar 2026 purchases (bought ~Apr 2026)
+CL-KD-APR-1997,ZN,0.40mm,,,1738.0,1800.0,inferred: Mar 2026 purchases (bought ~Apr 2026)
+CL-KD-APR-1996,ZN,0.18mm,,,1738.0,1800.0,inferred: Mar 2026 purchases (bought ~Apr 2026)
+CL-KD-APR-1993,ALU,0.55mm,,,7299.0,6864.0,inferred: Mar 2026 purchases (bought ~Apr 2026)
+CL-KD-APR-1992,ZN,0.28mm,,,1738.0,1800.0,inferred: Mar 2026 purchases (bought ~Apr 2026)
+CL-KD-APR-1991,ZN,0.24mm,,,1738.0,1800.0,inferred: Mar 2026 purchases (bought ~Apr 2026)
+CL-KD-APR-1980,ALU,0.55mm,Full AL/0.55,2025-12-26,7299.0,6618.357487922706,nearest purchases (±45d)
+CL-KD-APR-1975,ZN,0.22mm,AZ/0.28,2026-03-24,1738.0,1800.0,old DB price
+CL-KD-APR-1969,ZN,0.20mm,AL/0.70,2026-03-10,1738.0,,coil no. mismatch (different material)
+CL-KD-APR-1961,ZN,0.20mm,AZ/0.20,2026-02-25,1738.0,1780.0,old DB price
+CL-KD-APR-1937,ZN,0.18mm,AZ/0.18,2026-01-23,1738.0,1850.0,old DB price
+CL-KD-APR-1918,ALU,0.70mm,AL/0.70,2026-01-07,7299.0,6050.0,old DB price
+CL-KD-APR-1914,ZN,0.28mm,AZ/0.28,2025-12-18,1738.0,1800.0,nearest purchases (±45d)
+CL-KD-APR-1907,ZN,0.20mm,AZ/0.20,2025-12-09,1738.0,1860.0,nearest purchases (±45d)
+CL-KD-APR-1889,ZN,0.28mm,AZ/0.28,2025-11-13,1738.0,1860.0,old DB price
+CL-KD-APR-1882,ZN,0.24mm,AZ/0.24,2025-11-13,1738.0,1860.0,old DB price
+CL-KD-APR-1755,ZN,0.18mm,AZ/0.18,2025-06-21,1738.0,2120.0,old DB price
+CL-KD-APR-1731,ZN,0.18mm,AZ/0.18,2025-05-24,1738.0,2170.0,old DB price
+CL-KD-APR-1613,ZN,0.28mm,AZ/0.28,2025-03-31,1738.0,2150.0,nearest purchases (±45d)
+CL-KD-APR-1604,ALU,0.70mm,AL/0.70,2025-01-01,7299.0,,none
+CL-KD-APR-1597,ALU,0.70mm,AL/0.70,2025-01-01,7299.0,,none
+CL-KD-APR-1594,ALU,0.70mm,AL/0.70,2025-01-01,7299.0,,none
+CL-KD-APR-1552,ALU,0.70mm,AL/0.70,2025-01-01,7299.0,,none
+CL-KD-APR-1512,ZN,0.22mm,AZ/0.22,2025-01-01,1738.0,,none
+CL-KD-APR-1455,ALU,0.60mm,AL/0.70,2025-01-01,7299.0,,none
+CL-KD-APR-1399,ALU,0.45mm,AL/0.45,2025-01-01,7299.0,,none
+CL-KD-APR-1335,ZN,0.22mm,AZ/0.22,2025-01-01,1738.0,,none

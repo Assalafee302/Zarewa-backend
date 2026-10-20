@@ -1,0 +1,157 @@
+[
+ {
+  "correction": "JE-KD-26-4839",
+  "correctedAt": "2026-10-14T22:10:16.924Z",
+  "refundId": "RF-KD-26-9250",
+  "reversedJe": "JE-KD-26-1908",
+  "refund": {
+   "refund_id": "RF-KD-26-9250",
+   "customer_name": "Tahir",
+   "amount_ngn": 809400,
+   "approved_amount_ngn": 809400,
+   "paid_amount_ngn": 720000,
+   "paid_at_iso": "2026-08-09",
+   "status": "Partially paid",
+   "branch_id": "BR-KD"
+  },
+  "payouts": [
+   {
+    "id": "TM-KD-26-1427",
+    "treasury_account_id": 4,
+    "posted_at_iso": "2026-08-09T12:00:00.000Z",
+    "amount_ngn": -720000,
+    "type": "REFUND_PAYOUT"
+   }
+  ],
+  "journals": [
+   {
+    "id": "JE-KD-26-1908",
+    "entry_date_iso": "2026-07-11",
+    "source_kind": "CUSTOMER_REFUND_PAYOUT_GL",
+    "source_id": "RF-KD-26-9250:paid:809400",
+    "created_at_iso": "2026-07-11T17:14:38.086Z",
+    "lines": [
+     {
+      "code": "2500",
+      "d": 809400,
+      "c": 0
+     },
+     {
+      "code": "1000",
+      "d": 0,
+      "c": 809400
+     }
+    ]
+   },
+   {
+    "id": "JE-KD-26-4839",
+    "entry_date_iso": "2026-07-11",
+    "source_kind": "PHASE2_REFUND_CORRECTION",
+    "source_id": "RF-KD-26-9250:JE-KD-26-1908",
+    "created_at_iso": "2026-10-14T22:10:16.924Z",
+    "lines": [
+     {
+      "code": "2500",
+      "d": 0,
+      "c": 809400
+     },
+     {
+      "code": "1000",
+      "d": 809400,
+      "c": 0
+     }
+    ]
+   },
+   {
+    "id": "JE-KD-26-4840",
+    "entry_date_iso": "2026-08-09",
+    "source_kind": "CUSTOMER_REFUND_PAYOUT_GL",
+    "source_id": "RF-KD-26-9250:paid:TM-KD-26-1427",
+    "created_at_iso": "2026-10-14T22:10:30.473Z",
+    "lines": [
+     {
+      "code": "2500",
+      "d": 720000,
+      "c": 0
+     },
+     {
+      "code": "1000",
+      "d": 0,
+      "c": 720000
+     }
+    ]
+   }
+  ],
+  "glCashCreditNgn": 720000,
+  "treasuryPaidNgn": 720000,
+  "gapNgn": 0
+ },
+ {
+  "correction": "JE-KD-26-4874",
+  "correctedAt": "2026-10-16T11:56:46.050Z",
+  "refundId": "RF-KD-26-9730",
+  "reversedJe": "JE-KD-26-4533",
+  "refund": {
+   "refund_id": "RF-KD-26-9730",
+   "customer_name": "Suleiman Zaria",
+   "amount_ngn": 1753000,
+   "approved_amount_ngn": 1753000,
+   "paid_amount_ngn": 1753000,
+   "paid_at_iso": "2026-10-04",
+   "status": "Paid",
+   "branch_id": "BR-KD"
+  },
+  "payouts": [
+   {
+    "id": "TM-KD-26-3143",
+    "treasury_account_id": 4,
+    "posted_at_iso": "2026-10-04T12:00:00.000Z",
+    "amount_ngn": -1753000,
+    "type": "REFUND_PAYOUT"
+   }
+  ],
+  "journals": [
+   {
+    "id": "JE-KD-26-4533",
+    "entry_date_iso": "2026-10-05",
+    "source_kind": "CUSTOMER_REFUND_PAYOUT_GL",
+    "source_id": "RF-KD-26-9730:paid:TM-KD-26-3143",
+    "created_at_iso": "2026-10-06T17:31:55.902Z",
+    "lines": [
+     {
+      "code": "2500",
+      "d": 1753330,
+      "c": 0
+     },
+     {
+      "code": "1000",
+      "d": 0,
+      "c": 1753330
+     }
+    ]
+   },
+   {
+    "id": "JE-KD-26-4874",
+    "entry_date_iso": "2026-10-05",
+    "source_kind": "PHASE2_REFUND_CORRECTION",
+    "source_id": "RF-KD-26-9730:JE-KD-26-4533",
+    "created_at_iso": "2026-10-16T11:56:46.050Z",
+    "lines": [
+     {
+      "code": "2500",
+      "d": 0,
+      "c": 1753330
+     },
+     {
+      "code": "1000",
+      "d": 1753330,
+      "c": 0
+     }
+    ]
+   }
+  ],
+  "glCashCreditNgn": 0,
+  "treasuryPaidNgn": 1753000,
+  "gapNgn": 1753000
+ }
+]

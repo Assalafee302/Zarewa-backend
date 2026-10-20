@@ -1,0 +1,1036 @@
+{
+  "resumeSkipped": 700,
+  "recon": {
+    "createdCount": 204,
+    "first": "BKR-KD-26-0787",
+    "last": "BKR-KD-26-0990"
+  },
+  "case": {
+    "id": "INV-KD-26-0009",
+    "status": "cleared",
+    "decision_note": "Cleared – ₦6,075,400 received from Ramatu Hussaini Jallo and returned same day (lines 94/129); net cost ₦20 fee",
+    "closed_at_iso": "2026-10-13T11:05:47.328Z"
+  },
+  "created": [
+    {
+      "line": 701,
+      "id": "BKR-KD-26-0787",
+      "status": "Matched"
+    },
+    {
+      "line": 702,
+      "id": "BKR-KD-26-0788",
+      "status": "Matched"
+    },
+    {
+      "line": 703,
+      "id": "BKR-KD-26-0789",
+      "status": "Matched"
+    },
+    {
+      "line": 704,
+      "id": "BKR-KD-26-0790",
+      "status": "Matched"
+    },
+    {
+      "line": 705,
+      "id": "BKR-KD-26-0791",
+      "status": "Matched"
+    },
+    {
+      "line": 706,
+      "id": "BKR-KD-26-0792",
+      "status": "Matched"
+    },
+    {
+      "line": 707,
+      "id": "BKR-KD-26-0793",
+      "status": "Matched"
+    },
+    {
+      "line": 708,
+      "id": "BKR-KD-26-0794",
+      "status": "Matched"
+    },
+    {
+      "line": 709,
+      "id": "BKR-KD-26-0795",
+      "status": "Matched"
+    },
+    {
+      "line": 710,
+      "id": "BKR-KD-26-0796",
+      "status": "Matched"
+    },
+    {
+      "line": 711,
+      "id": "BKR-KD-26-0797",
+      "status": "Matched"
+    },
+    {
+      "line": 712,
+      "id": "BKR-KD-26-0798",
+      "status": "Matched"
+    },
+    {
+      "line": 713,
+      "id": "BKR-KD-26-0799",
+      "status": "Matched"
+    },
+    {
+      "line": 714,
+      "id": "BKR-KD-26-0800",
+      "status": "Matched"
+    },
+    {
+      "line": 715,
+      "id": "BKR-KD-26-0801",
+      "status": "Matched"
+    },
+    {
+      "line": 716,
+      "id": "BKR-KD-26-0802",
+      "status": "Matched"
+    },
+    {
+      "line": 717,
+      "id": "BKR-KD-26-0803",
+      "status": "Matched"
+    },
+    {
+      "line": 718,
+      "id": "BKR-KD-26-0804",
+      "status": "Matched"
+    },
+    {
+      "line": 719,
+      "id": "BKR-KD-26-0805",
+      "status": "Matched"
+    },
+    {
+      "line": 720,
+      "id": "BKR-KD-26-0806",
+      "status": "Matched"
+    },
+    {
+      "line": 721,
+      "id": "BKR-KD-26-0807",
+      "status": "Matched"
+    },
+    {
+      "line": 722,
+      "id": "BKR-KD-26-0808",
+      "status": "Matched"
+    },
+    {
+      "line": 723,
+      "id": "BKR-KD-26-0809",
+      "status": "Matched"
+    },
+    {
+      "line": 724,
+      "id": "BKR-KD-26-0810",
+      "status": "Matched"
+    },
+    {
+      "line": 725,
+      "id": "BKR-KD-26-0811",
+      "status": "Matched"
+    },
+    {
+      "line": 726,
+      "id": "BKR-KD-26-0812",
+      "status": "Matched"
+    },
+    {
+      "line": 727,
+      "id": "BKR-KD-26-0813",
+      "status": "Matched"
+    },
+    {
+      "line": 728,
+      "id": "BKR-KD-26-0814",
+      "status": "Matched"
+    },
+    {
+      "line": 729,
+      "id": "BKR-KD-26-0815",
+      "status": "Matched"
+    },
+    {
+      "line": 730,
+      "id": "BKR-KD-26-0816",
+      "status": "Matched"
+    },
+    {
+      "line": 731,
+      "id": "BKR-KD-26-0817",
+      "status": "Matched"
+    },
+    {
+      "line": 732,
+      "id": "BKR-KD-26-0818",
+      "status": "Matched"
+    },
+    {
+      "line": 733,
+      "id": "BKR-KD-26-0819",
+      "status": "Matched"
+    },
+    {
+      "line": 734,
+      "id": "BKR-KD-26-0820",
+      "status": "Matched"
+    },
+    {
+      "line": 735,
+      "id": "BKR-KD-26-0821",
+      "status": "Matched"
+    },
+    {
+      "line": 736,
+      "id": "BKR-KD-26-0822",
+      "status": "Matched"
+    },
+    {
+      "line": 737,
+      "id": "BKR-KD-26-0823",
+      "status": "Matched"
+    },
+    {
+      "line": 738,
+      "id": "BKR-KD-26-0824",
+      "status": "Review"
+    },
+    {
+      "line": 739,
+      "id": "BKR-KD-26-0825",
+      "status": "Matched"
+    },
+    {
+      "line": 740,
+      "id": "BKR-KD-26-0826",
+      "status": "Matched"
+    },
+    {
+      "line": 741,
+      "id": "BKR-KD-26-0827",
+      "status": "Matched"
+    },
+    {
+      "line": 742,
+      "id": "BKR-KD-26-0828",
+      "status": "Matched"
+    },
+    {
+      "line": 743,
+      "id": "BKR-KD-26-0829",
+      "status": "Matched"
+    },
+    {
+      "line": 744,
+      "id": "BKR-KD-26-0830",
+      "status": "Matched"
+    },
+    {
+      "line": 745,
+      "id": "BKR-KD-26-0831",
+      "status": "Matched"
+    },
+    {
+      "line": 746,
+      "id": "BKR-KD-26-0832",
+      "status": "Matched"
+    },
+    {
+      "line": 747,
+      "id": "BKR-KD-26-0833",
+      "status": "Matched"
+    },
+    {
+      "line": 748,
+      "id": "BKR-KD-26-0834",
+      "status": "Matched"
+    },
+    {
+      "line": 749,
+      "id": "BKR-KD-26-0835",
+      "status": "Matched"
+    },
+    {
+      "line": 750,
+      "id": "BKR-KD-26-0836",
+      "status": "Matched"
+    },
+    {
+      "line": 751,
+      "id": "BKR-KD-26-0837",
+      "status": "Review"
+    },
+    {
+      "line": 752,
+      "id": "BKR-KD-26-0838",
+      "status": "Matched"
+    },
+    {
+      "line": 753,
+      "id": "BKR-KD-26-0839",
+      "status": "Matched"
+    },
+    {
+      "line": 754,
+      "id": "BKR-KD-26-0840",
+      "status": "Matched"
+    },
+    {
+      "line": 755,
+      "id": "BKR-KD-26-0841",
+      "status": "Matched"
+    },
+    {
+      "line": 756,
+      "id": "BKR-KD-26-0842",
+      "status": "Matched"
+    },
+    {
+      "line": 757,
+      "id": "BKR-KD-26-0843",
+      "status": "Matched"
+    },
+    {
+      "line": 758,
+      "id": "BKR-KD-26-0844",
+      "status": "Matched"
+    },
+    {
+      "line": 759,
+      "id": "BKR-KD-26-0845",
+      "status": "Matched"
+    },
+    {
+      "line": 760,
+      "id": "BKR-KD-26-0846",
+      "status": "Matched"
+    },
+    {
+      "line": 761,
+      "id": "BKR-KD-26-0847",
+      "status": "Matched"
+    },
+    {
+      "line": 762,
+      "id": "BKR-KD-26-0848",
+      "status": "Matched"
+    },
+    {
+      "line": 763,
+      "id": "BKR-KD-26-0849",
+      "status": "Matched"
+    },
+    {
+      "line": 764,
+      "id": "BKR-KD-26-0850",
+      "status": "Matched"
+    },
+    {
+      "line": 765,
+      "id": "BKR-KD-26-0851",
+      "status": "Matched"
+    },
+    {
+      "line": 766,
+      "id": "BKR-KD-26-0852",
+      "status": "Matched"
+    },
+    {
+      "line": 767,
+      "id": "BKR-KD-26-0853",
+      "status": "Matched"
+    },
+    {
+      "line": 768,
+      "id": "BKR-KD-26-0854",
+      "status": "Matched"
+    },
+    {
+      "line": 769,
+      "id": "BKR-KD-26-0855",
+      "status": "Review"
+    },
+    {
+      "line": 770,
+      "id": "BKR-KD-26-0856",
+      "status": "Matched"
+    },
+    {
+      "line": 771,
+      "id": "BKR-KD-26-0857",
+      "status": "Matched"
+    },
+    {
+      "line": 772,
+      "id": "BKR-KD-26-0858",
+      "status": "Matched"
+    },
+    {
+      "line": 773,
+      "id": "BKR-KD-26-0859",
+      "status": "Matched"
+    },
+    {
+      "line": 774,
+      "id": "BKR-KD-26-0860",
+      "status": "Matched"
+    },
+    {
+      "line": 775,
+      "id": "BKR-KD-26-0861",
+      "status": "Matched"
+    },
+    {
+      "line": 776,
+      "id": "BKR-KD-26-0862",
+      "status": "Matched"
+    },
+    {
+      "line": 777,
+      "id": "BKR-KD-26-0863",
+      "status": "Matched"
+    },
+    {
+      "line": 778,
+      "id": "BKR-KD-26-0864",
+      "status": "Matched"
+    },
+    {
+      "line": 779,
+      "id": "BKR-KD-26-0865",
+      "status": "Matched"
+    },
+    {
+      "line": 780,
+      "id": "BKR-KD-26-0866",
+      "status": "Matched"
+    },
+    {
+      "line": 781,
+      "id": "BKR-KD-26-0867",
+      "status": "Matched"
+    },
+    {
+      "line": 782,
+      "id": "BKR-KD-26-0868",
+      "status": "Matched"
+    },
+    {
+      "line": 783,
+      "id": "BKR-KD-26-0869",
+      "status": "Matched"
+    },
+    {
+      "line": 784,
+      "id": "BKR-KD-26-0870",
+      "status": "Matched"
+    },
+    {
+      "line": 785,
+      "id": "BKR-KD-26-0871",
+      "status": "Matched"
+    },
+    {
+      "line": 786,
+      "id": "BKR-KD-26-0872",
+      "status": "Matched"
+    },
+    {
+      "line": 787,
+      "id": "BKR-KD-26-0873",
+      "status": "Matched"
+    },
+    {
+      "line": 788,
+      "id": "BKR-KD-26-0874",
+      "status": "Matched"
+    },
+    {
+      "line": 789,
+      "id": "BKR-KD-26-0875",
+      "status": "Matched"
+    },
+    {
+      "line": 790,
+      "id": "BKR-KD-26-0876",
+      "status": "Matched"
+    },
+    {
+      "line": 791,
+      "id": "BKR-KD-26-0877",
+      "status": "Matched"
+    },
+    {
+      "line": 792,
+      "id": "BKR-KD-26-0878",
+      "status": "Matched"
+    },
+    {
+      "line": 793,
+      "id": "BKR-KD-26-0879",
+      "status": "Matched"
+    },
+    {
+      "line": 794,
+      "id": "BKR-KD-26-0880",
+      "status": "Matched"
+    },
+    {
+      "line": 795,
+      "id": "BKR-KD-26-0881",
+      "status": "Matched"
+    },
+    {
+      "line": 796,
+      "id": "BKR-KD-26-0882",
+      "status": "Matched"
+    },
+    {
+      "line": 797,
+      "id": "BKR-KD-26-0883",
+      "status": "Matched"
+    },
+    {
+      "line": 798,
+      "id": "BKR-KD-26-0884",
+      "status": "Matched"
+    },
+    {
+      "line": 799,
+      "id": "BKR-KD-26-0885",
+      "status": "Matched"
+    },
+    {
+      "line": 800,
+      "id": "BKR-KD-26-0886",
+      "status": "Matched"
+    },
+    {
+      "line": 801,
+      "id": "BKR-KD-26-0887",
+      "status": "Matched"
+    },
+    {
+      "line": 802,
+      "id": "BKR-KD-26-0888",
+      "status": "Matched"
+    },
+    {
+      "line": 803,
+      "id": "BKR-KD-26-0889",
+      "status": "Matched"
+    },
+    {
+      "line": 804,
+      "id": "BKR-KD-26-0890",
+      "status": "Matched"
+    },
+    {
+      "line": 805,
+      "id": "BKR-KD-26-0891",
+      "status": "Matched"
+    },
+    {
+      "line": 806,
+      "id": "BKR-KD-26-0892",
+      "status": "Matched"
+    },
+    {
+      "line": 807,
+      "id": "BKR-KD-26-0893",
+      "status": "Matched"
+    },
+    {
+      "line": 808,
+      "id": "BKR-KD-26-0894",
+      "status": "Matched"
+    },
+    {
+      "line": 809,
+      "id": "BKR-KD-26-0895",
+      "status": "Matched"
+    },
+    {
+      "line": 810,
+      "id": "BKR-KD-26-0896",
+      "status": "Matched"
+    },
+    {
+      "line": 811,
+      "id": "BKR-KD-26-0897",
+      "status": "Matched"
+    },
+    {
+      "line": 812,
+      "id": "BKR-KD-26-0898",
+      "status": "Matched"
+    },
+    {
+      "line": 813,
+      "id": "BKR-KD-26-0899",
+      "status": "Matched"
+    },
+    {
+      "line": 814,
+      "id": "BKR-KD-26-0900",
+      "status": "Matched"
+    },
+    {
+      "line": 815,
+      "id": "BKR-KD-26-0901",
+      "status": "Matched"
+    },
+    {
+      "line": 816,
+      "id": "BKR-KD-26-0902",
+      "status": "Matched"
+    },
+    {
+      "line": 817,
+      "id": "BKR-KD-26-0903",
+      "status": "Matched"
+    },
+    {
+      "line": 818,
+      "id": "BKR-KD-26-0904",
+      "status": "Matched"
+    },
+    {
+      "line": 819,
+      "id": "BKR-KD-26-0905",
+      "status": "Matched"
+    },
+    {
+      "line": 820,
+      "id": "BKR-KD-26-0906",
+      "status": "Matched"
+    },
+    {
+      "line": 821,
+      "id": "BKR-KD-26-0907",
+      "status": "Matched"
+    },
+    {
+      "line": 822,
+      "id": "BKR-KD-26-0908",
+      "status": "Matched"
+    },
+    {
+      "line": 823,
+      "id": "BKR-KD-26-0909",
+      "status": "Matched"
+    },
+    {
+      "line": 824,
+      "id": "BKR-KD-26-0910",
+      "status": "Matched"
+    },
+    {
+      "line": 825,
+      "id": "BKR-KD-26-0911",
+      "status": "Matched"
+    },
+    {
+      "line": 826,
+      "id": "BKR-KD-26-0912",
+      "status": "Matched"
+    },
+    {
+      "line": 827,
+      "id": "BKR-KD-26-0913",
+      "status": "Matched"
+    },
+    {
+      "line": 828,
+      "id": "BKR-KD-26-0914",
+      "status": "Matched"
+    },
+    {
+      "line": 829,
+      "id": "BKR-KD-26-0915",
+      "status": "Matched"
+    },
+    {
+      "line": 830,
+      "id": "BKR-KD-26-0916",
+      "status": "Matched"
+    },
+    {
+      "line": 831,
+      "id": "BKR-KD-26-0917",
+      "status": "Matched"
+    },
+    {
+      "line": 832,
+      "id": "BKR-KD-26-0918",
+      "status": "Matched"
+    },
+    {
+      "line": 833,
+      "id": "BKR-KD-26-0919",
+      "status": "Matched"
+    },
+    {
+      "line": 834,
+      "id": "BKR-KD-26-0920",
+      "status": "Matched"
+    },
+    {
+      "line": 835,
+      "id": "BKR-KD-26-0921",
+      "status": "Matched"
+    },
+    {
+      "line": 836,
+      "id": "BKR-KD-26-0922",
+      "status": "Matched"
+    },
+    {
+      "line": 837,
+      "id": "BKR-KD-26-0923",
+      "status": "Matched"
+    },
+    {
+      "line": 838,
+      "id": "BKR-KD-26-0924",
+      "status": "Matched"
+    },
+    {
+      "line": 839,
+      "id": "BKR-KD-26-0925",
+      "status": "Matched"
+    },
+    {
+      "line": 840,
+      "id": "BKR-KD-26-0926",
+      "status": "Matched"
+    },
+    {
+      "line": 841,
+      "id": "BKR-KD-26-0927",
+      "status": "Matched"
+    },
+    {
+      "line": 842,
+      "id": "BKR-KD-26-0928",
+      "status": "Matched"
+    },
+    {
+      "line": 843,
+      "id": "BKR-KD-26-0929",
+      "status": "Matched"
+    },
+    {
+      "line": 844,
+      "id": "BKR-KD-26-0930",
+      "status": "Matched"
+    },
+    {
+      "line": 845,
+      "id": "BKR-KD-26-0931",
+      "status": "Matched"
+    },
+    {
+      "line": 846,
+      "id": "BKR-KD-26-0932",
+      "status": "Matched"
+    },
+    {
+      "line": 847,
+      "id": "BKR-KD-26-0933",
+      "status": "Matched"
+    },
+    {
+      "line": 848,
+      "id": "BKR-KD-26-0934",
+      "status": "Matched"
+    },
+    {
+      "line": 849,
+      "id": "BKR-KD-26-0935",
+      "status": "Matched"
+    },
+    {
+      "line": 850,
+      "id": "BKR-KD-26-0936",
+      "status": "Matched"
+    },
+    {
+      "line": 851,
+      "id": "BKR-KD-26-0937",
+      "status": "Matched"
+    },
+    {
+      "line": 852,
+      "id": "BKR-KD-26-0938",
+      "status": "Matched"
+    },
+    {
+      "line": 853,
+      "id": "BKR-KD-26-0939",
+      "status": "Matched"
+    },
+    {
+      "line": 854,
+      "id": "BKR-KD-26-0940",
+      "status": "Matched"
+    },
+    {
+      "line": 855,
+      "id": "BKR-KD-26-0941",
+      "status": "Matched"
+    },
+    {
+      "line": 856,
+      "id": "BKR-KD-26-0942",
+      "status": "Matched"
+    },
+    {
+      "line": 857,
+      "id": "BKR-KD-26-0943",
+      "status": "Matched"
+    },
+    {
+      "line": 858,
+      "id": "BKR-KD-26-0944",
+      "status": "Matched"
+    },
+    {
+      "line": 859,
+      "id": "BKR-KD-26-0945",
+      "status": "Matched"
+    },
+    {
+      "line": 860,
+      "id": "BKR-KD-26-0946",
+      "status": "Matched"
+    },
+    {
+      "line": 861,
+      "id": "BKR-KD-26-0947",
+      "status": "Matched"
+    },
+    {
+      "line": 862,
+      "id": "BKR-KD-26-0948",
+      "status": "Matched"
+    },
+    {
+      "line": 863,
+      "id": "BKR-KD-26-0949",
+      "status": "Matched"
+    },
+    {
+      "line": 864,
+      "id": "BKR-KD-26-0950",
+      "status": "Matched"
+    },
+    {
+      "line": 865,
+      "id": "BKR-KD-26-0951",
+      "status": "Matched"
+    },
+    {
+      "line": 866,
+      "id": "BKR-KD-26-0952",
+      "status": "Matched"
+    },
+    {
+      "line": 867,
+      "id": "BKR-KD-26-0953",
+      "status": "Matched"
+    },
+    {
+      "line": 868,
+      "id": "BKR-KD-26-0954",
+      "status": "Matched"
+    },
+    {
+      "line": 869,
+      "id": "BKR-KD-26-0955",
+      "status": "Matched"
+    },
+    {
+      "line": 870,
+      "id": "BKR-KD-26-0956",
+      "status": "Matched"
+    },
+    {
+      "line": 871,
+      "id": "BKR-KD-26-0957",
+      "status": "Matched"
+    },
+    {
+      "line": 872,
+      "id": "BKR-KD-26-0958",
+      "status": "Matched"
+    },
+    {
+      "line": 873,
+      "id": "BKR-KD-26-0959",
+      "status": "Matched"
+    },
+    {
+      "line": 874,
+      "id": "BKR-KD-26-0960",
+      "status": "Matched"
+    },
+    {
+      "line": 875,
+      "id": "BKR-KD-26-0961",
+      "status": "Matched"
+    },
+    {
+      "line": 876,
+      "id": "BKR-KD-26-0962",
+      "status": "Matched"
+    },
+    {
+      "line": 877,
+      "id": "BKR-KD-26-0963",
+      "status": "Matched"
+    },
+    {
+      "line": 878,
+      "id": "BKR-KD-26-0964",
+      "status": "Matched"
+    },
+    {
+      "line": 879,
+      "id": "BKR-KD-26-0965",
+      "status": "Matched"
+    },
+    {
+      "line": 880,
+      "id": "BKR-KD-26-0966",
+      "status": "Matched"
+    },
+    {
+      "line": 881,
+      "id": "BKR-KD-26-0967",
+      "status": "Matched"
+    },
+    {
+      "line": 882,
+      "id": "BKR-KD-26-0968",
+      "status": "Matched"
+    },
+    {
+      "line": 883,
+      "id": "BKR-KD-26-0969",
+      "status": "Matched"
+    },
+    {
+      "line": 884,
+      "id": "BKR-KD-26-0970",
+      "status": "Matched"
+    },
+    {
+      "line": 885,
+      "id": "BKR-KD-26-0971",
+      "status": "Matched"
+    },
+    {
+      "line": 886,
+      "id": "BKR-KD-26-0972",
+      "status": "Matched"
+    },
+    {
+      "line": 887,
+      "id": "BKR-KD-26-0973",
+      "status": "Matched"
+    },
+    {
+      "line": 888,
+      "id": "BKR-KD-26-0974",
+      "status": "Matched"
+    },
+    {
+      "line": 889,
+      "id": "BKR-KD-26-0975",
+      "status": "Matched"
+    },
+    {
+      "line": 890,
+      "id": "BKR-KD-26-0976",
+      "status": "Matched"
+    },
+    {
+      "line": 891,
+      "id": "BKR-KD-26-0977",
+      "status": "Matched"
+    },
+    {
+      "line": 892,
+      "id": "BKR-KD-26-0978",
+      "status": "Matched"
+    },
+    {
+      "line": 893,
+      "id": "BKR-KD-26-0979",
+      "status": "Matched"
+    },
+    {
+      "line": 894,
+      "id": "BKR-KD-26-0980",
+      "status": "Matched"
+    },
+    {
+      "line": 895,
+      "id": "BKR-KD-26-0981",
+      "status": "Matched"
+    },
+    {
+      "line": 896,
+      "id": "BKR-KD-26-0982",
+      "status": "Matched"
+    },
+    {
+      "line": 897,
+      "id": "BKR-KD-26-0983",
+      "status": "Matched"
+    },
+    {
+      "line": 898,
+      "id": "BKR-KD-26-0984",
+      "status": "Matched"
+    },
+    {
+      "line": 899,
+      "id": "BKR-KD-26-0985",
+      "status": "Matched"
+    },
+    {
+      "line": 900,
+      "id": "BKR-KD-26-0986",
+      "status": "Matched"
+    },
+    {
+      "line": 901,
+      "id": "BKR-KD-26-0987",
+      "status": "Matched"
+    },
+    {
+      "line": 902,
+      "id": "BKR-KD-26-0988",
+      "status": "Matched"
+    },
+    {
+      "line": 903,
+      "id": "BKR-KD-26-0989",
+      "status": "Matched"
+    },
+    {
+      "line": 904,
+      "id": "BKR-KD-26-0990",
+      "status": "Matched"
+    }
+  ]
+}

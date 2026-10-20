@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "posted": true,
+  "coilNo": "CL-26-2056",
+  "movementId": "MV-26-00705",
+  "movementType": "ADJUSTMENT",
+  "postDate": "2026-10-08",
+  "erpBefore": 1106,
+  "newOnHandKg": 679,
+  "currentWeightKg": 679,
+  "status": "Available",
+  "adjustmentKg": -427,
+  "unitCostNgnPerKg": 1760,
+  "valueNgn": 751520,
+  "productId": "PRD-102",
+  "productStockLevel": 175414,
+  "glJournalId": "JE-KD-26-4627",
+  "glSkipped": false,
+  "reason": "Physical count 5 Oct 2026 – 679 kg; agrees with metres run (~788 kg expected)",
+  "skipped": {
+    "coilNo": "CL-KD-APR-1997",
+    "qtyRemaining": 1594.67,
+    "note": "Left unchanged per approval"
+  }
+}

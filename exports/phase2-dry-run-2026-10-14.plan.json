@@ -1,0 +1,1558 @@
+{
+ "createdAtISO": "2026-10-14T12:14:22.096Z",
+ "source": "13 Oct 2026 ERP export fixtures",
+ "items": [
+  {
+   "id": "A02",
+   "group": "A",
+   "record": "coil CL-26-2107 (PO-KD-26-0087)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 14800,
+   "after": 7506,
+   "reason": "Bought by metre (PO line type coil_meter): cost/kg = amount paid ÷ kg received (PO line ₦2,927,440 ÷ 390 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2107",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 14800,
+     "after": 7506
+    }
+   ]
+  },
+  {
+   "id": "A03",
+   "group": "A",
+   "record": "coil CL-26-2047 (PO-KD-26-0030)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 12000,
+   "after": 6900,
+   "reason": "Bought by metre (metres offered = quantity ordered): cost/kg = amount paid ÷ kg received (PO line ₦1,104,000 ÷ 160 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2047",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 12000,
+     "after": 6900
+    }
+   ]
+  },
+  {
+   "id": "A04",
+   "group": "A",
+   "record": "coil CL-26-2022 (PO-KD-26-0013)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 11700,
+   "after": 7020,
+   "reason": "Bought by metre (metres offered = quantity ordered): cost/kg = amount paid ÷ kg received (PO line ₦245,700 ÷ 35 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2022",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 11700,
+     "after": 7020
+    }
+   ]
+  },
+  {
+   "id": "A05",
+   "group": "A",
+   "record": "coil CL-26-2052 (PO-KD-26-0043)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 11500,
+   "after": 7023,
+   "reason": "Bought by metre (metres offered = quantity ordered): cost/kg = amount paid ÷ kg received (PO line ₦1,713,500 ÷ 244 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2052",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 11500,
+     "after": 7023
+    }
+   ]
+  },
+  {
+   "id": "A06",
+   "group": "A",
+   "record": "coil CL-26-2051 (PO-KD-26-0044)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 11500,
+   "after": 7384,
+   "reason": "Bought by metre (metres offered = quantity ordered): cost/kg = amount paid ÷ kg received (PO line ₦701,500 ÷ 95 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2051",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 11500,
+     "after": 7384
+    }
+   ]
+  },
+  {
+   "id": "A07",
+   "group": "A",
+   "record": "coil CL-26-2081 (PO-KD-26-0064)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 11600,
+   "after": 7537,
+   "reason": "Bought by metre (PO line type coil_meter): cost/kg = amount paid ÷ kg received (PO line ₦4,288,520 ÷ 569 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2081",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 11600,
+     "after": 7537
+    }
+   ]
+  },
+  {
+   "id": "A08",
+   "group": "A",
+   "record": "coil CL-26-2016 (PO-KD-26-0003)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 11500,
+   "after": 7475,
+   "reason": "Bought by metre (metres offered = quantity ordered): cost/kg = amount paid ÷ kg received (PO line ₦179,400 ÷ 24 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2016",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 11500,
+     "after": 7475
+    }
+   ]
+  },
+  {
+   "id": "A09",
+   "group": "A",
+   "record": "coil CL-26-2017 (PO-KD-26-0011)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 10700,
+   "after": 7005,
+   "reason": "Bought by metre (metres offered = quantity ordered): cost/kg = amount paid ÷ kg received (PO line ₦2,984,230 ÷ 426 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2017",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 10700,
+     "after": 7005
+    }
+   ]
+  },
+  {
+   "id": "A10",
+   "group": "A",
+   "record": "coil CL-26-2108 (PO-KD-26-0087)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 11100,
+   "after": 7274,
+   "reason": "Bought by metre (PO line type coil_meter): cost/kg = amount paid ÷ kg received (PO line ₦1,498,500 ÷ 206 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2108",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 11100,
+     "after": 7274
+    }
+   ]
+  },
+  {
+   "id": "A11",
+   "group": "A",
+   "record": "coil CL-26-2044 (PO-KD-26-0028)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 10900,
+   "after": 8439,
+   "reason": "Bought by metre (metres offered = quantity ordered): cost/kg = amount paid ÷ kg received (PO line ₦784,800 ÷ 93 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2044",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 10900,
+     "after": 8439
+    }
+   ]
+  },
+  {
+   "id": "A12",
+   "group": "A",
+   "record": "coil CL-26-2084 (PO-KD-26-0069)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 9500,
+   "after": 7580,
+   "reason": "Bought by metre (PO line type coil_meter): cost/kg = amount paid ÷ kg received (PO line ₦3,661,300 ÷ 483 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2084",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 9500,
+     "after": 7580
+    }
+   ]
+  },
+  {
+   "id": "A13",
+   "group": "A",
+   "record": "coil CL-26-2205 (PO-KD-26-0077)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 6500,
+   "after": 7818,
+   "reason": "Bought by metre (PO line type coil_meter): cost/kg = amount paid ÷ kg received (PO line ₦555,100 ÷ 71 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2205",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 6500,
+     "after": 7818
+    }
+   ]
+  },
+  {
+   "id": "A14",
+   "group": "A",
+   "record": "coil CL-26-2069 (PO-KD-26-0057)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 7000,
+   "after": 7923,
+   "reason": "Bought by metre (PO line type coil_meter): cost/kg = amount paid ÷ kg received (PO line ₦372,400 ÷ 47 kg received). Stored as a whole number.",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2069",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 7000,
+     "after": 7923
+    }
+   ]
+  },
+  {
+   "id": "A15",
+   "group": "A",
+   "record": "coil CL-KD-APR-2002 (ZN 0.24mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": "(none)",
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): inferred: Mar 2026 purchases (bought ~Apr 2026)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-2002",
+     "col": "unit_cost_ngn_per_kg",
+     "before": null,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A16",
+   "group": "A",
+   "record": "coil CL-KD-APR-1989 (ZN 0.20mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": "(none)",
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): inferred: Mar 2026 purchases (bought ~Apr 2026)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1989",
+     "col": "unit_cost_ngn_per_kg",
+     "before": null,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A17",
+   "group": "A",
+   "record": "coil CL-KD-APR-1962 (ZN 0.20mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": "(none)",
+   "after": 1780,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AZ/0.20 bought 2026-02-25",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1962",
+     "col": "unit_cost_ngn_per_kg",
+     "before": null,
+     "after": 1780
+    }
+   ]
+  },
+  {
+   "id": "A18",
+   "group": "A",
+   "record": "coil CL-KD-APR-2001 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): inferred: Mar 2026 purchases (bought ~Apr 2026)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-2001",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A19",
+   "group": "A",
+   "record": "coil CL-KD-APR-1997 (ZN 0.40mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): inferred: Mar 2026 purchases (bought ~Apr 2026)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1997",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A20",
+   "group": "A",
+   "record": "coil CL-KD-APR-1996 (ZN 0.18mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): inferred: Mar 2026 purchases (bought ~Apr 2026)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1996",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A21",
+   "group": "A",
+   "record": "coil CL-KD-APR-1993 (ALU 0.55mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 7299,
+   "after": 6864,
+   "reason": "Pre-ERP price (owner CSV): inferred: Mar 2026 purchases (bought ~Apr 2026)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1993",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 7299,
+     "after": 6864
+    }
+   ]
+  },
+  {
+   "id": "A22",
+   "group": "A",
+   "record": "coil CL-KD-APR-1992 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): inferred: Mar 2026 purchases (bought ~Apr 2026)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1992",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A23",
+   "group": "A",
+   "record": "coil CL-KD-APR-1991 (ZN 0.24mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): inferred: Mar 2026 purchases (bought ~Apr 2026)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1991",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A24",
+   "group": "A",
+   "record": "coil CL-KD-APR-1980 (ALU 0.55mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 7299,
+   "after": 6618,
+   "reason": "Pre-ERP price (owner CSV): nearest purchases (±45d), old DB Full AL/0.55 bought 2025-12-26",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1980",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 7299,
+     "after": 6618
+    }
+   ]
+  },
+  {
+   "id": "A25",
+   "group": "A",
+   "record": "coil CL-KD-APR-1975 (ZN 0.22mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AZ/0.28 bought 2026-03-24",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1975",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A26",
+   "group": "A",
+   "record": "coil CL-KD-APR-1961 (ZN 0.20mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1780,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AZ/0.20 bought 2026-02-25",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1961",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1780
+    }
+   ]
+  },
+  {
+   "id": "A27",
+   "group": "A",
+   "record": "coil CL-KD-APR-1937 (ZN 0.18mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1850,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AZ/0.18 bought 2026-01-23",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1937",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1850
+    }
+   ]
+  },
+  {
+   "id": "A28",
+   "group": "A",
+   "record": "coil CL-KD-APR-1918 (ALU 0.70mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 7299,
+   "after": 6050,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AL/0.70 bought 2026-01-07",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1918",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 7299,
+     "after": 6050
+    }
+   ]
+  },
+  {
+   "id": "A29",
+   "group": "A",
+   "record": "coil CL-KD-APR-1914 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1800,
+   "reason": "Pre-ERP price (owner CSV): nearest purchases (±45d), old DB AZ/0.28 bought 2025-12-18",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1914",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1800
+    }
+   ]
+  },
+  {
+   "id": "A30",
+   "group": "A",
+   "record": "coil CL-KD-APR-1907 (ZN 0.20mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1860,
+   "reason": "Pre-ERP price (owner CSV): nearest purchases (±45d), old DB AZ/0.20 bought 2025-12-09",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1907",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1860
+    }
+   ]
+  },
+  {
+   "id": "A31",
+   "group": "A",
+   "record": "coil CL-KD-APR-1889 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1860,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AZ/0.28 bought 2025-11-13",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1889",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1860
+    }
+   ]
+  },
+  {
+   "id": "A32",
+   "group": "A",
+   "record": "coil CL-KD-APR-1882 (ZN 0.24mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 1860,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AZ/0.24 bought 2025-11-13",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1882",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 1860
+    }
+   ]
+  },
+  {
+   "id": "A33",
+   "group": "A",
+   "record": "coil CL-KD-APR-1755 (ZN 0.18mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": "(none)",
+   "after": 2120,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AZ/0.18 bought 2025-06-21",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1755",
+     "col": "unit_cost_ngn_per_kg",
+     "before": null,
+     "after": 2120
+    }
+   ]
+  },
+  {
+   "id": "A34",
+   "group": "A",
+   "record": "coil CL-KD-APR-1731 (ZN 0.18mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 2170,
+   "reason": "Pre-ERP price (owner CSV): old DB price, old DB AZ/0.18 bought 2025-05-24",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1731",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 2170
+    }
+   ]
+  },
+  {
+   "id": "A35",
+   "group": "A",
+   "record": "coil CL-KD-APR-1613 (ZN 0.28mm)",
+   "field": "coil_lots.unit_cost_ngn_per_kg",
+   "before": 1738,
+   "after": 2150,
+   "reason": "Pre-ERP price (owner CSV): nearest purchases (±45d), old DB AZ/0.28 bought 2025-03-31",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-KD-APR-1613",
+     "col": "unit_cost_ngn_per_kg",
+     "before": 1738,
+     "after": 2150
+    }
+   ]
+  },
+  {
+   "id": "A36",
+   "group": "A",
+   "record": "coil CL-26-2096 (PO-KD-26-0078)",
+   "field": "coil_lots.received_at_iso + STORE_GRN movement date",
+   "before": "2026-10-12",
+   "after": "2026-09-12",
+   "reason": "Delivered 12 Sep with PO-0078, booked 12 Oct (owner)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2096",
+     "col": "received_at_iso",
+     "before": "2026-10-12",
+     "after": "2026-09-12",
+     "compare": "day"
+    },
+    {
+     "kind": "grnDate",
+     "coilNo": "CL-26-2096",
+     "before": "2026-10-12",
+     "after": "2026-09-12"
+    }
+   ]
+  },
+  {
+   "id": "A37",
+   "group": "A",
+   "record": "coil CL-26-2082 (PO-KD-26-0070)",
+   "field": "STORE_GRN movement date",
+   "before": "2026-09-01",
+   "after": "2026-08-31",
+   "reason": "In the store on 31 Aug (owner, 14 Oct): same PO-0070 delivery as CL-26-2083, received 31 Aug, Dechimex liability in 31 Aug creditors; GRN simply posted 1 Sep. Expected: 31 Aug stock 65 coils, +2,081 kg, +₦13,942,700",
+   "ops": [
+    {
+     "kind": "grnDate",
+     "coilNo": "CL-26-2082",
+     "before": "2026-09-01",
+     "after": "2026-08-31"
+    }
+   ]
+  },
+  {
+   "id": "A38",
+   "group": "A",
+   "record": "coil CL-26-2065 (PO-KD-26-0056)",
+   "field": "coil_lots.gauge_label",
+   "before": "0.28mm",
+   "after": "0.24mm",
+   "reason": "Weight 3,374 kg is exactly the 0.24 mm PO line received",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "coil_lots",
+     "keyCol": "coil_no",
+     "key": "CL-26-2065",
+     "col": "gauge_label",
+     "before": "0.28mm",
+     "after": "0.24mm"
+    }
+   ]
+  },
+  {
+   "id": "D70",
+   "group": "D",
+   "record": "expense EXP-KD-26-0367",
+   "field": "expenses.category",
+   "before": "Admin salary",
+   "after": "Admin expenses",
+   "reason": "R6 Imprest coded outside Admin expenses → Admin expenses — \"monthly imprese sept 26\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0367",
+     "col": "category",
+     "before": "Admin salary",
+     "after": "Admin expenses"
+    }
+   ]
+  },
+  {
+   "id": "D71",
+   "group": "D",
+   "record": "expense EXP-KD-26-0362",
+   "field": "expenses.category",
+   "before": "Maintenance",
+   "after": "Plant and machinery",
+   "reason": "R3 Capital item coded as an expense → Fixed asset (capital) — \"2nd advnace for transformer\" (capex: fixed-asset row + capitalisation journal created on save)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0362",
+     "col": "category",
+     "before": "Maintenance",
+     "after": "Plant and machinery",
+     "afterHook": "capexSync"
+    }
+   ]
+  },
+  {
+   "id": "D72",
+   "group": "D",
+   "record": "expense EXP-KD-26-0352",
+   "field": "expenses.category",
+   "before": "Maintenance",
+   "after": "Refund",
+   "reason": "R1 Refund coded as an expense → Refunds (not an expense) — \"refund\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0352",
+     "col": "category",
+     "before": "Maintenance",
+     "after": "Refund"
+    }
+   ]
+  },
+  {
+   "id": "D73",
+   "group": "D",
+   "record": "expense EXP-KD-26-0397",
+   "field": "expenses.category",
+   "before": "Maintenance",
+   "after": "Plant and machinery",
+   "reason": "R3 Capital item coded as an expense → Fixed asset (capital) — \"Bal payment fro approval of NEMSA FRO TRNAFORMER\" (capex: fixed-asset row + capitalisation journal created on save)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0397",
+     "col": "category",
+     "before": "Maintenance",
+     "after": "Plant and machinery",
+     "afterHook": "capexSync"
+    }
+   ]
+  },
+  {
+   "id": "D74",
+   "group": "D",
+   "record": "expense EXP-KD-26-0325",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Staff loan",
+   "reason": "R2 Staff IOU coded as an expense → Staff loans (not an expense) — \"IOU\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0325",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Staff loan"
+    }
+   ]
+  },
+  {
+   "id": "D75",
+   "group": "D",
+   "record": "expense EXP-KD-26-0315",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Staff loan",
+   "reason": "R2 Staff IOU coded as an expense → Staff loans (not an expense) — \"iou\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0315",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Staff loan"
+    }
+   ]
+  },
+  {
+   "id": "D76",
+   "group": "D",
+   "record": "expense EXP-KD-26-0324",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Refund",
+   "reason": "R1 Refund coded as an expense → Refunds (not an expense) — \"REFUND\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0324",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Refund"
+    }
+   ]
+  },
+  {
+   "id": "D77",
+   "group": "D",
+   "record": "expense EXP-KD-26-0337",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Refund",
+   "reason": "R1 Refund coded as an expense → Refunds (not an expense) — \"REFUND\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0337",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Refund"
+    }
+   ]
+  },
+  {
+   "id": "D78",
+   "group": "D",
+   "record": "expense EXP-KD-26-0342",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Staff loan",
+   "reason": "R2 Staff IOU coded as an expense → Staff loans (not an expense) — \"10U\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0342",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Staff loan"
+    }
+   ]
+  },
+  {
+   "id": "D79",
+   "group": "D",
+   "record": "expense EXP-KD-26-0333",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Staff loan",
+   "reason": "R2 Staff IOU coded as an expense → Staff loans (not an expense) — \"IOU\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0333",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Staff loan"
+    }
+   ]
+  },
+  {
+   "id": "D80",
+   "group": "D",
+   "record": "expense EXP-KD-26-0343",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Staff loan",
+   "reason": "R2 Staff IOU coded as an expense → Staff loans (not an expense) — \"IOU\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0343",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Staff loan"
+    }
+   ]
+  },
+  {
+   "id": "D81",
+   "group": "D",
+   "record": "expense EXP-KD-26-0353",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Maintenance",
+   "reason": "R5 Forklift coded outside Maintenance → Maintenance — \"fork lift\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0353",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Maintenance"
+    }
+   ]
+  },
+  {
+   "id": "D82",
+   "group": "D",
+   "record": "expense EXP-KD-26-0345",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Accessories",
+   "reason": "R4 Accessories coded elsewhere → Accessories — \"felt\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0345",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Accessories"
+    }
+   ]
+  },
+  {
+   "id": "D83",
+   "group": "D",
+   "record": "expense EXP-KD-26-0346",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Accessories",
+   "reason": "R4 Accessories coded elsewhere → Accessories — \"felt\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0346",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Accessories"
+    }
+   ]
+  },
+  {
+   "id": "D84",
+   "group": "D",
+   "record": "expense EXP-KD-26-0350",
+   "field": "expenses.category",
+   "before": "Office expenses",
+   "after": "Refund",
+   "reason": "R1 Refund coded as an expense → Refunds (not an expense) — \"refund\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0350",
+     "col": "category",
+     "before": "Office expenses",
+     "after": "Refund"
+    }
+   ]
+  },
+  {
+   "id": "D85",
+   "group": "D",
+   "record": "expense EXP-KD-26-0401",
+   "field": "expenses.category",
+   "before": "Outside corrugation",
+   "after": "Refund",
+   "reason": "R1 Refund coded as an expense → Refunds (not an expense) — \"Qs isa refund\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0401",
+     "col": "category",
+     "before": "Outside corrugation",
+     "after": "Refund"
+    }
+   ]
+  },
+  {
+   "id": "D86",
+   "group": "D",
+   "record": "expense EXP-KD-26-0360",
+   "field": "expenses.category",
+   "before": "Purchases",
+   "after": "Accessories",
+   "reason": "R4 Accessories coded elsewhere → Accessories — \"Washer purchase from lawisa\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0360",
+     "col": "category",
+     "before": "Purchases",
+     "after": "Accessories"
+    }
+   ]
+  },
+  {
+   "id": "D87",
+   "group": "D",
+   "record": "expense EXP-KD-26-0298",
+   "field": "expenses.category",
+   "before": "Welfare",
+   "after": "Staff loan",
+   "reason": "R2 Staff IOU coded as an expense → Staff loans (not an expense) — \"Gm Iou\"",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0298",
+     "col": "category",
+     "before": "Welfare",
+     "after": "Staff loan"
+    }
+   ]
+  },
+  {
+   "id": "D88",
+   "group": "D",
+   "record": "expense EXP-KD-26-0398",
+   "field": "expenses.expense_type",
+   "before": "Payment request (pending payout)",
+   "after": "Payment request (cancelled)",
+   "reason": "Request cancelled — not an expense (book view already leaves it out)",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "expenses",
+     "keyCol": "expense_id",
+     "key": "EXP-KD-26-0398",
+     "col": "expense_type",
+     "before": "Payment request (pending payout)",
+     "after": "Payment request (cancelled)"
+    }
+   ]
+  },
+  {
+   "id": "C46",
+   "group": "C",
+   "record": "treasury TM-KD-26-1499 (LE-KD-26-1154, Mal Sani)",
+   "field": "new RECEIPT_REVERSAL_OUT linked to TM-KD-26-1499",
+   "before": "RECEIPT_IN ₦1,500,000 (16 Jul)",
+   "after": "reversal −₦1,500,000 dated 2026-10-14",
+   "reason": "Re-post of the 25 Jun ADVANCE_IN (TM-KD-26-1147) when it was applied — same money counted twice",
+   "ops": [
+    {
+     "kind": "reverseTreasuryLine",
+     "movementId": "TM-KD-26-1499"
+    }
+   ]
+  },
+  {
+   "id": "C47",
+   "group": "C",
+   "record": "receipt LE-KD-26-1613 (Md)",
+   "field": "sales_receipts.method (text)",
+   "before": "Bank — Zaps Aluminum Enterprises",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0158 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1613",
+     "col": "method",
+     "before": "Bank — Zaps Aluminum Enterprises",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C49",
+   "group": "C",
+   "record": "receipt LE-KD-26-1720 (Engr Attah Nicholas)",
+   "field": "sales_receipts.method (text)",
+   "before": "Bank — Zaps Aluminum Enterprises",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0384 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1720",
+     "col": "method",
+     "before": "Bank — Zaps Aluminum Enterprises",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C51",
+   "group": "C",
+   "record": "receipt LE-KD-26-1563 (Qs Isa)",
+   "field": "sales_receipts.method (text)",
+   "before": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "after": "Bank — Zaps Aluminum Enterprises",
+   "reason": "Bank recon BKR-KD-26-0001 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1563",
+     "col": "method",
+     "before": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "after": "Bank — Zaps Aluminum Enterprises"
+    }
+   ]
+  },
+  {
+   "id": "C52",
+   "group": "C",
+   "record": "receipt LE-KD-26-1619 (Sangir Abdullahi)",
+   "field": "sales_receipts.method (text)",
+   "before": "Cash — Cash Office",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0179 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1619",
+     "col": "method",
+     "before": "Cash — Cash Office",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C53",
+   "group": "C",
+   "record": "receipt LE-KD-26-1627 (Aminu Ibrahim)",
+   "field": "sales_receipts.method (text)",
+   "before": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "after": "Bank — Zaps Aluminum Enterprises",
+   "reason": "Bank recon BKR-KD-26-0008 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1627",
+     "col": "method",
+     "before": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "after": "Bank — Zaps Aluminum Enterprises"
+    }
+   ]
+  },
+  {
+   "id": "C54",
+   "group": "C",
+   "record": "receipt LE-KD-26-1653 (Qs Isa)",
+   "field": "sales_receipts.method (text)",
+   "before": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "after": "Bank — Zaps Aluminum Enterprises",
+   "reason": "Bank recon BKR-KD-26-0015 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1653",
+     "col": "method",
+     "before": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "after": "Bank — Zaps Aluminum Enterprises"
+    }
+   ]
+  },
+  {
+   "id": "C55",
+   "group": "C",
+   "record": "receipt LE-KD-26-1699 (Alh Kaloma)",
+   "field": "sales_receipts.method (text)",
+   "before": "Cash — Cash Office",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0351 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1699",
+     "col": "method",
+     "before": "Cash — Cash Office",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C56",
+   "group": "C",
+   "record": "receipt LE-KD-26-1726 (Suleiman Adam)",
+   "field": "sales_receipts.method (text)",
+   "before": "Cash — Cash Office",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0482 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1726",
+     "col": "method",
+     "before": "Cash — Cash Office",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C57",
+   "group": "C",
+   "record": "receipt LE-KD-26-1757 (Saidu)",
+   "field": "sales_receipts.method (text)",
+   "before": "Cash — Cash Office",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0548 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1757",
+     "col": "method",
+     "before": "Cash — Cash Office",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C58",
+   "group": "C",
+   "record": "receipt LE-KD-26-1759 (Najeeb Uzairu)",
+   "field": "sales_receipts.method (text)",
+   "before": "Cash — Cash Office",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0532 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1759",
+     "col": "method",
+     "before": "Cash — Cash Office",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C60",
+   "group": "C",
+   "record": "receipt LE-KD-26-1811 (Ramaran Garkuwa)",
+   "field": "sales_receipts.method (text)",
+   "before": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "after": "Bank — Zaps Aluminum Enterprises",
+   "reason": "Bank recon BKR-KD-26-0060 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1811",
+     "col": "method",
+     "before": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "after": "Bank — Zaps Aluminum Enterprises"
+    }
+   ]
+  },
+  {
+   "id": "C61",
+   "group": "C",
+   "record": "receipt LE-KD-26-1814 (Abdullahi Alhassan)",
+   "field": "sales_receipts.method (text)",
+   "before": "Cash — Cash Office",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0656 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1814",
+     "col": "method",
+     "before": "Cash — Cash Office",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C62",
+   "group": "C",
+   "record": "receipt LE-KD-26-1870 (Abdul)",
+   "field": "sales_receipts.method (text)",
+   "before": "Cash — Cash Office",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd",
+   "reason": "Bank recon BKR-KD-26-0886 confirms the treasury account; the method text is wrong",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1870",
+     "col": "method",
+     "before": "Cash — Cash Office",
+     "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+    }
+   ]
+  },
+  {
+   "id": "C63",
+   "group": "C",
+   "record": "receipt LE-KD-26-2051 (SULEMAN BELLO ZARIA)",
+   "field": "sales_receipts.status (text)",
+   "before": "Suspended — No bank receipt — awaiting check whether paid from customer credit.",
+   "after": "Suspended — no bank receipt, awaiting credit check",
+   "reason": "One spelling per suspended status",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-2051",
+     "col": "status",
+     "before": "Suspended — No bank receipt — awaiting check whether paid from customer credit.",
+     "after": "Suspended — no bank receipt, awaiting credit check"
+    }
+   ]
+  },
+  {
+   "id": "C64",
+   "group": "C",
+   "record": "receipt LE-KD-26-1778 (Yusuf)",
+   "field": "sales_receipts.status (text)",
+   "before": "Suspended - investigation",
+   "after": "Suspended — investigation",
+   "reason": "One spelling per suspended status",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1778",
+     "col": "status",
+     "before": "Suspended - investigation",
+     "after": "Suspended — investigation"
+    }
+   ]
+  },
+  {
+   "id": "C65",
+   "group": "C",
+   "record": "receipt LE-KD-26-1767 (Yusuf)",
+   "field": "sales_receipts.status (text)",
+   "before": "Suspended - investigation",
+   "after": "Suspended — investigation",
+   "reason": "One spelling per suspended status",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1767",
+     "col": "status",
+     "before": "Suspended - investigation",
+     "after": "Suspended — investigation"
+    }
+   ]
+  },
+  {
+   "id": "C66",
+   "group": "C",
+   "record": "receipt LE-KD-26-1597 (Alhaji Mrido)",
+   "field": "sales_receipts.status (text)",
+   "before": "Suspended — No bank receipt — awaiting check whether paid from customer credit.",
+   "after": "Suspended — no bank receipt, awaiting credit check",
+   "reason": "One spelling per suspended status",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "sales_receipts",
+     "keyCol": "id",
+     "key": "LE-KD-26-1597",
+     "col": "status",
+     "before": "Suspended — No bank receipt — awaiting check whether paid from customer credit.",
+     "after": "Suspended — no bank receipt, awaiting credit check"
+    }
+   ]
+  },
+  {
+   "id": "C67",
+   "group": "C",
+   "record": "Yusuf (CUS-KD-26-1069): LE-KD-26-1767, LE-KD-26-1778",
+   "field": "investigation_cases + investigation_links",
+   "before": "—",
+   "after": "case opened, receipts linked (₦2,122,000, reversed in treasury)",
+   "reason": "Fraud register entry (owner)",
+   "ops": [
+    {
+     "kind": "investigationCase",
+     "title": "Yusuf — receipts LE-KD-26-1767 / LE-KD-26-1778 reversed in treasury (no bank receipt)",
+     "caseType": "unbacked_receipt",
+     "customerId": "CUS-KD-26-1069",
+     "amountAtRiskNgn": 2122000,
+     "branchId": "BR-KD",
+     "links": [
+      {
+       "entityType": "receipt",
+       "entityId": "LE-KD-26-1767",
+       "role": "subject"
+      },
+      {
+       "entityType": "receipt",
+       "entityId": "LE-KD-26-1778",
+       "role": "subject"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "B40",
+   "group": "B",
+   "record": "job PRO-KD-26-1349 (QT-KD-26-1643)",
+   "field": "production_jobs.status",
+   "before": "Completed (0 m, 0 kg)",
+   "after": "Cancelled",
+   "reason": "Completed with 0 metres on a quotation with no identifiable lines — not a sale",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "production_jobs",
+     "keyCol": "job_id",
+     "key": "PRO-KD-26-1349",
+     "col": "status",
+     "before": "Completed",
+     "after": "Cancelled"
+    }
+   ]
+  },
+  {
+   "id": "B41",
+   "group": "B",
+   "record": "job PRO-KD-26-1272 (QT-KD-26-1558)",
+   "field": "production_jobs.status",
+   "before": "Completed (0 m, 0 kg)",
+   "after": "Cancelled",
+   "reason": "Completed with 0 metres on a quotation with no identifiable lines — not a sale",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "production_jobs",
+     "keyCol": "job_id",
+     "key": "PRO-KD-26-1272",
+     "col": "status",
+     "before": "Completed",
+     "after": "Cancelled"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,614 @@
+{
+  "ok": true,
+  "missingChecked": 23,
+  "shouldCreditCount": 5,
+  "shouldCreditNgn": 30376,
+  "impliedOpenIfBackfilled": 1182104,
+  "maybeFalsePositiveCount": 18,
+  "shouldCredit": [
+    {
+      "refundId": "RF-KD-26-9537",
+      "customerName": "Abubakar Abba",
+      "status": "Paid",
+      "cutNgn": 15955,
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false,
+      "paymentNote": "",
+      "staffSplits": []
+    },
+    {
+      "refundId": "RF-KD-26-9531",
+      "customerName": "Ali Adamu Ardo",
+      "status": "Paid",
+      "cutNgn": 4570,
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false,
+      "paymentNote": "",
+      "staffSplits": []
+    },
+    {
+      "refundId": "RF-KD-26-9594",
+      "customerName": "Hamza Abubakar",
+      "status": "Paid",
+      "cutNgn": 4030,
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false,
+      "paymentNote": "",
+      "staffSplits": []
+    },
+    {
+      "refundId": "RF-KD-26-9523",
+      "customerName": "Benjamin Jaji Barrack",
+      "status": "Paid",
+      "cutNgn": 3921,
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false,
+      "paymentNote": "",
+      "staffSplits": []
+    },
+    {
+      "refundId": "RF-KD-26-9522",
+      "customerName": "Shamsu",
+      "status": "Paid",
+      "cutNgn": 1900,
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false,
+      "paymentNote": "",
+      "staffSplits": []
+    }
+  ],
+  "details": [
+    {
+      "refundId": "RF-KD-26-9730",
+      "status": "Paid",
+      "customerName": "Suleiman Zaria",
+      "approvedNgn": 1753330,
+      "paidAmountNgn": 1753330,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 1753330,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9693",
+      "status": "Paid",
+      "customerName": "Arma Yau",
+      "approvedNgn": 861575,
+      "paidAmountNgn": 861575,
+      "paymentNote": "Credit confirmation: ₦555,000 applied to QT-KD-26-1587 · Credit confirmation: ₦72,300 applied to QT-KD-26-1597",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 861575,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9718",
+      "status": "Paid",
+      "customerName": "Engr Attah Nicholas",
+      "approvedNgn": 295160,
+      "paidAmountNgn": 295160,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 295160,
+          "companyDeductionNgn": 0,
+          "note": "Remainder to quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9560",
+      "status": "Approved",
+      "customerName": "Mustapha Musa Abubakar",
+      "approvedNgn": 176950,
+      "paidAmountNgn": 176950,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 176950,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9722",
+      "status": "Paid",
+      "customerName": "Anas Cap Zaria",
+      "approvedNgn": 139240,
+      "paidAmountNgn": 139240,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 139240,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9626",
+      "status": "Paid",
+      "customerName": "Jibril Sule",
+      "approvedNgn": 122016,
+      "paidAmountNgn": 122016,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 122016,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9729",
+      "status": "Paid",
+      "customerName": "Ramaran Garkuwa",
+      "approvedNgn": 94300,
+      "paidAmountNgn": 94300,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 94300,
+          "companyDeductionNgn": 0,
+          "note": "Quotation sales staff · Muhammad Ibrahim Bakari"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9712",
+      "status": "Paid",
+      "customerName": "Ramaran Garkuwa",
+      "approvedNgn": 94300,
+      "paidAmountNgn": 94300,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 94300,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9714",
+      "status": "Paid",
+      "customerName": "Tukur Tk",
+      "approvedNgn": 93600,
+      "paidAmountNgn": 93600,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 93600,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9537",
+      "status": "Paid",
+      "customerName": "Abubakar Abba",
+      "approvedNgn": 79775,
+      "paidAmountNgn": 79775,
+      "paymentNote": "",
+      "cutFromSplits": 15955,
+      "cutFromTargets": 15955,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 63820,
+          "companyDeductionNgn": 15955,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9711",
+      "status": "Paid",
+      "customerName": "Yaron Yahya",
+      "approvedNgn": 37800,
+      "paidAmountNgn": 37800,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 37800,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9713",
+      "status": "Paid",
+      "customerName": "Ramaran Garkuwa",
+      "approvedNgn": 33915,
+      "paidAmountNgn": 33915,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 33915,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9608",
+      "status": "Paid",
+      "customerName": "Mohammed Tasiu Imam",
+      "approvedNgn": 33600,
+      "paidAmountNgn": 33600,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 33600,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9531",
+      "status": "Paid",
+      "customerName": "Ali Adamu Ardo",
+      "approvedNgn": 22850,
+      "paidAmountNgn": 22850,
+      "paymentNote": "",
+      "cutFromSplits": 4570,
+      "cutFromTargets": 4570,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 18280,
+          "companyDeductionNgn": 4570,
+          "note": "Quotation sales staff · Muhammad Ibrahim Bakari"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9594",
+      "status": "Paid",
+      "customerName": "Hamza Abubakar",
+      "approvedNgn": 20150,
+      "paidAmountNgn": 20150,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 4030,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 16120,
+          "companyDeductionNgn": 4030,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9523",
+      "status": "Paid",
+      "customerName": "Benjamin Jaji Barrack",
+      "approvedNgn": 19605,
+      "paidAmountNgn": 19605,
+      "paymentNote": "",
+      "cutFromSplits": 3921,
+      "cutFromTargets": 3921,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 15684,
+          "companyDeductionNgn": 3921,
+          "note": "Quotation sales staff · pick Muhammad Bakari"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9708",
+      "status": "Paid",
+      "customerName": "Ali Cap Jos",
+      "approvedNgn": 18500,
+      "paidAmountNgn": 18500,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 18500,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9716",
+      "status": "Paid",
+      "customerName": "Engr Attah Nicholas",
+      "approvedNgn": 10011,
+      "paidAmountNgn": 10011,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 10011,
+          "companyDeductionNgn": 0,
+          "note": "Remainder to quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9522",
+      "status": "Paid",
+      "customerName": "Shamsu",
+      "approvedNgn": 9500,
+      "paidAmountNgn": 9500,
+      "paymentNote": "",
+      "cutFromSplits": 1900,
+      "cutFromTargets": 1900,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 7600,
+          "companyDeductionNgn": 1900,
+          "note": "Quotation sales staff · Suleiman Abdullahi Liman"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9627",
+      "status": "Paid",
+      "customerName": "Najeeb Uzairu",
+      "approvedNgn": 6920,
+      "paidAmountNgn": 6920,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 6920,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9724",
+      "status": "Paid",
+      "customerName": "Abu Cap",
+      "approvedNgn": 1941,
+      "paidAmountNgn": 1941,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 1941,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9686",
+      "status": "Paid",
+      "customerName": "Anas Custom",
+      "approvedNgn": 1000,
+      "paidAmountNgn": 1000,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 1000,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    },
+    {
+      "refundId": "RF-KD-26-9685",
+      "status": "Paid",
+      "customerName": "Lawal Zaria",
+      "approvedNgn": 1000,
+      "paidAmountNgn": 1000,
+      "paymentNote": "",
+      "cutFromSplits": 0,
+      "cutFromTargets": 0,
+      "staffSplitCount": 0,
+      "staffSplits": [],
+      "targets": [
+        {
+          "partyKind": "customer",
+          "amountNgn": 1000,
+          "companyDeductionNgn": 0,
+          "note": "Overpayment · quote customer"
+        }
+      ],
+      "ledger": null,
+      "walletCredits": [],
+      "paidEqualsApproved": true,
+      "paidEqualsApprovedMinusCut": false
+    }
+  ]
+}

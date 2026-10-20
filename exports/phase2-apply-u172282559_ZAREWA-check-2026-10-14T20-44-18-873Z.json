@@ -1,0 +1,68 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-14T20:44:18.873Z",
+ "plan": "chairman-aug-2026-10-14.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "W1",
+   "group": "D",
+   "record": "Taj 10 Aug ₦1,160,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "W2",
+   "group": "D",
+   "record": "Taj 15 Aug ₦300,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zaps Aluminum Enterprises (Taj Bank)"
+  },
+  {
+   "id": "W3",
+   "group": "D",
+   "record": "Moniepoint 1 Aug ₦50,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "W4",
+   "group": "D",
+   "record": "Moniepoint 7 Aug ₦50,000",
+   "field": "new expense (Chairman withdrawal)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R1",
+   "group": "D",
+   "record": "EXP-KD-26-0221 / PREQ-KD-26-0159 (₦20,000, 7 Aug, Moniepoint, TM-KD-26-1974)",
+   "field": "expenses.category Maintenance → Chairman withdrawal + request description",
+   "op": "recodePaidRequest",
+   "outcome": "would apply",
+   "current": {
+    "category": "Maintenance",
+    "description": "foik lift",
+    "paidNgn": 20000,
+    "date": "2026-08-06"
+   }
+  },
+  {
+   "id": "T1",
+   "group": "C",
+   "record": "TM-KD-26-1969 (LE-KD-26-1366, Engr Yaro, ₦13,000,000, Taj)",
+   "field": "treasury_movements.posted_at_iso",
+   "op": "redateTreasury",
+   "outcome": "would apply"
+  }
+ ]
+}

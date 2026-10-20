@@ -1,0 +1,30 @@
+{
+  "ok": true,
+  "readOnly": true,
+  "coilNo": "CL-26-2094",
+  "branchId": "BR-KD",
+  "colour": "HM Blue",
+  "gauge": "0.20mm",
+  "productId": "PRD-102",
+  "receivedKg": 3364,
+  "erpNow": 2122.89,
+  "expectedErp": 2122.89,
+  "erpMatchesExpected": true,
+  "targetKg": 2615,
+  "restoreKg": 492.11,
+  "method": "returnCoilMaterialToStock → COIL_RETURN (+kg) nets against COIL_SCRAP in book",
+  "scrapToReverse": {
+    "id": "MV-26-00652",
+    "type": "COIL_SCRAP",
+    "qty": -492.11,
+    "detail": "ERP above received − metres × 1.935. Jobs were booked at 1.18 kg/m — Coil stock check 7 Oct 2026 · Abdulrahman Uthman Sali",
+    "date_iso": "2026-10-07"
+  },
+  "reason": "Reverse incorrect 7 Oct 2026 stock-check scrap (−492.11 kg @ 1.935 kg/m). Restore to last job closing weight 2,615 kg (prod used 749).",
+  "afterWouldShow": {
+    "stockKg": 2615,
+    "prodUsed": 749,
+    "incidentScrapNet": 0,
+    "bookUsed": 749
+  }
+}

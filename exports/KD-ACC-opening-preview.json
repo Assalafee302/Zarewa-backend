@@ -1,0 +1,245 @@
+{
+  "preview": [
+    {
+      "product_id": "ACC-TAPPING-SCREW-PCS",
+      "name": "Tapping screw nail (pcs)",
+      "unit": "pcs",
+      "erp_now": 35728,
+      "physical_count": 52750,
+      "adjustment_qty": 17022,
+      "direction": "Increase",
+      "unit_cost_ngn": 60,
+      "unit_cost_stored_int": 60,
+      "variance_gl_ngn": 1021320,
+      "on_hand_value_at_count_ngn": 3165000,
+      "post_date": "2026-10-08",
+      "reason": "Physical count 5 Oct 2026 – opening stock reset",
+      "status": "READY to post",
+      "note": "52,750 pcs"
+    },
+    {
+      "product_id": "ACC-DRIVE-SCREW-PACK",
+      "name": "Drive screw nail (pack)",
+      "unit": "pack",
+      "erp_now": -2604.2,
+      "physical_count": 540,
+      "adjustment_qty": 3144.2,
+      "direction": "Increase",
+      "unit_cost_ngn": 983.33,
+      "unit_cost_stored_int": 983,
+      "variance_gl_ngn": 3091786,
+      "on_hand_value_at_count_ngn": 530998,
+      "post_date": "2026-10-08",
+      "reason": "Physical count 5 Oct 2026 – opening stock reset",
+      "status": "READY to post",
+      "note": "540 packs (18 ctn × 30); cost ₦29,500/ctn ÷ 30"
+    },
+    {
+      "product_id": "ACC-RIVET-PACK",
+      "name": "Rivet pin (pack)",
+      "unit": "pack",
+      "erp_now": -40,
+      "physical_count": 24,
+      "adjustment_qty": 64,
+      "direction": "Increase",
+      "unit_cost_ngn": 4800,
+      "unit_cost_stored_int": 4800,
+      "variance_gl_ngn": 307200,
+      "on_hand_value_at_count_ngn": 115200,
+      "post_date": "2026-10-08",
+      "reason": "Physical count 5 Oct 2026 – opening stock reset",
+      "status": "READY to post",
+      "note": "24 packs"
+    },
+    {
+      "product_id": "ACC-REPAIR-KIT",
+      "name": "Repair Kit",
+      "unit": "kit",
+      "erp_now": 15,
+      "physical_count": 58,
+      "adjustment_qty": 43,
+      "direction": "Increase",
+      "unit_cost_ngn": 3500,
+      "unit_cost_stored_int": 3500,
+      "variance_gl_ngn": 150500,
+      "on_hand_value_at_count_ngn": 203000,
+      "post_date": "2026-10-08",
+      "reason": "Physical count 5 Oct 2026 – opening stock reset",
+      "status": "HOLD — awaiting confirm",
+      "note": "58 tubes (1 kit = 1 tube) — HOLD until confirm"
+    },
+    {
+      "product_id": "ACC-FELT-ROLL",
+      "name": "Felt (roll)",
+      "unit": "roll",
+      "erp_now": 1938,
+      "physical_count": 1000,
+      "adjustment_qty": -938,
+      "direction": "Decrease",
+      "unit_cost_ngn": 250,
+      "unit_cost_stored_int": 250,
+      "variance_gl_ngn": 234500,
+      "on_hand_value_at_count_ngn": 250000,
+      "post_date": "2026-10-08",
+      "reason": "Physical count 5 Oct 2026 – opening stock reset",
+      "status": "READY to post",
+      "note": "1,000 packs/rolls"
+    },
+    {
+      "product_id": "ACC-WASHER-PACK",
+      "name": "Washer (pack)",
+      "unit": "pack",
+      "erp_now": 503,
+      "physical_count": 1401,
+      "adjustment_qty": 898,
+      "direction": "Increase",
+      "unit_cost_ngn": 300,
+      "unit_cost_stored_int": 300,
+      "variance_gl_ngn": 269400,
+      "on_hand_value_at_count_ngn": 420300,
+      "post_date": "2026-10-08",
+      "reason": "Physical count 5 Oct 2026 – opening stock reset",
+      "status": "READY to post",
+      "note": "1,401 packs @ ₦300 (not last-movement 100)"
+    }
+  ],
+  "hookLines": [
+    {
+      "quotation_id": "QT-KD-26-0625",
+      "date_iso": "2026-06-22",
+      "customer_id": "CUS-KD-26-0562",
+      "customer_name": "SULEMAN MOHAMMED",
+      "project_name": "M/CITY",
+      "status": "Pending",
+      "payment_status": "Paid",
+      "total_ngn": 1011660,
+      "paid_ngn": 1052000,
+      "qty": 0,
+      "unit_price": 150,
+      "line_json": {
+        "id": "L1782136917925-3vb0rsa",
+        "name": "Hooks and bolts",
+        "qty": "",
+        "unitPrice": "150",
+        "customLine": false
+      }
+    },
+    {
+      "quotation_id": "QT-KD-26-1725",
+      "date_iso": "2026-10-05",
+      "customer_id": "CUS-KD-26-1113",
+      "customer_name": "YUSUF ALIYU",
+      "project_name": "KATSINA",
+      "status": "Pending",
+      "payment_status": "Unpaid",
+      "total_ngn": 8019900,
+      "paid_ngn": 0,
+      "qty": 3500,
+      "unit_price": 170,
+      "line_json": {
+        "id": "L1791209404284-r7oe59v",
+        "name": "Hooks and bolts",
+        "qty": "3500",
+        "unitPrice": "170",
+        "customLine": false
+      }
+    },
+    {
+      "quotation_id": "QT-KD-26-1726",
+      "date_iso": "2026-10-05",
+      "customer_id": "CUS-KD-26-1113",
+      "customer_name": "YUSUF ALIYU",
+      "project_name": "KATSINA",
+      "status": "Pending",
+      "payment_status": "Unpaid",
+      "total_ngn": 5850000,
+      "paid_ngn": 0,
+      "qty": 2600,
+      "unit_price": 170,
+      "line_json": {
+        "id": "L1791209806007-qtbsuw7",
+        "name": "Hooks and bolts",
+        "qty": "2600",
+        "unitPrice": "170",
+        "customLine": false
+      }
+    },
+    {
+      "quotation_id": "QT-KD-26-1727",
+      "date_iso": "2026-10-05",
+      "customer_id": "CUS-KD-26-1113",
+      "customer_name": "YUSUF ALIYU",
+      "project_name": "KATSINA",
+      "status": "Pending",
+      "payment_status": "Unpaid",
+      "total_ngn": 8054900,
+      "paid_ngn": 0,
+      "qty": 3500,
+      "unit_price": 170,
+      "line_json": {
+        "id": "L1791210104684-50vf6hd",
+        "name": "Hooks and bolts",
+        "qty": "3500",
+        "unitPrice": "170",
+        "customLine": false
+      }
+    },
+    {
+      "quotation_id": "QT-KD-26-1728",
+      "date_iso": "2026-10-05",
+      "customer_id": "CUS-KD-26-1113",
+      "customer_name": "YUSUF ALIYU",
+      "project_name": "KATSINA",
+      "status": "Pending",
+      "payment_status": "Unpaid",
+      "total_ngn": 45021900,
+      "paid_ngn": 0,
+      "qty": 3600,
+      "unit_price": 170,
+      "line_json": {
+        "id": "L1791210338054-w2a32gr",
+        "name": "Hooks and bolts",
+        "qty": "3600",
+        "unitPrice": "170",
+        "customLine": false
+      }
+    },
+    {
+      "quotation_id": "QT-KD-26-1729",
+      "date_iso": "2026-10-05",
+      "customer_id": "CUS-KD-26-1113",
+      "customer_name": "YUSUF ALIYU",
+      "project_name": "KATSINA",
+      "status": "Pending",
+      "payment_status": "Unpaid",
+      "total_ngn": 8092900,
+      "paid_ngn": 0,
+      "qty": 3600,
+      "unit_price": 170,
+      "line_json": {
+        "id": "L1791210574873-rmynym4",
+        "name": "Hooks and bolts",
+        "qty": "3600",
+        "unitPrice": "170",
+        "customLine": false
+      }
+    }
+  ],
+  "hookProd": [
+    {
+      "product_id": "ACC-HOOKS-BOLT-PCS",
+      "name": "Hooks and bolts (pcs)",
+      "unit": "pcs",
+      "stock_level": 0
+    },
+    {
+      "product_id": "ACC-HOOKS-PCS",
+      "name": "Hooks (pcs)",
+      "unit": "pcs",
+      "stock_level": 0
+    }
+  ],
+  "hookMov": [],
+  "hookPo": [],
+  "locks": []
+}

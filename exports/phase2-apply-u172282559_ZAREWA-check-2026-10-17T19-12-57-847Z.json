@@ -1,0 +1,21 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T19:12:57.847Z",
+ "plan": "mp-round7-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R7-1",
+   "record": "QT-KD-26-1777 abbas gabdo — Drive screw nail: 95 quoted, 35 supplied, 60 short",
+   "field": "refund request (Pending)",
+   "op": "refundRequestCreate",
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-0904 abbas gabdo",
+   "previewOk": true,
+   "suggestedNgn": 150000,
+   "approver": "Suleiman Abdullahi Liman or the MD (Mustapha Ibn Sali)"
+  }
+ ]
+}

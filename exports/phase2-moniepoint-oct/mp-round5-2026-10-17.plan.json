@@ -1,0 +1,176 @@
+{
+ "createdAtISO": "2026-10-17",
+ "source": "Owner 17 Oct 2026: round 5 (EX-355 split, B4 advances, LE-2051 hold). --per-item.",
+ "items": [
+  {
+   "id": "R5-1a",
+   "group": "A",
+   "record": "TM-KD-26-3192 EX-355 PREQ-KD-26-0355 transport ₦170,000 (6 Oct) + JE-KD-26-4670",
+   "field": "payout line amount + bank date; request paid; payout journal",
+   "reason": "Bank A52: ₦120,000 to Bashir Idris 5 Oct 19:11 (first part of EX-355)",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3192",
+     "expectedNgn": 170000,
+     "expectedDay": "2026-10-06",
+     "amountNgn": 120000,
+     "expectedPaidBeforeNgn": 170000,
+     "postedAtISO": "2026-10-05T18:11:00.000Z",
+     "note": "EX-355 part 1: bank 5 Oct 19:11 ₦120,000 to Bashir Idris (Moniepoint A52)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 50000
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R5-1b",
+   "group": "A",
+   "record": "PREQ-KD-26-0355 transport (₦50,000 left after R5-1a)",
+   "field": "payment request payout (bank)",
+   "reason": "Bank A113: ₦50,000 through GM Bala Muazu 9 Oct 16:19 (second part of EX-355)",
+   "ops": [
+    {
+     "kind": "preqPay",
+     "requestId": "PREQ-KD-26-0355",
+     "expectedPaidBeforeNgn": 120000,
+     "afterItem": "R5-1a",
+     "note": "EX-355 part 2, paid through GM Bala Muazu",
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 50000,
+       "postedAtISO": "2026-10-09T15:19:00.000Z",
+       "reference": "BANK-MP-202610091619",
+       "note": "A113: EX-355 part 2 via GM Bala Muazu"
+      }
+     ]
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -50000
+   },
+   "expectTypes": [
+    "PAYMENT_REQUEST_OUT"
+   ]
+  },
+  {
+   "id": "R5-2a",
+   "group": "A",
+   "record": "LE-KD-26-1926 (QT-KD-26-1685) Anas Cap Zaria ₦4,700 (cash reversed as \"refund fund\")",
+   "field": "customer advance (cash received)",
+   "reason": "Owner B4: bank received ₦4,700 on 2026-10-01 (anas hamisu); the quote was already paid from overpay credit, so the cash is the customer's advance",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerId": "CUS-KD-26-0036",
+     "customerName": "Anas Cap Zaria",
+     "amountNgn": 4700,
+     "date": "2026-10-01",
+     "branchId": "BR-KD",
+     "treasuryAccountId": 4,
+     "paymentMethod": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "bankReference": "Anas Cap Zaria ₦4700 (bank 2026-10-01; was LE-KD-26-1926 (QT-KD-26-1685))",
+     "note": "Cash received 2026-10-01 on LE-KD-26-1926 (QT-KD-26-1685); the quotation was settled from overpay credit and the cash was reversed as refund fund. Owner 17 Oct: cash kept as customer advance."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 4700
+   },
+   "expectTypes": [
+    "ADVANCE_IN"
+   ]
+  },
+  {
+   "id": "R5-2b",
+   "group": "A",
+   "record": "LE-KD-26-1981 (QT-KD-26-1717) Sanusi Dangiwa ₦4,000 (cash reversed as \"refund fund\")",
+   "field": "customer advance (cash received)",
+   "reason": "Owner B4: bank received ₦4,000 on 2026-10-05 (sanusi dangiwa); the quote was already paid from overpay credit, so the cash is the customer's advance",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerId": "CUS-KD-26-1103",
+     "customerName": "Sanusi Dangiwa",
+     "amountNgn": 4000,
+     "date": "2026-10-05",
+     "branchId": "BR-KD",
+     "treasuryAccountId": 4,
+     "paymentMethod": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "bankReference": "Sanusi Dangiwa ₦4000 (bank 2026-10-05; was LE-KD-26-1981 (QT-KD-26-1717))",
+     "note": "Cash received 2026-10-05 on LE-KD-26-1981 (QT-KD-26-1717); the quotation was settled from overpay credit and the cash was reversed as refund fund. Owner 17 Oct: cash kept as customer advance."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 4000
+   },
+   "expectTypes": [
+    "ADVANCE_IN"
+   ]
+  },
+  {
+   "id": "R5-2c",
+   "group": "A",
+   "record": "LE-KD-26-2005 (QT-KD-26-1734) SURAJO ₦34,650 (cash reversed as \"refund fund\")",
+   "field": "customer advance (cash received)",
+   "reason": "Owner B4: bank received ₦34,650 on 2026-10-06 (surajo); the quote was already paid from overpay credit, so the cash is the customer's advance",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerId": "CUS-KD-26-0700",
+     "customerName": "SURAJO",
+     "amountNgn": 34650,
+     "date": "2026-10-06",
+     "branchId": "BR-KD",
+     "treasuryAccountId": 4,
+     "paymentMethod": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "bankReference": "SURAJO ₦34650 (bank 2026-10-06; was LE-KD-26-2005 (QT-KD-26-1734))",
+     "note": "Cash received 2026-10-06 on LE-KD-26-2005 (QT-KD-26-1734); the quotation was settled from overpay credit and the cash was reversed as refund fund. Owner 17 Oct: cash kept as customer advance."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 34650
+   },
+   "expectTypes": [
+    "ADVANCE_IN"
+   ]
+  },
+  {
+   "id": "R5-4",
+   "group": "A",
+   "record": "LE-KD-26-2051 Suleman Bello Zaria ₦36,500 (QT-KD-26-1772)",
+   "field": "receipt status",
+   "reason": "Owner: the money is on the bank (TM-KD-26-3185, 9 Oct); the \"no bank receipt\" hold is cleared",
+   "ops": [
+    {
+     "kind": "receiptHoldRelease",
+     "receiptId": "LE-KD-26-2051",
+     "movementId": "TM-KD-26-3185",
+     "amountNgn": 36500,
+     "accountId": 4,
+     "before": "Suspended — no bank receipt, awaiting credit check",
+     "after": "Pending clearance",
+     "note": "Bank received ₦36,500 on 9 Oct (TM-KD-26-3185). Hold cleared on the owner’s instruction 17 Oct 2026."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  }
+ ]
+}

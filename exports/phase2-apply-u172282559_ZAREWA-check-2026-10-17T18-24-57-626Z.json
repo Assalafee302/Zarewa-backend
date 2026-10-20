@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T18:24:57.626Z",
+ "plan": "mp-round5-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R5-1b",
+   "record": "PREQ-KD-26-0355 transport (₦50,000 left after R5-1a)",
+   "field": "payment request payout (bank)",
+   "op": "preqPay",
+   "outcome": "would apply",
+   "why": "paid ₦120000 expected once R5-1a has posted (now ₦170000)"
+  }
+ ]
+}

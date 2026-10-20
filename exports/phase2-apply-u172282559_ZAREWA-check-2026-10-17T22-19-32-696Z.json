@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T22:19:32.696Z",
+ "plan": "mp-round9-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R9-2a",
+   "record": "hamza garba ₦351,875 (2026-10-17, BKR-KD-26-1742)",
+   "field": "customer advance (cash received, quotation to follow)",
+   "op": "customerAdvance",
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-1160"
+  }
+ ]
+}

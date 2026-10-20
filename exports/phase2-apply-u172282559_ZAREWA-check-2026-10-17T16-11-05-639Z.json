@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T16:11:05.639Z",
+ "plan": "mp-round4-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-B5-A131",
+   "record": "RF-KD-26-9766 / TM-KD-26-3212",
+   "field": "refund payout line amount",
+   "op": "payoutLineCorrect",
+   "outcome": "BLOCKED",
+   "why": "read ECONNRESET | sql=\"SELECT * FROM accounting_period_locks WHERE period_key = ?\" | binds=1/1"
+  }
+ ]
+}

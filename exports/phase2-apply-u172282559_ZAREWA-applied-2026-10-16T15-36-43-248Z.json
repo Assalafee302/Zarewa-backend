@@ -1,0 +1,21 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T15:36:43.248Z",
+ "plan": "mp-round2-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-E3",
+   "record": "PREQ-KD-26-0358 FORK LIFT ₦30,000 (approved, unpaid)",
+   "field": "payment request payout (bank)",
+   "op": "preqPay",
+   "outcome": "applied",
+   "requested": 30000,
+   "paidBeforeNgn": 0,
+   "payNgn": 30000,
+   "approvedBy": "Suleiman Abdullahi Liman"
+  }
+ ]
+}

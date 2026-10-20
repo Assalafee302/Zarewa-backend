@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T13:33:22.058Z",
+ "plan": "round5-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-A105",
+   "record": "Moniepoint 2026-10-09 09:46 ₦417,236",
+   "field": "new expense (Fuel & lubricant)",
+   "op": "postExpense",
+   "outcome": "skipped",
+   "why": "already posted as EXP-KD-26-0468"
+  }
+ ]
+}

@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T15:46:39.003Z",
+ "plan": "mp-round2-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-C4",
+   "record": "TM-KD-26-3250 Sani Haruna ₦2,240 (LE-KD-26-2120) on Cash Office",
+   "field": "treasury account",
+   "op": "moveTreasury",
+   "outcome": "applied",
+   "glReclassNgn": 0
+  }
+ ]
+}

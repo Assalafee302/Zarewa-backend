@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T17:19:54.897Z",
+ "plan": "mp-round4b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-F10c",
+   "record": "TM-KD-26-3184 PO-89 transport Bashir Idris ₦120,000 (9 Oct)",
+   "field": "payout bank date",
+   "op": "payoutLineCorrect",
+   "outcome": "applied",
+   "line": "TM-KD-26-3184 TRANSPORT_PAYMENT PO-KD-26-0089",
+   "beforeNgn": -120000,
+   "afterNgn": -120000,
+   "beforeAt": "2026-10-09T12:36:24.006Z",
+   "afterAt": "2026-10-08T00:15:00.000Z"
+  }
+ ]
+}

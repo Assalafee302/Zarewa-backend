@@ -1,0 +1,30 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T17:20:15.193Z",
+ "plan": "mp-round4b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-F10d1",
+   "record": "TM-KD-26-3190 RF-KD-26-9752 Ibrahim Zaria ₦342,000 (8 Oct)",
+   "field": "payout bank date",
+   "op": "payoutLineCorrect",
+   "outcome": "applied",
+   "line": "TM-KD-26-3190 REFUND_PAYOUT RF-KD-26-9752",
+   "beforeNgn": -342000,
+   "afterNgn": -342000,
+   "beforeAt": "2026-10-08T12:00:00.000Z",
+   "afterAt": "2026-10-07T18:52:00.000Z",
+   "refund": {
+    "refundId": "RF-KD-26-9752",
+    "approvedNgn": 483050,
+    "paidBeforeNgn": 460790,
+    "paidAfterNgn": null,
+    "outstandingBeforeNgn": 0,
+    "outstandingAfterNgn": null
+   }
+  }
+ ]
+}

@@ -1,0 +1,98 @@
+{
+ "createdAtISO": "2026-10-17",
+ "source": "Owner 17 Oct 2026: re-point four Sep→Oct recon links. --per-item.",
+ "items": [
+  {
+   "id": "R9-repoint-1",
+   "group": "A",
+   "record": "TM-KD-26-2946: BKR-KD-26-0868 (Sep) → BKR-KD-26-1381 (Oct)",
+   "field": "bank_reconciliation_lines.system_match / status",
+   "reason": "Owner 17 Oct: link re-pointed to the October bank line. PREQ-0313 Khalifa school registration ₦35,000 (requested and paid 1 Oct); bank 1 Oct to MUSTAPHA USMAN SALI \"khalifah school registration\"",
+   "ops": [
+    {
+     "kind": "reconRepoint",
+     "movementId": "TM-KD-26-2946",
+     "fromId": "BKR-KD-26-0868",
+     "toId": "BKR-KD-26-1381",
+     "toNote": "",
+     "reason": "owner 17 Oct: the payout is the October bank line; this September line has no ERP line of its amount"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R9-repoint-2",
+   "group": "A",
+   "record": "TM-KD-26-3014: BKR-KD-26-0989 (Sep) → BKR-KD-26-1394 (Oct)",
+   "field": "bank_reconciliation_lines.system_match / status",
+   "reason": "Owner 17 Oct: link re-pointed to the October bank line. PREQ-0326 tax clearance certificate ₦20,000 (requested and paid 2 Oct); bank 2 Oct to Bala Muazu Suleiman \"Gm request through Abdulrahman\"",
+   "ops": [
+    {
+     "kind": "reconRepoint",
+     "movementId": "TM-KD-26-3014",
+     "fromId": "BKR-KD-26-0989",
+     "toId": "BKR-KD-26-1394",
+     "toNote": "fee 20",
+     "reason": "owner 17 Oct: the payout is the October bank line; this September line has no ERP line of its amount"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R9-repoint-3",
+   "group": "A",
+   "record": "TM-KD-26-3042: BKR-KD-26-0905 (Sep) → BKR-KD-26-1398 (Oct)",
+   "field": "bank_reconciliation_lines.system_match / status",
+   "reason": "Owner 17 Oct: link re-pointed to the October bank line. PREQ-0318 pure water ₦6,000 (requested and paid 2 Oct); bank 2 Oct to SHAIBU ABDULLAHI \"pure water and delievery of cement\"",
+   "ops": [
+    {
+     "kind": "reconRepoint",
+     "movementId": "TM-KD-26-3042",
+     "fromId": "BKR-KD-26-0905",
+     "toId": "BKR-KD-26-1398",
+     "toNote": "fee 20",
+     "reason": "owner 17 Oct: the payout is the October bank line; this September line has no ERP line of its amount"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R9-repoint-4",
+   "group": "A",
+   "record": "TM-KD-26-3044: BKR-KD-26-0898 (Sep) → BKR-KD-26-1410 (Oct)",
+   "field": "bank_reconciliation_lines.system_match / status",
+   "reason": "Owner 17 Oct: link re-pointed to the October bank line. PREQ-0333 Metral machine ₦16,000 (requested and paid 3 Oct); bank 3 Oct to SULEIMAN HAMMED \"Metral machine\"",
+   "ops": [
+    {
+     "kind": "reconRepoint",
+     "movementId": "TM-KD-26-3044",
+     "fromId": "BKR-KD-26-0898",
+     "toId": "BKR-KD-26-1410",
+     "toNote": "fee 20",
+     "reason": "owner 17 Oct: the payout is the October bank line; this September line has no ERP line of its amount"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  }
+ ]
+}

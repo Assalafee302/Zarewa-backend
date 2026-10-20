@@ -1,0 +1,35 @@
+{
+ "createdAtISO": "2026-10-16",
+ "source": "Owner 16 Oct 2026: alone, September unlocked for this item only — 30 Sep alignment to the Moniepoint statement (₦3,411,799), recomputed at run time.",
+ "items": [
+  {
+   "id": "R6-ALIGN",
+   "group": "A",
+   "record": "Moniepoint (treasury account 4) at 30 Sep 2026",
+   "field": "statement alignment (BANK_RECON_ADJUSTMENT)",
+   "reason": "Statement closing 30 Sep ₦3,411,799.04; ERP −₦10,753,432 after the TM-KD-26-3253 redate",
+   "ops": [
+    {
+     "kind": "bankAdjustment",
+     "treasuryAccountId": 4,
+     "date": "2026-09-30",
+     "amountNgn": 14165231,
+     "scheduleRef": "REC-MP-2026-09",
+     "label": "Pre-October alignment to Moniepoint statement (schedule REC-MP-2026-09)",
+     "balanceCutISO": "2026-09-30T23:00:00.000Z",
+     "checkModePendingNgn": 0,
+     "branchId": "BR-KD",
+     "targetBalanceNgn": 3411799
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 14165231
+   },
+   "expectTypes": [
+    "BANK_RECON_ADJUSTMENT"
+   ]
+  }
+ ]
+}

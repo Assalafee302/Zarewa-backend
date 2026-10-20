@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T13:50:06.655Z",
+ "plan": "round6-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R6-ALIGN",
+   "record": "Moniepoint (treasury account 4) at 30 Sep 2026",
+   "field": "statement alignment (BANK_RECON_ADJUSTMENT)",
+   "op": "bankAdjustment",
+   "outcome": "applied",
+   "created": "TM-KD-26-3312"
+  }
+ ]
+}

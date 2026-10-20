@@ -1,0 +1,28 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T16:16:08.838Z",
+ "plan": "mp-round4-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-B5-A150",
+   "record": "RF-KD-26-9778 / TM-KD-26-3232",
+   "field": "refund payout line amount",
+   "op": "payoutLineCorrect",
+   "outcome": "would apply",
+   "line": "TM-KD-26-3232 REFUND_PAYOUT RF-KD-26-9778",
+   "beforeNgn": -17680,
+   "afterNgn": -17600,
+   "refund": {
+    "refundId": "RF-KD-26-9778",
+    "approvedNgn": 22100,
+    "paidBeforeNgn": 17680,
+    "paidAfterNgn": 17600,
+    "outstandingBeforeNgn": 0,
+    "outstandingAfterNgn": 80
+   }
+  }
+ ]
+}

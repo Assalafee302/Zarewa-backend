@@ -1,0 +1,26 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T13:32:08.865Z",
+ "plan": "mp-round10-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R10-1",
+   "record": "RF-KD-26-9790 abbas gabdo (QT-KD-26-1777), Accessory shortfall 56 nails packs, approved ₦140,000",
+   "field": "refund payout (bank)",
+   "op": "refundPay",
+   "outcome": "would apply",
+   "status": "Approved",
+   "approvedNgn": 140000,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 140000,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 140000,
+   "payNgn": 140000,
+   "remainderAfterNgn": 0
+  }
+ ]
+}

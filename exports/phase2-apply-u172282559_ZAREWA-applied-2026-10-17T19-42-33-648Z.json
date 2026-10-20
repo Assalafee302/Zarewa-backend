@@ -1,0 +1,23 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T19:42:33.648Z",
+ "plan": "mp-oct-recon-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R8-recon-05",
+   "record": "Moniepoint statement Oct 2026, lines 201–250 (2026-10-09 – 2026-10-10)",
+   "field": "bank_reconciliation_lines (insert)",
+   "op": "reconImportBatch",
+   "outcome": "applied",
+   "rows": 50,
+   "toInsert": 50,
+   "matched": 50,
+   "review": 0,
+   "first": "BKR-KD-26-1561",
+   "last": "BKR-KD-26-1610"
+  }
+ ]
+}

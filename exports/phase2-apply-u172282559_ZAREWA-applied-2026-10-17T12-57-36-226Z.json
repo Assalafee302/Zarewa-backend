@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T12:57:36.226Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R3-4",
+   "record": "AP-PO-PO-KD-26-0093 Sectook Aluminium Abuja (invoice ₦4,409,800, paid ₦1,409,800)",
+   "field": "supplier payment (bank)",
+   "op": "apPay",
+   "outcome": "applied",
+   "supplier": "Sectook Aluminium Abuja",
+   "invoiceNgn": 4409800,
+   "paidBeforeNgn": 1409800,
+   "payNgn": 500000,
+   "outstandingAfterNgn": 2500000
+  }
+ ]
+}

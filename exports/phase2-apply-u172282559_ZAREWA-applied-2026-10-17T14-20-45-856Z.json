@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T14:20:45.856Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R3-10a",
+   "record": "RF-KD-26-9735 Adamu Ibrahim",
+   "field": "refund remainder (rounding)",
+   "op": "refundRoundingClose",
+   "outcome": "applied",
+   "remainderNgn": 60
+  }
+ ]
+}

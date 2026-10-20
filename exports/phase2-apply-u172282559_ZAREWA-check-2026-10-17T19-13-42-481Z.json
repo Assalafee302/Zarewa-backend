@@ -1,0 +1,21 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T19:13:42.481Z",
+ "plan": "mp-round7-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R7-2",
+   "record": "PO-KD-26-0092 E-Best Aluminium Abuja — haulage Bashir Idris (paid ₦140,000, TM-KD-26-3384)",
+   "field": "purchase_orders.transport_amount_ngn",
+   "op": "poHaulageFeeSet",
+   "outcome": "would apply",
+   "po": "PO-KD-26-0092",
+   "feeBeforeNgn": 100000,
+   "feeAfterNgn": 140000,
+   "haulagePaidNgn": 140000
+  }
+ ]
+}

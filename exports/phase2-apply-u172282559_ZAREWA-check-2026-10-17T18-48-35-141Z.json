@@ -1,0 +1,23 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T18:48:35.141Z",
+ "plan": "mp-round6-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R6-1a",
+   "record": "QT-KD-26-1777 abbas gabdo — nails not supplied (95 quoted, 35 supplied)",
+   "field": "refund request (Pending)",
+   "op": "refundRequestCreate",
+   "outcome": "BLOCKED",
+   "why": "Refundable balance on this quotation is fully covered by existing refund requests.",
+   "customer": "CUS-KD-26-0904 abbas gabdo",
+   "previewOk": false,
+   "previewError": "Refundable balance on this quotation is fully covered by existing refund requests.",
+   "suggestedNgn": 150000,
+   "approver": "Suleiman Abdullahi Liman or the MD (Mustapha Ibn Sali)"
+  }
+ ]
+}

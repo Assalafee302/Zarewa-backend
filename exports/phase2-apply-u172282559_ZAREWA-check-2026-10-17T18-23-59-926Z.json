@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T18:23:59.926Z",
+ "plan": "mp-round5-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R5-2c",
+   "record": "LE-KD-26-2005 (QT-KD-26-1734) SURAJO ₦34,650 (cash reversed as \"refund fund\")",
+   "field": "customer advance (cash received)",
+   "op": "customerAdvance",
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-0700"
+  }
+ ]
+}

@@ -1,0 +1,23 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T21:16:40.993Z",
+ "plan": "mp-round8b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R8b-5c3",
+   "record": "LE-KD-26-2051 Suleman Bello Zaria (QT-KD-26-1772) ₦36,500",
+   "field": "finance confirmation (bank received)",
+   "op": "receiptBankConfirm",
+   "outcome": "would apply",
+   "receipt": "LE-KD-26-2051",
+   "quotation": "QT-KD-26-1772",
+   "amountNgn": 36500,
+   "bankRows": [
+    "BKR-KD-26-1563"
+   ]
+  }
+ ]
+}

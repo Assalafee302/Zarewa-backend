@@ -1,0 +1,17 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T15:46:58.179Z",
+ "plan": "mp-round2-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-C5a",
+   "record": "TM-KD-26-3296 Imran Ibraheem Jafar ₦49,540 (LE-KD-26-2135) posted 16 Oct",
+   "field": "treasury posting date",
+   "op": "redateTreasury",
+   "outcome": "applied"
+  }
+ ]
+}

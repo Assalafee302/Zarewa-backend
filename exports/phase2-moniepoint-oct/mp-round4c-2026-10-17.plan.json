@@ -1,0 +1,36 @@
+{
+ "createdAtISO": "2026-10-17",
+ "source": "Owner 17 Oct 2026: cancel duplicate RC-2168. --per-item.",
+ "items": [
+  {
+   "id": "R4-G1",
+   "group": "A",
+   "record": "LE-KD-26-2168 RC-2168 Mamman Cap Zaria ₦1,562,900 (QT-KD-26-1828), double entry of RC-2167",
+   "field": "receipt reversal",
+   "reason": "Owner 17 Oct: bank has one Mamman Cap payment (₦1,000,000 15:59 + ₦562,900 16:00); RC-2168 is the double entry",
+   "ops": [
+    {
+     "kind": "receiptReverse",
+     "receiptId": "LE-KD-26-2168",
+     "twinReceiptId": "LE-KD-26-2167",
+     "expectedNgn": 1562900,
+     "expectedStatus": "Pending clearance",
+     "expectedMovements": {
+      "TM-KD-26-3357": 1000000,
+      "TM-KD-26-3358": 562900
+     },
+     "accountId": 4,
+     "note": "Double entry of RC-2167 (bank: one payment ₦1,000,000 + ₦562,900, 17 Oct 15:59/16:00). Cancelled on the owner’s instruction 17 Oct 2026."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -1562900
+   },
+   "expectTypes": [
+    "RECEIPT_REVERSAL_OUT"
+   ]
+  }
+ ]
+}

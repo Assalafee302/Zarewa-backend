@@ -1,0 +1,17 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T17:19:37.650Z",
+ "plan": "mp-round4b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-F10a",
+   "record": "TM-KD-26-3026 RC-1968 Nuhu Shittu ₦42,000",
+   "field": "treasury posting date",
+   "op": "redateTreasury",
+   "outcome": "applied"
+  }
+ ]
+}

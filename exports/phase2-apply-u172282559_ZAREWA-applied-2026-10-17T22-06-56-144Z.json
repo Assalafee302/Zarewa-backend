@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T22:06:56.144Z",
+ "plan": "mp-round8-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R8-1c",
+   "record": "17 Oct VAT ₦1.50 + stamp duty ₦50 (bank-recon Review rows)",
+   "field": "bank_reconciliation_lines (Review → Matched)",
+   "op": "reconMatchToExpense",
+   "outcome": "applied",
+   "rows": [
+    "BKR-KD-26-1745",
+    "BKR-KD-26-1746"
+   ],
+   "movementId": "TM-KD-26-3386"
+  }
+ ]
+}

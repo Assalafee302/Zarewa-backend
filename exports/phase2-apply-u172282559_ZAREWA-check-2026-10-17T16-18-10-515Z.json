@@ -1,0 +1,20 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T16:18:10.515Z",
+ "plan": "mp-round4-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-C7-REV",
+   "record": "EXP-KD-26-0471 Bank charges — Moniepoint, Oct 2026 ₦8,340 (TM-KD-26-3311)",
+   "field": "expense reversal",
+   "op": "expenseReverse",
+   "outcome": "would apply",
+   "line": "TM-KD-26-3311",
+   "amountNgn": -8340,
+   "reversalAt": "2026-10-15T12:00:00.000Z"
+  }
+ ]
+}

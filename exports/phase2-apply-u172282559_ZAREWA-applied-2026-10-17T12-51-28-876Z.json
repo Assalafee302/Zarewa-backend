@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T12:51:28.876Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": {
+  "item": "R3-2a",
+  "error": "R3-2a: Customer commission refund (₦1,000,000) exceeds the maximum allowed (₦0) for this quotation given quoted ₦/m minus workbook floor and refundable headroom."
+ },
+ "results": [
+  {
+   "id": "R3-2a",
+   "outcome": "FAILED",
+   "why": "R3-2a: Customer commission refund (₦1,000,000) exceeds the maximum allowed (₦0) for this quotation given quoted ₦/m minus workbook floor and refundable headroom."
+  }
+ ]
+}

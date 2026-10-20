@@ -1,0 +1,17 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T12:58:50.953Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R3-5",
+   "record": "LE-KD-26-2044 Mohammed Haruna (QT-KD-26-1764), TM-KD-26-3181 ₦1,351,540",
+   "field": "receipt amount (finance-confirmed)",
+   "op": "receiptConfirmedAmount",
+   "outcome": "applied"
+  }
+ ]
+}

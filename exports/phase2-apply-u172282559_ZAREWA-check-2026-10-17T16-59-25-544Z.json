@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T16:59:25.544Z",
+ "plan": "mp-round4b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-F10b1",
+   "record": "TM-KD-26-3192 EX-355 PREQ-KD-26-0355 transport ₦170,000 (6 Oct)",
+   "field": "payout line amount + bank date",
+   "op": "payoutLineCorrect",
+   "outcome": "would apply",
+   "line": "TM-KD-26-3192 PAYMENT_REQUEST_OUT PREQ-KD-26-0355",
+   "beforeNgn": -170000,
+   "afterNgn": -120000,
+   "beforeAt": "2026-10-06T12:00:00.000Z",
+   "afterAt": "2026-10-05T18:11:00.000Z"
+  }
+ ]
+}

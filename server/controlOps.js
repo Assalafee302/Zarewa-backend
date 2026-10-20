@@ -612,7 +612,8 @@ export function quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundI
              AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
         )
         .get(ref);
-  return roundMoney((row?.s ?? 0) + quotationUnlinkedOverpayCreditOutNgn(db, ref));
+  // MySQL returns SUM() as a string — coerce before adding or "1913200" + 29200 concatenates.
+  return roundMoney(Number(row?.s ?? 0) + Number(quotationUnlinkedOverpayCreditOutNgn(db, ref) || 0));
 }
 
 

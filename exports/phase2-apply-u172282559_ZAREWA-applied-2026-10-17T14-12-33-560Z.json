@@ -1,0 +1,17 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T14:12:33.560Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R3-7a",
+   "record": "RF-KD-26-9782 Jibril Sule (QT-KD-26-1794): approved ₦139,095, stored Paid with no payout line",
+   "field": "refund approved amount",
+   "op": "update",
+   "outcome": "applied"
+  }
+ ]
+}

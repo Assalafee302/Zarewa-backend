@@ -1,0 +1,351 @@
+{
+ "createdAtISO": "2026-10-17",
+ "source": "Owner 17 Oct 2026: round 4 additions F10 (bank dates) and F12 (rounding). --per-item.",
+ "items": [
+  {
+   "id": "R4-F10a",
+   "group": "A",
+   "record": "TM-KD-26-3026 RC-1968 Nuhu Shittu ₦42,000",
+   "field": "treasury posting date",
+   "reason": "Bank A26: credited 2 Oct 17:05",
+   "ops": [
+    {
+     "kind": "redateTreasury",
+     "movementId": "TM-KD-26-3026",
+     "before": "2026-10-03",
+     "after": "2026-10-02",
+     "note": "Bank date 2 Oct 17:05 (Moniepoint A26)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F10c",
+   "group": "A",
+   "record": "TM-KD-26-3184 PO-89 transport Bashir Idris ₦120,000 (9 Oct)",
+   "field": "payout bank date",
+   "reason": "Bank A94: ₦120,000 to Bashir Idris 8 Oct 01:15 (confirmed: the only ₦120,000 to Bashir that week besides EX-355 on 5 Oct)",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3184",
+     "expectedNgn": 120000,
+     "expectedDay": "2026-10-09",
+     "postedAtISO": "2026-10-08T00:15:00.000Z",
+     "note": "Bank date 8 Oct 01:15 (Moniepoint A94)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F10d1",
+   "group": "A",
+   "record": "TM-KD-26-3190 RF-KD-26-9752 Ibrahim Zaria ₦342,000 (8 Oct)",
+   "field": "payout bank date",
+   "reason": "Bank A89 + A90 + A92: ₦203,000 + ₦40,000 + ₦99,000 on 7 Oct 19:28–19:52",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3190",
+     "expectedNgn": 342000,
+     "expectedDay": "2026-10-08",
+     "postedAtISO": "2026-10-07T18:52:00.000Z",
+     "note": "Bank 7 Oct: ₦203,000 + ₦40,000 + ₦99,000 (Moniepoint A89, A90, A92)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F10d2",
+   "group": "A",
+   "record": "TM-KD-26-3187 RF-KD-26-9752 Ibrahim Zaria ₦84,840 (8 Oct)",
+   "field": "payout bank date",
+   "reason": "Bank A93: ₦84,840 via OM 7 Oct 19:53",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3187",
+     "expectedNgn": 84840,
+     "expectedDay": "2026-10-08",
+     "postedAtISO": "2026-10-07T18:53:00.000Z",
+     "note": "Bank 7 Oct 19:53 ₦84,840 via OM (Moniepoint A93)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F10e",
+   "group": "A",
+   "record": "TM-KD-26-3146 RF-KD-26-9729 Ramaran Garkuwa part 2 ₦35,000 (6 Oct)",
+   "field": "payout bank date",
+   "reason": "Bank A91: ₦35,000 on 7 Oct 19:31 to IBRAHIM AHMED, GTB ****83237 — NOT the payout account on the refund / profile (OPay ****73153): exception reported, payee unchanged",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3146",
+     "expectedNgn": 35000,
+     "expectedDay": "2026-10-06",
+     "postedAtISO": "2026-10-07T18:31:00.000Z",
+     "note": "Bank date 7 Oct 19:31 (Moniepoint A91). Paid to IBRAHIM AHMED GTB ****83237, not the refund payout account OPay ****73153 — exception reported to the OM"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9728",
+   "group": "A",
+   "record": "RF-KD-26-9728",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦40 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9728",
+     "expectedRemainderNgn": 40,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9736",
+   "group": "A",
+   "record": "RF-KD-26-9736",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦76 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9736",
+     "expectedRemainderNgn": 76,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9771",
+   "group": "A",
+   "record": "RF-KD-26-9771",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦70 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9771",
+     "expectedRemainderNgn": 70,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9772",
+   "group": "A",
+   "record": "RF-KD-26-9772",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦16 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9772",
+     "expectedRemainderNgn": 16,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9766",
+   "group": "A",
+   "record": "RF-KD-26-9766",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦20 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9766",
+     "expectedRemainderNgn": 20,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9764",
+   "group": "A",
+   "record": "RF-KD-26-9764",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦80 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9764",
+     "expectedRemainderNgn": 80,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9755",
+   "group": "A",
+   "record": "RF-KD-26-9755",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦8 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9755",
+     "expectedRemainderNgn": 8,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9778",
+   "group": "A",
+   "record": "RF-KD-26-9778",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦80 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9778",
+     "expectedRemainderNgn": 80,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9777",
+   "group": "A",
+   "record": "RF-KD-26-9777",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦100 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9777",
+     "expectedRemainderNgn": 100,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9780",
+   "group": "A",
+   "record": "RF-KD-26-9780",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦140 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9780",
+     "expectedRemainderNgn": 140,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-F12-9781",
+   "group": "A",
+   "record": "RF-KD-26-9781",
+   "field": "refund remainder (rounding)",
+   "reason": "Owner F12: remainder ₦56 after the payout was set to the bank amount (B5) — bank fee/rounding",
+   "ops": [
+    {
+     "kind": "refundRoundingClose",
+     "refundId": "RF-KD-26-9781",
+     "expectedRemainderNgn": 56,
+     "reasonNote": "bank fee/rounding"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  }
+ ]
+}

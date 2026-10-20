@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T12:59:23.696Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": {
+  "item": "R3-6",
+  "error": "R3-6: Refundable balance on this quotation is fully covered by existing refund requests."
+ },
+ "results": [
+  {
+   "id": "R3-6",
+   "outcome": "FAILED",
+   "why": "R3-6: Refundable balance on this quotation is fully covered by existing refund requests."
+  }
+ ]
+}

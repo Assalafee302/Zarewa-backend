@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T17:58:13.171Z",
+ "plan": "mp-round4b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-F12-9778",
+   "record": "RF-KD-26-9778",
+   "field": "refund remainder (rounding)",
+   "op": "refundRoundingClose",
+   "outcome": "applied",
+   "remainderNgn": 80
+  }
+ ]
+}

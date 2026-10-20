@@ -1,0 +1,19 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T13:31:12.921Z",
+ "plan": "mp-round10-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R10-2",
+   "record": "BKR-KD-26-1711 (14 Oct −₦140,020, Review)",
+   "field": "bank_reconciliation_lines (Review → Matched)",
+   "op": "reconMatchReviewRow",
+   "outcome": "would apply",
+   "why": "after R10-1 posts the line",
+   "row": "BKR-KD-26-1711"
+  }
+ ]
+}

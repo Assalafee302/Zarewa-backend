@@ -1,0 +1,26 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T15:23:50.524Z",
+ "plan": "mp-round2-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-R2",
+   "record": "RF-KD-26-9776",
+   "field": "refund payout (bank)",
+   "op": "refundPay",
+   "outcome": "applied",
+   "status": "Approved",
+   "approvedNgn": 1913200,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 1881080,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 1881080,
+   "payNgn": 1881080,
+   "remainderAfterNgn": 0
+  }
+ ]
+}

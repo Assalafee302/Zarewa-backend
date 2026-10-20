@@ -1,0 +1,81 @@
+diff --git a/server/glOps.js b/server/glOps.js
+index cb03149..945dc1b 100644
+--- a/server/glOps.js
++++ b/server/glOps.js
+@@ -798,9 +798,27 @@ export function tryPostCustomerAdvanceReversalGl(db, payload) {
+   }
+ }
+ 
++/**
++ * Refund payout journal key: `refundId:paid:<movement ids>`, plus `#<correction id>` when a data correction
++ * re-posts a payout whose original journal was reversed (same movement, so without the suffix the re-post would
++ * collide with the reversed journal and be skipped as a duplicate).
++ * @param {string} refundId
++ * @param {string[]} movementIds sorted treasury movement ids
++ * @param {string} [correctionId]
++ */
++export function refundPayoutGlSourceId(refundId, movementIds, correctionId = '') {
++  const corr = String(correctionId || '').trim();
++  return `${refundId}:paid:${movementIds.join('-')}${corr ? `#${corr}` : ''}`;
++}
++
++/** Refund payout journal key without its `#<correction id>` suffix. */
++export function refundPayoutGlSourceBase(sourceId) {
++  return String(sourceId || '').split('#')[0];
++}
++
+ /**
+  * Cash refund to customer: reduce customer advances (2500) and cash (1000).
+- * Idempotent per payout event via source_id = refundId:paid:<treasury movement id(s)>.
++ * Idempotent per payout event via source_id = refundId:paid:<treasury movement id(s)> (see refundPayoutGlSourceId).
+  * Movement ids are never reused (unlike cumulative paid amount, which repeats after a
+  * pay -> reverse -> pay-again cycle and would otherwise collide with the first payout's
+  * journal and silently skip posting the second one).
+@@ -829,7 +847,7 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
+       entryDateISO: date,
+       memo,
+       sourceKind: 'CUSTOMER_REFUND_PAYOUT_GL',
+-      sourceId: `${refundId}:paid:${movementIds.join('-')}`,
++      sourceId: refundPayoutGlSourceId(refundId, movementIds, payload.correctionId),
+       branchId: payload.branchId ?? null,
+       createdByUserId: payload.createdByUserId ?? null,
+       lines: [
+diff --git a/server/writeOps.js b/server/writeOps.js
+index be2f838..3794632 100644
+--- a/server/writeOps.js
++++ b/server/writeOps.js
+@@ -30,6 +30,7 @@ import {
+   tryPostCoilScrapJournal,
+   tryPostCoilReturnJournal,
+   tryPostInventoryVarianceJournal,
++  refundPayoutGlSourceBase,
+ } from './glOps.js';
+ import {
+   tryPostExpensePaymentGlTx,
+@@ -9284,7 +9285,7 @@ export function reverseRefundTreasuryPayouts(db, refundId, payload = {}, actor =
+ }
+ 
+ function refundGlTailListsOnlyMovements(sourceId, movementIds) {
+-  const parts = String(sourceId || '').split(':');
++  const parts = refundPayoutGlSourceBase(sourceId).split(':');
+   const tail = parts.slice(2).join(':');
+   if (!tail) return false;
+   const ids = [...movementIds].sort((a, b) => b.length - a.length);
+@@ -12471,12 +12472,15 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
+     (oldAmt !== nextAmt || nextPosted !== String(row.posted_at_iso || '')) &&
+     tableExists(db, 'gl_journal_entries')
+   ) {
++    // A corrected re-post (`…#<correction id>`) is newer than the reversed original: amend the live one.
++    const key = `${String(row.source_id)}:paid:${mid}`;
+     const je = db
+       .prepare(
+         `SELECT id FROM gl_journal_entries
+-         WHERE source_kind = 'CUSTOMER_REFUND_PAYOUT_GL' AND source_id = ?`
++         WHERE source_kind = 'CUSTOMER_REFUND_PAYOUT_GL' AND (source_id = ? OR source_id LIKE ?)
++         ORDER BY created_at_iso DESC, id DESC LIMIT 1`
+       )
+-      .get(`${String(row.source_id)}:paid:${mid}`);
++      .get(key, `${key}#%`);
+     if (je?.id) {
+       refundJournal = amendBalancedJournalAmountTx(db, je.id, {
+         nextAmountNgn: Math.abs(nextAmt),

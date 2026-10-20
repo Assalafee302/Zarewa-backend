@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T21:15:45.723Z",
+ "plan": "mp-round8-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R8-1a",
+   "record": "Moniepoint 2026-10-16 ₦72",
+   "field": "new expense (Bank charges)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  }
+ ]
+}

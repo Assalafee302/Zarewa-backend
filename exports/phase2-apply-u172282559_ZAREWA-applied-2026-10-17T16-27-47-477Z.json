@@ -1,0 +1,17 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T16:27:47.477Z",
+ "plan": "mp-round4-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-B5-A41",
+   "record": "LE-KD-26-1986 / TM-KD-26-3107",
+   "field": "receipt amount (finance-confirmed)",
+   "op": "receiptConfirmedAmount",
+   "outcome": "applied"
+  }
+ ]
+}

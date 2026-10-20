@@ -1,0 +1,333 @@
+{
+ "createdAtISO": "2026-10-16",
+ "source": "Owner approval 16 Oct 2026: TM-KD-26-3253 redate, 30 Sep alignment +14,165,231, READY rows of Bank 1-13 Oct, bank charges ₦8,340. CHECK→PROPOSE and NEED ANSWER rows held.",
+ "items": [
+  {
+   "id": "R4-3253",
+   "group": "A",
+   "record": "TM-KD-26-3253 RECEIPT_REVERSAL_OUT −₦1,500,000 (Mal Sani Abdulrahman Zaria, LE-KD-26-1154)",
+   "field": "treasury posting date",
+   "reason": "Reverses TM-KD-26-1499 dated 16 Jul 2026 (Phase 2 C46) — a pre-October correction, belongs in the pre-October anchor",
+   "ops": [
+    {
+     "kind": "redateTreasury",
+     "movementId": "TM-KD-26-3253",
+     "before": "2026-10-14",
+     "after": "2026-07-16",
+     "note": "Redated to the 16 Jul receipt it reverses (TM-KD-26-1499); owner 16 Oct 2026, schedule REC-MP-2026-09"
+    }
+   ]
+  },
+  {
+   "id": "R4-A38",
+   "group": "A",
+   "record": "RF-KD-26-9730 Suleiman Zaria (QT-KD-26-1715), TM-KD-26-3143 −₦1,753,330 on 5 Oct",
+   "field": "refund amount + payout date",
+   "reason": "Bank: Moniepoint 4 Oct ₦1,290,000 to Suleiman Adamu (09:46) + ₦463,000 via the OM account (16:05), book EX-1715 — refund corrected to ₦1,753,000",
+   "ops": [
+    {
+     "kind": "update",
+     "table": "customer_refunds",
+     "keyCol": "refund_id",
+     "key": "RF-KD-26-9730",
+     "col": "approved_amount_ngn",
+     "before": 1753330,
+     "after": 1753000
+    },
+    {
+     "kind": "update",
+     "table": "customer_refunds",
+     "keyCol": "refund_id",
+     "key": "RF-KD-26-9730",
+     "col": "amount_ngn",
+     "before": 1753330,
+     "after": 1753000
+    },
+    {
+     "kind": "refundRepay",
+     "refundId": "RF-KD-26-9730",
+     "originalMovementId": "TM-KD-26-3143",
+     "expectedPaidNgn": 1753330,
+     "reverseDate": "2026-10-05",
+     "payDate": "2026-10-04",
+     "amountNgn": 1753000,
+     "treasuryAccountId": 4,
+     "payeeName": "Suleiman Adamu",
+     "note": "Bank 4 Oct: ₦1,290,000 to Suleiman Adamu + ₦463,000 via Abdulrahman Uthman Sali (book EX-1715)"
+    }
+   ]
+  },
+  {
+   "id": "R4-A103",
+   "group": "A",
+   "record": "RF-KD-26-9724 Abu Cap, TM-KD-26-3182 −₦1,941 on Taj 8 Oct",
+   "field": "treasury account",
+   "reason": "Bank: Moniepoint 8 Oct 14:40 ₦1,961 to Dahiru Jibrin (₦1,941 + ₦20 fee), book EX-1694; not on Taj",
+   "ops": [
+    {
+     "kind": "moveTreasury",
+     "movementId": "TM-KD-26-3182",
+     "fromAccountId": 2,
+     "fromDate": "2026-10-08",
+     "toAccountId": 4,
+     "toDate": "2026-10-08",
+     "note": "Bank: Moniepoint 8 Oct ₦1,961 (Abu Cap refund, book EX-1694)"
+    }
+   ]
+  },
+  {
+   "id": "R4-A149",
+   "group": "A",
+   "record": "LE-KD-26-2094 Ibrahim Welder (QT-KD-26-1793), TM-KD-26-3230 ₦142,550",
+   "field": "receipt amount (finance-confirmed)",
+   "reason": "Bank and book RC-2094: ₦146,250 Moniepoint 13 Oct 08:45; ₦3,700 above the quotation balance becomes his overpayment credit",
+   "ops": [
+    {
+     "kind": "receiptConfirmedAmount",
+     "receiptId": "LE-KD-26-2094",
+     "movementId": "TM-KD-26-3230",
+     "treasuryAccountId": 4,
+     "expectedNgn": 142550,
+     "amountNgn": 146250
+    }
+   ]
+  },
+  {
+   "id": "R4-A5",
+   "group": "A",
+   "record": "Moniepoint 2026-10-01 11:54 ₦2,411,727 → Taj",
+   "field": "internal transfer (both sides)",
+   "reason": "Moniepoint → Taj sweep, September book closing",
+   "ops": [
+    {
+     "kind": "internalTransfer",
+     "fromId": 4,
+     "toId": 2,
+     "date": "2026-10-01",
+     "time": "10:54",
+     "amountNgn": 2411727,
+     "reference": "Moniepoint → Taj sweep, September book closing (BANK-MP-2026-10-01-1154)",
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A14",
+   "group": "A",
+   "record": "Moniepoint 2026-10-01 18:20 ₦15,000",
+   "field": "new expense (Maintenance)",
+   "reason": "Bank: Moniepoint 1 Oct 18:20 ₦15,000 to Adamu Hayatu \"Briclayer\"",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-01",
+     "amountNgn": 15000,
+     "category": "Maintenance",
+     "expenseType": "Bricklayer labour — Adamu Hayatu (book EX-312; no PREQ-KD-26-0312 in the ERP)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-2026-10-01-1820",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A36",
+   "group": "A",
+   "record": "Moniepoint 2026-10-03 20:30 ₦222,000",
+   "field": "new expense (Maintenance)",
+   "reason": "Bank: Moniepoint 3 Oct 20:30 ₦222,020 (₦222,000 + ₦20 fee); book line 5 Oct",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-03",
+     "amountNgn": 222000,
+     "category": "Maintenance",
+     "expenseType": "Accommodation & transport — Engr Walter (Anietie Walter Umoh)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-2026-10-03-2030",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A49",
+   "group": "A",
+   "record": "Moniepoint 2026-10-05 13:41 ₦100,000 → Cash Office",
+   "field": "internal transfer (both sides)",
+   "reason": "Moniepoint → Cash Office (book: Transfer to cash office)",
+   "ops": [
+    {
+     "kind": "internalTransfer",
+     "fromId": 4,
+     "toId": 3,
+     "date": "2026-10-05",
+     "time": "12:41",
+     "amountNgn": 100000,
+     "reference": "Moniepoint → Cash Office (book: Transfer to cash office) (BANK-MP-2026-10-05-1341)",
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A86",
+   "group": "A",
+   "record": "Moniepoint 2026-10-07 16:21 ₦20,000",
+   "field": "new expense (Staff loan)",
+   "reason": "Bank: Moniepoint 7 Oct 16:21 ₦20,020 \"GM I O U\" (₦20,000 + ₦20 fee)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-07",
+     "amountNgn": 20000,
+     "category": "Staff loan",
+     "expenseType": "GM IOU — Bala Muazu Suleiman",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-2026-10-07-1621",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A105",
+   "group": "A",
+   "record": "Moniepoint 2026-10-09 09:46 ₦417,236",
+   "field": "new expense (Fuel & lubricant)",
+   "reason": "Bank: Moniepoint 9 Oct 09:46 ₦417,235.80 to Matrix Energy; book label \"EX-355 Transport\" is wrong (PREQ-0355 is the ₦170,000 transport)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-09",
+     "amountNgn": 417236,
+     "category": "Fuel & lubricant",
+     "expenseType": "Diesel — Matrix Energy Ltd (bank ₦417,235.80)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-2026-10-09-0946",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A109",
+   "group": "A",
+   "record": "Moniepoint 2026-10-09 12:44 ₦10,000,000 → Taj",
+   "field": "internal transfer (both sides)",
+   "reason": "Moniepoint → Taj (book: Transfer to Taj bank)",
+   "ops": [
+    {
+     "kind": "internalTransfer",
+     "fromId": 4,
+     "toId": 2,
+     "date": "2026-10-09",
+     "time": "11:44",
+     "amountNgn": 10000000,
+     "reference": "Moniepoint → Taj (book: Transfer to Taj bank) (BANK-MP-2026-10-09-1244)",
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A153",
+   "group": "A",
+   "record": "Moniepoint 2026-10-13 12:05 ₦4,000,000 → Taj",
+   "field": "internal transfer (both sides)",
+   "reason": "Moniepoint → Taj (book line 13 Oct)",
+   "ops": [
+    {
+     "kind": "internalTransfer",
+     "fromId": 4,
+     "toId": 2,
+     "date": "2026-10-13",
+     "time": "11:05",
+     "amountNgn": 4000000,
+     "reference": "Moniepoint → Taj (book line 13 Oct) (BANK-MP-2026-10-13-1205)",
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A158",
+   "group": "A",
+   "record": "Moniepoint 2026-10-13 17:25 ₦550,000",
+   "field": "new expense (Carriage inward)",
+   "reason": "Bank: Moniepoint 13 Oct 17:25 ₦550,020 (₦550,000 + ₦20 fee); Bashir is always transport",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-13",
+     "amountNgn": 550000,
+     "category": "Carriage inward",
+     "expenseType": "Transport — Bashir Idris",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-2026-10-13-1725",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-A164",
+   "group": "A",
+   "record": "Moniepoint 2026-10-13 17:50 ₦22,500",
+   "field": "new expense (Maintenance)",
+   "reason": "Bank: Moniepoint 13 Oct 17:50 ₦22,520 \"NEPA work\" (₦22,500 + ₦20 fee)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-13",
+     "amountNgn": 22500,
+     "category": "Maintenance",
+     "expenseType": "NEPA work — Haruna Yusuf",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-2026-10-13-1750",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-FEES",
+   "group": "A",
+   "record": "Moniepoint 2026-10-15 23:59 ₦8,340",
+   "field": "new expense (Bank charges)",
+   "reason": "Sheet Fees 1–16 Oct 09:44: stamp duty ₦4,200 + VAT ₦139.50 + transfer/POS fees ₦4,000 = ₦8,339.50 → ₦8,340",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-15",
+     "amountNgn": 8340,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint, Oct 2026",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-2026-10-15-2359",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ]
+  },
+  {
+   "id": "R4-ALIGN",
+   "group": "A",
+   "record": "Moniepoint (treasury account 4) at 30 Sep 2026",
+   "field": "statement alignment (BANK_RECON_ADJUSTMENT)",
+   "reason": "Statement closing 30 Sep ₦3,411,799.04; ERP −₦10,753,432 after the TM-KD-26-3253 redate",
+   "ops": [
+    {
+     "kind": "bankAdjustment",
+     "treasuryAccountId": 4,
+     "date": "2026-09-30",
+     "amountNgn": 14165231,
+     "scheduleRef": "REC-MP-2026-09",
+     "label": "Pre-October alignment to Moniepoint statement (schedule REC-MP-2026-09)",
+     "balanceCutISO": "2026-09-30T23:00:00.000Z",
+     "expectedBalanceBeforeNgn": -10753432,
+     "checkModePendingNgn": -1500000,
+     "branchId": "BR-KD"
+    }
+   ]
+  }
+ ]
+}

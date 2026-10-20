@@ -1,0 +1,19 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T22:22:37.550Z",
+ "plan": "mp-round9-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R9-2b",
+   "record": "BKR-KD-26-1742 (bank-recon Review row)",
+   "field": "bank_reconciliation_lines (Review → Matched)",
+   "op": "reconMatchReviewRow",
+   "outcome": "applied",
+   "row": "BKR-KD-26-1742",
+   "movementId": "TM-KD-26-3390"
+  }
+ ]
+}

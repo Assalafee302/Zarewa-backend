@@ -1,0 +1,21 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T22:19:18.613Z",
+ "plan": "mp-round9-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R9-1a",
+   "record": "PREQ-KD-26-0360 spraying of grass factory ₦4,000 (approved, unpaid)",
+   "field": "payment request payout (bank)",
+   "op": "preqPay",
+   "outcome": "would apply",
+   "requested": 4000,
+   "paidBeforeNgn": 0,
+   "payNgn": 4000,
+   "approvedBy": "Abdulrahman Uthman Sali"
+  }
+ ]
+}

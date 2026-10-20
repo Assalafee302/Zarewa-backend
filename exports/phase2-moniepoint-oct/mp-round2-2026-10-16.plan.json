@@ -1,0 +1,547 @@
+{
+ "createdAtISO": "2026-10-16",
+ "source": "Owner 16 Oct 2026: Moniepoint round 2 (refunds, transfers, expenses, receipts) — settled rows only. --per-item.",
+ "items": [
+  {
+   "id": "R2-R1",
+   "group": "A",
+   "record": "RF-KD-26-9753",
+   "field": "refund payout (bank)",
+   "reason": "Jonnatan Client overpayment refund paid in 3 bank transfers (owner: A48 + A100 + A101 = ₦1,499,410, closes)",
+   "ops": [
+    {
+     "kind": "refundPay",
+     "refundId": "RF-KD-26-9753",
+     "expectedPaidBeforeNgn": 0,
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 117000,
+       "postedAtISO": "2026-10-05T11:52:00.000Z",
+       "reference": "BANK-MP-2026-10-0512",
+       "note": "A48: Jonathan Chukusa \"refund\""
+      },
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 1176670,
+       "postedAtISO": "2026-10-08T11:24:00.000Z",
+       "reference": "BANK-MP-2026-10-0812",
+       "note": "A100: Yusuf Abubakar \"refund\""
+      },
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 205740,
+       "postedAtISO": "2026-10-08T11:33:00.000Z",
+       "reference": "BANK-MP-2026-10-0812",
+       "note": "A101: Abubakar Yusuf \"refund\""
+      }
+     ],
+     "note": "Jonnatan Client overpayment refund paid in 3 bank transfers (owner: A48 + A100 + A101 = ₦1,499,410, closes)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -1499410
+   },
+   "expectTypes": [
+    "REFUND_PAYOUT"
+   ]
+  },
+  {
+   "id": "R2-R2",
+   "group": "A",
+   "record": "RF-KD-26-9776",
+   "field": "refund payout (bank)",
+   "reason": "Abbas Gabdo: customer ₦1,752,600 + staff ₦128,480; company cut ₦32,120 already in the retention ledger (RCR-KD-26-0134) — closes",
+   "ops": [
+    {
+     "kind": "refundPay",
+     "refundId": "RF-KD-26-9776",
+     "expectedPaidBeforeNgn": 0,
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 1147000,
+       "postedAtISO": "2026-10-10T19:00:00.000Z",
+       "reference": "BANK-MP-2026-10-1020",
+       "note": "A137: Gabdo Musa Adamu (customer part)"
+      },
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 605600,
+       "postedAtISO": "2026-10-10T19:47:00.000Z",
+       "reference": "BANK-MP-2026-10-1020",
+       "note": "A138: via OM account (customer part)"
+      },
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 128480,
+       "postedAtISO": "2026-10-10T19:47:00.000Z",
+       "reference": "BANK-MP-2026-10-1020",
+       "note": "A139: staff part via OM (80% of ₦160,600)"
+      }
+     ],
+     "note": "Abbas Gabdo: customer ₦1,752,600 + staff ₦128,480; company cut ₦32,120 already in the retention ledger (RCR-KD-26-0134) — closes"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -1881080
+   },
+   "expectTypes": [
+    "REFUND_PAYOUT"
+   ]
+  },
+  {
+   "id": "R2-R4",
+   "group": "A",
+   "record": "RF-KD-26-9770",
+   "field": "refund payout (bank)",
+   "reason": "Suleiman Zaria staff payout via OM (owner R4); company cut ₦37,900 already credited (RCR-KD-26-0127) — remainder reported, not force-closed",
+   "ops": [
+    {
+     "kind": "refundPay",
+     "refundId": "RF-KD-26-9770",
+     "expectedPaidBeforeNgn": 1487120,
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 100000,
+       "postedAtISO": "2026-10-10T15:55:00.000Z",
+       "reference": "BANK-MP-2026-10-1016",
+       "note": "A122: Suleiman Zaria via OM"
+      }
+     ],
+     "note": "Suleiman Zaria staff payout via OM (owner R4); company cut ₦37,900 already credited (RCR-KD-26-0127) — remainder reported, not force-closed"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -100000
+   },
+   "expectTypes": [
+    "REFUND_PAYOUT"
+   ]
+  },
+  {
+   "id": "R2-R5a",
+   "group": "A",
+   "record": "RF-KD-26-9784",
+   "field": "refund payout (bank)",
+   "reason": "Auwal Idiris staff 80% payout via Bakari; cut ₦600 already credited (RCR-KD-26-0140)",
+   "ops": [
+    {
+     "kind": "refundPay",
+     "refundId": "RF-KD-26-9784",
+     "expectedPaidBeforeNgn": 0,
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 2400,
+       "postedAtISO": "2026-10-14T16:17:00.000Z",
+       "reference": "BANK-MP-2026-10-1417",
+       "note": "B16: via Bakari (80%)"
+      }
+     ],
+     "note": "Auwal Idiris staff 80% payout via Bakari; cut ₦600 already credited (RCR-KD-26-0140)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -2400
+   },
+   "expectTypes": [
+    "REFUND_PAYOUT"
+   ]
+  },
+  {
+   "id": "R2-R5b",
+   "group": "A",
+   "record": "RF-KD-26-9783",
+   "field": "refund payout (bank)",
+   "reason": "Yahya Abdullahi staff 80% payout via Bakari; cut ₦4,610 already credited (RCR-KD-26-0141)",
+   "ops": [
+    {
+     "kind": "refundPay",
+     "refundId": "RF-KD-26-9783",
+     "expectedPaidBeforeNgn": 0,
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 18440,
+       "postedAtISO": "2026-10-14T16:17:00.000Z",
+       "reference": "BANK-MP-2026-10-1417",
+       "note": "B17: via Bakari (80%)"
+      }
+     ],
+     "note": "Yahya Abdullahi staff 80% payout via Bakari; cut ₦4,610 already credited (RCR-KD-26-0141)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -18440
+   },
+   "expectTypes": [
+    "REFUND_PAYOUT"
+   ]
+  },
+  {
+   "id": "R2-R6",
+   "group": "A",
+   "record": "RF-KD-26-9735",
+   "field": "refund payout (bank)",
+   "reason": "Adamu Ibrahim payout ₦900 (owner R6); net due ₦960 after the ₦240 cut — remainder reported",
+   "ops": [
+    {
+     "kind": "refundPay",
+     "refundId": "RF-KD-26-9735",
+     "expectedPaidBeforeNgn": 0,
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 900,
+       "postedAtISO": "2026-10-06T17:53:00.000Z",
+       "reference": "BANK-MP-2026-10-0618",
+       "note": "A78: Adamu Ibrahim via OM"
+      }
+     ],
+     "note": "Adamu Ibrahim payout ₦900 (owner R6); net due ₦960 after the ₦240 cut — remainder reported"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -900
+   },
+   "expectTypes": [
+    "REFUND_PAYOUT"
+   ]
+  },
+  {
+   "id": "R2-T1",
+   "group": "A",
+   "record": "Moniepoint 14 Oct 16:49 ₦1,500,000 → Taj",
+   "field": "internal transfer (both sides)",
+   "reason": "Bank B11: TRANSFER TO ZAPS ALUMINIUM ENTERPRISE TAJ (₦1,500,000 + ₦20 fee)",
+   "ops": [
+    {
+     "kind": "internalTransfer",
+     "fromId": 4,
+     "toId": 2,
+     "date": "2026-10-14",
+     "time": "15:49",
+     "amountNgn": 1500000,
+     "reference": "Moniepoint → Taj sweep (BANK-MP-202610141649)",
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 1500000,
+    "3": 0,
+    "4": -1500000
+   },
+   "expectTypes": [
+    "INTERNAL_TRANSFER_OUT",
+    "INTERNAL_TRANSFER_IN"
+   ]
+  },
+  {
+   "id": "R2-E1",
+   "group": "A",
+   "record": "Moniepoint 2026-10-06 ₦30,000",
+   "field": "new expense (Carriage inward)",
+   "reason": "Bank A66: POS Transfer NUHU MIKIYAN 6 Oct 17:04 ₦30,000",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-06",
+     "amountNgn": 30000,
+     "category": "Carriage inward",
+     "expenseType": "Transport for rolls — Nuhu Mikiyan (POS transfer)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-202610061704",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -30000
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R2-E3",
+   "group": "A",
+   "record": "PREQ-KD-26-0358 FORK LIFT ₦30,000 (approved, unpaid)",
+   "field": "payment request payout (bank)",
+   "reason": "Bank B4 + B7 + B10 to Emmanuel Godwin Obochi on 14 Oct: forklift repair ₦20,000, filter ₦7,000, labour ₦3,000",
+   "ops": [
+    {
+     "kind": "preqPay",
+     "requestId": "PREQ-KD-26-0358",
+     "expectedPaidBeforeNgn": 0,
+     "note": "Forklift repair, filter and labour — Emmanuel Godwin Obochi",
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 20000,
+       "postedAtISO": "2026-10-14T12:28:00.000Z",
+       "reference": "BANK-MP-2026-10-1413",
+       "note": "B4: forklift repair"
+      },
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 7000,
+       "postedAtISO": "2026-10-14T14:05:00.000Z",
+       "reference": "BANK-MP-2026-10-1415",
+       "note": "B7: forklift filter"
+      },
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 3000,
+       "postedAtISO": "2026-10-14T15:38:00.000Z",
+       "reference": "BANK-MP-2026-10-1416",
+       "note": "B10: forklift labour"
+      }
+     ]
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -30000
+   },
+   "expectTypes": [
+    "PAYMENT_REQUEST_OUT"
+   ]
+  },
+  {
+   "id": "R2-E4",
+   "group": "A",
+   "record": "PREQ-KD-26-0359 PURE WATER ₦5,000 (approved, unpaid)",
+   "field": "payment request payout (bank)",
+   "reason": "Bank B27: Yusuf Ahmad \"pure water\" 15 Oct 16:13 (₦5,000 + ₦20 fee)",
+   "ops": [
+    {
+     "kind": "preqPay",
+     "requestId": "PREQ-KD-26-0359",
+     "expectedPaidBeforeNgn": 0,
+     "note": "Pure water — Yusuf Ahmad",
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 5000,
+       "postedAtISO": "2026-10-15T15:13:00.000Z",
+       "reference": "BANK-MP-2026-10-1516",
+       "note": "B27: pure water"
+      }
+     ]
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -5000
+   },
+   "expectTypes": [
+    "PAYMENT_REQUEST_OUT"
+   ]
+  },
+  {
+   "id": "R2-E5",
+   "group": "A",
+   "record": "Moniepoint 2026-10-12 ₦15,000",
+   "field": "new expense (Staff loan)",
+   "reason": "Bank A146: Bala Muazu Suleiman 12 Oct 13:59 (₦15,000 + ₦20 fee)",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-12",
+     "amountNgn": 15000,
+     "category": "Staff loan",
+     "expenseType": "GM IOU — Bala Muazu Suleiman (12 Oct)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-202610121359",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -15000
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R2-B26",
+   "group": "A",
+   "record": "Moniepoint 2026-10-15 ₦150,000",
+   "field": "new expense (Staff loan)",
+   "reason": "Bank B26: Bala Muazu Suleiman OPay 15 Oct 15:21 (₦150,000 + ₦20 fee); owner: GM IOU",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-15",
+     "amountNgn": 150000,
+     "category": "Staff loan",
+     "expenseType": "GM IOU — Bala Muazu Suleiman (staff advance, 15 Oct)",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-202610151521",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -150000
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R2-A106",
+   "group": "A",
+   "record": "Moniepoint 2026-10-09 ₦30,000",
+   "field": "new expense (Office expenses)",
+   "reason": "Bank A106: PAYSTACK CHECKOUT 9 Oct 10:00 (₦30,000 + ₦20 fee); owner: internet subscription",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-09",
+     "amountNgn": 30000,
+     "category": "Office expenses",
+     "expenseType": "Internet subscription — Paystack checkout",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-202610091000",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -30000
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R2-C1",
+   "group": "A",
+   "record": "LE-KD-26-1968 Nuhu Shittu (QT-KD-26-1705), TM-KD-26-3026 ₦22,000",
+   "field": "receipt amount + method",
+   "reason": "Bank A26: Moniepoint 2 Oct 17:05 ₦42,000; ₦20,000 above the quotation balance becomes his credit; method was labelled Cash Office",
+   "ops": [
+    {
+     "kind": "receiptConfirmedAmount",
+     "receiptId": "LE-KD-26-1968",
+     "movementId": "TM-KD-26-3026",
+     "treasuryAccountId": 4,
+     "expectedNgn": 22000,
+     "amountNgn": 42000
+    },
+    {
+     "kind": "relabelReceiptMethod",
+     "receiptId": "LE-KD-26-1968",
+     "movementId": "TM-KD-26-3026",
+     "accountId": 4,
+     "beforeMethod": "Cash — Cash Office",
+     "afterMethod": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "beforeRefToken": "Cash:Cash Office",
+     "afterRefToken": "Bank:Zarewa Aluminum & Plastics Ltd"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 20000
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R2-C2",
+   "group": "A",
+   "record": "LE-KD-26-2042 Hakimi (QT-KD-26-1763), TM-KD-26-3180 ₦942,700",
+   "field": "receipt amount",
+   "reason": "Bank A104: ₦965,000 from Jibril Abdulmalik for Hakimi 8 Oct 16:11; excess ₦22,300 becomes Hakimi’s credit",
+   "ops": [
+    {
+     "kind": "receiptConfirmedAmount",
+     "receiptId": "LE-KD-26-2042",
+     "movementId": "TM-KD-26-3180",
+     "treasuryAccountId": 4,
+     "expectedNgn": 942700,
+     "amountNgn": 965000
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 22300
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R2-C4",
+   "group": "A",
+   "record": "TM-KD-26-3250 Sani Haruna ₦2,240 (LE-KD-26-2120) on Cash Office",
+   "field": "treasury account",
+   "reason": "Bank B6: Moniepoint 14 Oct 14:46 \"Transfer from SANI HARUNA\" ₦2,240 — not cash",
+   "ops": [
+    {
+     "kind": "moveTreasury",
+     "movementId": "TM-KD-26-3250",
+     "fromAccountId": 3,
+     "fromDate": "2026-10-14",
+     "toAccountId": 4,
+     "toDate": "2026-10-14",
+     "amountNgn": 2240,
+     "note": "Bank: Moniepoint 14 Oct 14:46 ₦2,240 from Sani Haruna"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": -2240,
+    "4": 2240
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R2-C5a",
+   "group": "A",
+   "record": "TM-KD-26-3296 Imran Ibraheem Jafar ₦49,540 (LE-KD-26-2135) posted 16 Oct",
+   "field": "treasury posting date",
+   "reason": "Bank B29: ₦49,540 \"8.2 long 0.24 gauge ivory\" credited 15 Oct 16:47",
+   "ops": [
+    {
+     "kind": "redateTreasury",
+     "movementId": "TM-KD-26-3296",
+     "before": "2026-10-16",
+     "after": "2026-10-15",
+     "note": "Bank date 15 Oct 16:47 (Moniepoint B29)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  }
+ ]
+}

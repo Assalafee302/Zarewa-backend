@@ -1,0 +1,20 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T18:00:57.406Z",
+ "plan": "mp-round4c-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-G1",
+   "record": "LE-KD-26-2168 RC-2168 Mamman Cap Zaria ₦1,562,900 (QT-KD-26-1828), double entry of RC-2167",
+   "field": "receipt reversal",
+   "op": "receiptReverse",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1828",
+   "paidBeforeNgn": 3125800,
+   "paidAfterNgn": 1562900
+  }
+ ]
+}

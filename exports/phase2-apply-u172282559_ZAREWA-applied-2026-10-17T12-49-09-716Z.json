@@ -1,0 +1,26 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T12:49:09.716Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R3-1",
+   "record": "RF-KD-26-9786 Engr Attah Nicholas (QT-KD-26-1548), approved ₦4,659,453",
+   "field": "refund payout (bank), partial",
+   "op": "refundPay",
+   "outcome": "applied",
+   "status": "Approved",
+   "approvedNgn": 4659453,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 4659453,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 4659453,
+   "payNgn": 3251000,
+   "remainderAfterNgn": 1408453
+  }
+ ]
+}

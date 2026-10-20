@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T22:19:47.216Z",
+ "plan": "mp-round9-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R9-2c",
+   "record": "Fifth Chukker Polo ₦81,600 (2026-10-15, BKR-KD-26-1730)",
+   "field": "customer advance (cash received, quotation to follow)",
+   "op": "customerAdvance",
+   "outcome": "would apply",
+   "customer": "new customer \"Fifth Chukker Polo\""
+  }
+ ]
+}

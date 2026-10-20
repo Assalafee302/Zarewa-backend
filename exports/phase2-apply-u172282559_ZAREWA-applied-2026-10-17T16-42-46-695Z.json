@@ -1,0 +1,19 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T16:42:46.695Z",
+ "plan": "mp-round4-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R4-C7-10-03",
+   "record": "Moniepoint 2026-10-03 ₦286",
+   "field": "new expense (Bank charges)",
+   "op": "postExpense",
+   "outcome": "applied",
+   "expenseID": "EXP-KD-26-0484",
+   "treasuryMovementId": "TM-KD-26-3365"
+  }
+ ]
+}

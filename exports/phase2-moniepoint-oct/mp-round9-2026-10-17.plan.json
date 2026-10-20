@@ -1,0 +1,178 @@
+{
+ "createdAtISO": "2026-10-17",
+ "source": "Owner 17 Oct 2026: round 9 (Shafiu payout, Hamza / Fifth Chukker advances). --per-item.",
+ "items": [
+  {
+   "id": "R9-1a",
+   "group": "A",
+   "record": "PREQ-KD-26-0360 spraying of grass factory ₦4,000 (approved, unpaid)",
+   "field": "payment request payout (bank)",
+   "reason": "Bank 16 Oct 15:08: ₦4,000 to SHAFIU ABDULLAHI (Moniepoint, no fee), BKR-KD-26-1735 — paid before Pay was recorded; OM instruction 17 Oct",
+   "ops": [
+    {
+     "kind": "preqPay",
+     "requestId": "PREQ-KD-26-0360",
+     "expectedPaidBeforeNgn": 0,
+     "payeeName": "Shafiu Abdullahi",
+     "note": "Paid before Pay was recorded; OM instruction 17 Oct. Payee Shafiu Abdullahi.",
+     "lines": [
+      {
+       "treasuryAccountId": 4,
+       "amountNgn": 4000,
+       "postedAtISO": "2026-10-16T14:08:00.000Z",
+       "reference": "BANK-MP-202610161508",
+       "note": "Shafiu Abdullahi — grass spraying (BKR-KD-26-1735)"
+      }
+     ]
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -4000
+   },
+   "expectTypes": [
+    "PAYMENT_REQUEST_OUT"
+   ]
+  },
+  {
+   "id": "R9-1b",
+   "group": "A",
+   "record": "BKR-KD-26-1735 (bank-recon Review row)",
+   "field": "bank_reconciliation_lines (Review → Matched)",
+   "reason": "Bank line now has its ERP line (R9-1a)",
+   "ops": [
+    {
+     "kind": "reconMatchReviewRow",
+     "rowId": "BKR-KD-26-1735",
+     "treasuryAccountId": 4,
+     "find": {
+      "type": "PAYMENT_REQUEST_OUT",
+      "amountNgn": -4000,
+      "day": "2026-10-16",
+      "sourceId": "PREQ-KD-26-0360"
+     },
+     "afterItem": "R9-1a",
+     "note": ""
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R9-2a",
+   "group": "A",
+   "record": "hamza garba ₦351,875 (2026-10-17, BKR-KD-26-1742)",
+   "field": "customer advance (cash received, quotation to follow)",
+   "reason": "Owner 17 Oct: money on the bank with no quotation yet — NIP from HAMZA GARBA (Taj Bank) 17 Oct 12:13",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerId": "CUS-KD-26-1160",
+     "customerName": "hamza garba",
+     "amountNgn": 351875,
+     "date": "2026-10-17",
+     "branchId": "BR-KD",
+     "treasuryAccountId": 4,
+     "paymentMethod": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "bankReference": "hamza garba ₦351875 (Moniepoint 2026-10-17, BKR-KD-26-1742)",
+     "note": "advance — quotation to follow. Raised by the OM, handler Bakari (Muhammad Ibrahim Bakari). Bank: NIP from HAMZA GARBA (Taj Bank) 17 Oct 12:13. Owner 17 Oct 2026."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 351875
+   },
+   "expectTypes": [
+    "ADVANCE_IN"
+   ]
+  },
+  {
+   "id": "R9-2b",
+   "group": "A",
+   "record": "BKR-KD-26-1742 (bank-recon Review row)",
+   "field": "bank_reconciliation_lines (Review → Matched)",
+   "reason": "Bank line now has its ERP line (R9-2a)",
+   "ops": [
+    {
+     "kind": "reconMatchReviewRow",
+     "rowId": "BKR-KD-26-1742",
+     "treasuryAccountId": 4,
+     "find": {
+      "type": "ADVANCE_IN",
+      "amountNgn": 351875,
+      "day": "2026-10-17"
+     },
+     "afterItem": "R9-2a",
+     "note": "customer advance"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R9-2c",
+   "group": "A",
+   "record": "Fifth Chukker Polo ₦81,600 (2026-10-15, BKR-KD-26-1730)",
+   "field": "customer advance (cash received, quotation to follow)",
+   "reason": "Owner 17 Oct: money on the bank with no quotation yet — NIP from FIFTH CHUKKER POLO & COUNTRY CLUB (Access Bank) 15 Oct, \"Ridge Cap for Temp Stables\"",
+   "ops": [
+    {
+     "kind": "customerAdvance",
+     "customerName": "Fifth Chukker Polo",
+     "amountNgn": 81600,
+     "date": "2026-10-15",
+     "branchId": "BR-KD",
+     "treasuryAccountId": 4,
+     "paymentMethod": "Bank — Zarewa Aluminum & Plastics Ltd",
+     "bankReference": "Fifth Chukker Polo ₦81600 (Moniepoint 2026-10-15, BKR-KD-26-1730)",
+     "note": "advance — quotation to follow. Raised by the OM, handler Bakari (Muhammad Ibrahim Bakari). Bank: NIP from FIFTH CHUKKER POLO & COUNTRY CLUB (Access Bank) 15 Oct, \"Ridge Cap for Temp Stables\". Owner 17 Oct 2026."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 81600
+   },
+   "expectTypes": [
+    "ADVANCE_IN"
+   ]
+  },
+  {
+   "id": "R9-2d",
+   "group": "A",
+   "record": "BKR-KD-26-1730 (bank-recon Review row)",
+   "field": "bank_reconciliation_lines (Review → Matched)",
+   "reason": "Bank line now has its ERP line (R9-2c)",
+   "ops": [
+    {
+     "kind": "reconMatchReviewRow",
+     "rowId": "BKR-KD-26-1730",
+     "treasuryAccountId": 4,
+     "find": {
+      "type": "ADVANCE_IN",
+      "amountNgn": 81600,
+      "day": "2026-10-15"
+     },
+     "afterItem": "R9-2c",
+     "note": "customer advance"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  }
+ ]
+}

@@ -1,0 +1,20 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T21:16:20.725Z",
+ "plan": "mp-round8b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R8b-5b2",
+   "record": "LE-KD-26-2084 bashir cap ₦15,400 (12 Oct) — no bank line",
+   "field": "receipt reversal",
+   "op": "receiptReverse",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1786",
+   "paidBeforeNgn": 15400,
+   "paidAfterNgn": 0
+  }
+ ]
+}

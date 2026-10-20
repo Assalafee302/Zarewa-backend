@@ -1,0 +1,152 @@
+{
+ "createdAtISO": "2026-10-17",
+ "source": "Owner 17 Oct 2026: round 8 PREPARED ONLY (Mrido, reversals, confirmations) — not for posting until the owner answers. --per-item.",
+ "items": [
+  {
+   "id": "R8b-5a",
+   "group": "A",
+   "record": "LE-KD-26-1597 Alhaji Mrido ₦20,000 (2 Sep 2026, QT-KD-26-1427)",
+   "field": "September unlock → hold release → finance confirm → relock",
+   "reason": "Owner: the ₦20,000 is on the bank (in the 30 Sep statement balance); receipt held \"no bank receipt\"",
+   "ops": [
+    {
+     "kind": "septReceiptConfirm",
+     "receiptId": "LE-KD-26-1597",
+     "periodKey": "2026-09",
+     "amountNgn": 20000,
+     "holdStatus": "Suspended — no bank receipt, awaiting credit check",
+     "unlockReason": "confirm LE-KD-26-1597 Mrido ₦20,000 (on the bank 2 Sep), owner 17 Oct; relocked straight after",
+     "relockReason": "September 2026 closed",
+     "note": "Bank received ₦20,000 on 2 Sep (in the 30 Sep statement balance). Hold cleared on the owner’s instruction 17 Oct 2026."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R8b-5b1",
+   "group": "A",
+   "record": "LE-KD-26-2006 babalele ₦57,750 (6 Oct) — no bank line",
+   "field": "receipt reversal",
+   "reason": "Owner: no bank receipt after 11 days; re-register if paid",
+   "ops": [
+    {
+     "kind": "receiptReverse",
+     "receiptId": "LE-KD-26-2006",
+     "expectedNgn": 57750,
+     "expectedStatus": "Pending clearance",
+     "expectedMovements": {
+      "TM-KD-26-3125": 57750
+     },
+     "accountId": 4,
+     "requireNoBankLink": true,
+     "note": "No bank receipt after 11 days; re-register if paid. Owner 17 Oct 2026."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -57750
+   },
+   "expectTypes": [
+    "RECEIPT_REVERSAL_OUT"
+   ]
+  },
+  {
+   "id": "R8b-5b2",
+   "group": "A",
+   "record": "LE-KD-26-2084 bashir cap ₦15,400 (12 Oct) — no bank line",
+   "field": "receipt reversal",
+   "reason": "Owner: no bank receipt after 5 days; re-register if paid",
+   "ops": [
+    {
+     "kind": "receiptReverse",
+     "receiptId": "LE-KD-26-2084",
+     "expectedNgn": 15400,
+     "expectedStatus": "Pending clearance",
+     "expectedMovements": {
+      "TM-KD-26-3221": 15400
+     },
+     "accountId": 4,
+     "requireNoBankLink": true,
+     "note": "No bank receipt after 5 days; re-register if paid. Owner 17 Oct 2026."
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -15400
+   },
+   "expectTypes": [
+    "RECEIPT_REVERSAL_OUT"
+   ]
+  },
+  {
+   "id": "R8b-5c1",
+   "group": "A",
+   "record": "LE-KD-26-2167 Mamman Cap Zaria (QT-KD-26-1828) ₦1,562,900",
+   "field": "finance confirmation (bank received)",
+   "reason": "Owner: confirm against the bank-recon link (money on the Moniepoint statement), in the OM’s name",
+   "ops": [
+    {
+     "kind": "receiptBankConfirm",
+     "receiptId": "LE-KD-26-2167",
+     "amountNgn": 1562900,
+     "expectedStatus": "Pending clearance"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R8b-5c2",
+   "group": "A",
+   "record": "LE-KD-26-2166 Abba Magaji ₦195,660",
+   "field": "finance confirmation (bank received)",
+   "reason": "Owner: confirm against the bank-recon link (money on the Moniepoint statement), in the OM’s name",
+   "ops": [
+    {
+     "kind": "receiptBankConfirm",
+     "receiptId": "LE-KD-26-2166",
+     "amountNgn": 195660,
+     "expectedStatus": "Pending clearance"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R8b-5c3",
+   "group": "A",
+   "record": "LE-KD-26-2051 Suleman Bello Zaria (QT-KD-26-1772) ₦36,500",
+   "field": "finance confirmation (bank received)",
+   "reason": "Owner: confirm against the bank-recon link (money on the Moniepoint statement), in the OM’s name",
+   "ops": [
+    {
+     "kind": "receiptBankConfirm",
+     "receiptId": "LE-KD-26-2051",
+     "amountNgn": 36500,
+     "expectedStatus": "Pending clearance"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  }
+ ]
+}

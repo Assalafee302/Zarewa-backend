@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T12:54:20.112Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": {
+  "item": "R3-3",
+  "error": "R3-3: Customer has no bank on file. Allocate transport/installation to associated staff and any remainder to claiming staff (profiles with bank details)."
+ },
+ "results": [
+  {
+   "id": "R3-3",
+   "outcome": "FAILED",
+   "why": "R3-3: Customer has no bank on file. Allocate transport/installation to associated staff and any remainder to claiming staff (profiles with bank details)."
+  }
+ ]
+}

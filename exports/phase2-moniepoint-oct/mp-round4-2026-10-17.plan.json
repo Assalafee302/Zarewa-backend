@@ -1,0 +1,908 @@
+{
+ "createdAtISO": "2026-10-17",
+ "source": "Owner 17 Oct 2026: Moniepoint round 4 (A1, B5, C7). --per-item.",
+ "items": [
+  {
+   "id": "R4-A1a",
+   "group": "A",
+   "record": "Moniepoint 2026-10-01 ₦1,000,000",
+   "field": "new expense (Sales commission)",
+   "reason": "Bank A4: ₦1,000,020 to Abdullahi Isah 1 Oct 09:58 (₦1,000,000 + ₦20 fee). Approved by the MD, Mustapha Ibn Sali (exception to the commission cap).",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-01",
+     "amountNgn": 1000000,
+     "category": "Sales commission",
+     "expenseType": "Commission – QS Isa, FGGC project (QT-KD-26-1394), MD-approved exception",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-202610010958",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD",
+     "postedAtISO": "2026-10-01T08:58:00.000Z"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -1000000
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-A1b",
+   "group": "A",
+   "record": "Moniepoint 2026-10-15 ₦16,600",
+   "field": "new expense (Sales commission)",
+   "reason": "Bank B24: ₦16,620 to Jonathan Chukusa 15 Oct 10:35 (₦16,600 + ₦20 fee). Approved by the MD, Mustapha Ibn Sali (exception to the commission cap).",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-15",
+     "amountNgn": 16600,
+     "category": "Sales commission",
+     "expenseType": "Commission – Jonathan, dark grey 0.70 (QT-KD-26-1722), MD-approved exception",
+     "paymentMethod": "Bank",
+     "reference": "BANK-MP-202610151035",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD",
+     "postedAtISO": "2026-10-15T09:35:00.000Z"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -16600
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-B5-A41",
+   "group": "A",
+   "record": "LE-KD-26-1986 / TM-KD-26-3107",
+   "field": "receipt amount (finance-confirmed)",
+   "reason": "Bank A41: Aliyu Mohd POS ₦204,980 (bank credit ₦204,880 net of ₦100 card fee)",
+   "ops": [
+    {
+     "kind": "receiptConfirmedAmount",
+     "receiptId": "LE-KD-26-1986",
+     "movementId": "TM-KD-26-3107",
+     "treasuryAccountId": 4,
+     "expectedNgn": 204880,
+     "amountNgn": 204980
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 100
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A84",
+   "group": "A",
+   "record": "LE-KD-26-2026 / TM-KD-26-3165",
+   "field": "receipt amount (finance-confirmed)",
+   "reason": "Bank A84: Shamsuddeen ₦43,450",
+   "ops": [
+    {
+     "kind": "receiptConfirmedAmount",
+     "receiptId": "LE-KD-26-2026",
+     "movementId": "TM-KD-26-3165",
+     "treasuryAccountId": 4,
+     "expectedNgn": 43428,
+     "amountNgn": 43450
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 22
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A148",
+   "group": "A",
+   "record": "LE-KD-26-2092 / TM-KD-26-3228",
+   "field": "receipt amount (finance-confirmed)",
+   "reason": "Bank A148: Hakimi POS ₦4,015 (bank ₦3,990 net of ₦25 fee)",
+   "ops": [
+    {
+     "kind": "receiptConfirmedAmount",
+     "receiptId": "LE-KD-26-2092",
+     "movementId": "TM-KD-26-3228",
+     "treasuryAccountId": 4,
+     "expectedNgn": 4000,
+     "amountNgn": 4015
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 15
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A2",
+   "group": "A",
+   "record": "LE-KD-26-2093 / TM-KD-26-3229",
+   "field": "receipt amount (finance-confirmed)",
+   "reason": "Bank A2: Engr Attah Nicholas ₦353,000 (paid through Bakari)",
+   "ops": [
+    {
+     "kind": "receiptConfirmedAmount",
+     "receiptId": "LE-KD-26-2093",
+     "movementId": "TM-KD-26-3229",
+     "treasuryAccountId": 4,
+     "expectedNgn": 353184,
+     "amountNgn": 353000
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -184
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A71",
+   "group": "A",
+   "record": "RF-KD-26-9728 / TM-KD-26-3142",
+   "field": "refund payout line amount",
+   "reason": "Bank A71: Hussaini Adam refund (QT-1716) via Bakari ₦1,800",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3142",
+     "expectedNgn": 1840,
+     "amountNgn": 1800,
+     "note": "Bank transaction amount (Moniepoint A71): Hussaini Adam refund (QT-1716) via Bakari ₦1,800"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 40
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A76",
+   "group": "A",
+   "record": "RF-KD-26-9734 / TM-KD-26-3149",
+   "field": "refund payout line amount",
+   "reason": "Bank A76: Alh Mahadi Turunku refund (QT-1697) ₦72,000",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3149",
+     "expectedNgn": 72216,
+     "amountNgn": 72000,
+     "note": "Bank transaction amount (Moniepoint A76): Alh Mahadi Turunku refund (QT-1697) ₦72,000"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 216
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A77",
+   "group": "A",
+   "record": "RF-KD-26-9736 / TM-KD-26-3150",
+   "field": "refund payout line amount",
+   "reason": "Bank A77: Yakubu Muktar refund (QT-1693) staff share via OM ₦900",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3150",
+     "expectedNgn": 976,
+     "amountNgn": 900,
+     "note": "Bank transaction amount (Moniepoint A77): Yakubu Muktar refund (QT-1693) staff share via OM ₦900"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 76
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A119",
+   "group": "A",
+   "record": "RF-KD-26-9770 / TM-KD-26-3201",
+   "field": "refund payout line amount",
+   "reason": "Bank A119: Suleiman Zaria refund (QT-1778) ₦1,070,000 (the ₦20 is the transfer fee, in bank charges)",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3201",
+     "expectedNgn": 1070020,
+     "amountNgn": 1070000,
+     "note": "Bank transaction amount (Moniepoint A119): Suleiman Zaria refund (QT-1778) ₦1,070,000 (the ₦20 is the transfer fee, in bank charges)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 20
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A126",
+   "group": "A",
+   "record": "RF-KD-26-9771 / TM-KD-26-3207",
+   "field": "refund payout line amount",
+   "reason": "Bank A126: Mohammed Alhassan refund (QT-1738) via BM Sulaiman ₦190,600",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3207",
+     "expectedNgn": 190670,
+     "amountNgn": 190600,
+     "note": "Bank transaction amount (Moniepoint A126): Mohammed Alhassan refund (QT-1738) via BM Sulaiman ₦190,600"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 70
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A130",
+   "group": "A",
+   "record": "RF-KD-26-9772 / TM-KD-26-3211",
+   "field": "refund payout line amount",
+   "reason": "Bank A130: Sangir Dahiru refund (QT-1776) via Bakari ₦1,300",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3211",
+     "expectedNgn": 1316,
+     "amountNgn": 1300,
+     "note": "Bank transaction amount (Moniepoint A130): Sangir Dahiru refund (QT-1776) via Bakari ₦1,300"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 16
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A131",
+   "group": "A",
+   "record": "RF-KD-26-9766 / TM-KD-26-3212",
+   "field": "refund payout line amount",
+   "reason": "Bank A131: Jamilu Baba refund (QT-1707) via Bakari ₦2,500 (the ₦20 is the transfer fee)",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3212",
+     "expectedNgn": 2520,
+     "amountNgn": 2500,
+     "note": "Bank transaction amount (Moniepoint A131): Jamilu Baba refund (QT-1707) via Bakari ₦2,500 (the ₦20 is the transfer fee)"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 20
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A132",
+   "group": "A",
+   "record": "RF-KD-26-9764 / TM-KD-26-3213",
+   "field": "refund payout line amount",
+   "reason": "Bank A132: Ibrahim Shuaibu refund (QT-1714) via BM Sulaiman ₦5,000",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3213",
+     "expectedNgn": 5080,
+     "amountNgn": 5000,
+     "note": "Bank transaction amount (Moniepoint A132): Ibrahim Shuaibu refund (QT-1714) via BM Sulaiman ₦5,000"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 80
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A134",
+   "group": "A",
+   "record": "RF-KD-26-9755 / TM-KD-26-3215",
+   "field": "refund payout line amount",
+   "reason": "Bank A134: Shuaibu Roofer refund (QT-1749) via BM Sulaiman ₦39,800",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3215",
+     "expectedNgn": 39808,
+     "amountNgn": 39800,
+     "note": "Bank transaction amount (Moniepoint A134): Shuaibu Roofer refund (QT-1749) via BM Sulaiman ₦39,800"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 8
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A150",
+   "group": "A",
+   "record": "RF-KD-26-9778 / TM-KD-26-3232",
+   "field": "refund payout line amount",
+   "reason": "Bank A150: Suleman Ibrahim refund (QT-1773) via Bakari ₦17,600",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3232",
+     "expectedNgn": 17680,
+     "amountNgn": 17600,
+     "note": "Bank transaction amount (Moniepoint A150): Suleman Ibrahim refund (QT-1773) via Bakari ₦17,600"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 80
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A151",
+   "group": "A",
+   "record": "RF-KD-26-9777 / TM-KD-26-3233",
+   "field": "refund payout line amount",
+   "reason": "Bank A151: Adamu refund (QT-1787) via BM Sulaiman ₦23,260",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3233",
+     "expectedNgn": 23360,
+     "amountNgn": 23260,
+     "note": "Bank transaction amount (Moniepoint A151): Adamu refund (QT-1787) via BM Sulaiman ₦23,260"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 100
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A160",
+   "group": "A",
+   "record": "RF-KD-26-9780 / TM-KD-26-3241",
+   "field": "refund payout line amount",
+   "reason": "Bank A160: Qs Abdullahi Tj refund (QT-1796) ₦29,000",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3241",
+     "expectedNgn": 29100,
+     "amountNgn": 29000,
+     "note": "Bank transaction amount (Moniepoint A160): Qs Abdullahi Tj refund (QT-1796) ₦29,000"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 100
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A161",
+   "group": "A",
+   "record": "RF-KD-26-9780 / TM-KD-26-3242",
+   "field": "refund payout line amount",
+   "reason": "Bank A161: Qs Abdullahi Tj refund (QT-1796) via OM ₦20,600",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3242",
+     "expectedNgn": 20640,
+     "amountNgn": 20600,
+     "note": "Bank transaction amount (Moniepoint A161): Qs Abdullahi Tj refund (QT-1796) via OM ₦20,600"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 40
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-B5-A163",
+   "group": "A",
+   "record": "RF-KD-26-9781 / TM-KD-26-3244",
+   "field": "refund payout line amount",
+   "reason": "Bank A163: Nasiru Salisu refund (QT-1781) via OM ₦112,000",
+   "ops": [
+    {
+     "kind": "payoutLineCorrect",
+     "movementId": "TM-KD-26-3244",
+     "expectedNgn": 112056,
+     "amountNgn": 112000,
+     "note": "Bank transaction amount (Moniepoint A163): Nasiru Salisu refund (QT-1781) via OM ₦112,000"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 56
+   },
+   "expectTypes": []
+  },
+  {
+   "id": "R4-C7-REV",
+   "group": "A",
+   "record": "EXP-KD-26-0471 Bank charges — Moniepoint, Oct 2026 ₦8,340 (TM-KD-26-3311)",
+   "field": "expense reversal",
+   "reason": "replaced by daily lines",
+   "ops": [
+    {
+     "kind": "expenseReverse",
+     "expenseId": "EXP-KD-26-0471",
+     "expectedNgn": 8340,
+     "reason": "replaced by daily lines"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 8340
+   },
+   "expectTypes": [
+    "EXPENSE_REVERSAL_IN"
+   ]
+  },
+  {
+   "id": "R4-C7-10-01",
+   "group": "A",
+   "record": "Moniepoint 2026-10-01 ₦515",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-01 ₦514.5 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-01",
+     "amountNgn": 515,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-01",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -515
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-02",
+   "group": "A",
+   "record": "Moniepoint 2026-10-02 ₦564",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-02 ₦564.5 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-02",
+     "amountNgn": 564,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-02",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -564
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-03",
+   "group": "A",
+   "record": "Moniepoint 2026-10-03 ₦286",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-03 ₦286 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-03",
+     "amountNgn": 286,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-03",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -286
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-04",
+   "group": "A",
+   "record": "Moniepoint 2026-10-04 ₦143",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-04 ₦143 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-04",
+     "amountNgn": 143,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-04",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -143
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-05",
+   "group": "A",
+   "record": "Moniepoint 2026-10-05 ₦553",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-05 ₦552.5 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-05",
+     "amountNgn": 553,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-05",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -553
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-06",
+   "group": "A",
+   "record": "Moniepoint 2026-10-06 ₦929",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-06 ₦929.5 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-06",
+     "amountNgn": 929,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-06",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -929
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-07",
+   "group": "A",
+   "record": "Moniepoint 2026-10-07 ₦622",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-07 ₦622 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-07",
+     "amountNgn": 622,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-07",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -622
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-08",
+   "group": "A",
+   "record": "Moniepoint 2026-10-08 ₦716",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-08 ₦716 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-08",
+     "amountNgn": 716,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-08",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -716
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-09",
+   "group": "A",
+   "record": "Moniepoint 2026-10-09 ₦336",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-09 ₦336 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-09",
+     "amountNgn": 336,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-09",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -336
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-10",
+   "group": "A",
+   "record": "Moniepoint 2026-10-10 ₦1,280",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-10 ₦1,280 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-10",
+     "amountNgn": 1280,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-10",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -1280
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-12",
+   "group": "A",
+   "record": "Moniepoint 2026-10-12 ₦343",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-12 ₦343 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-12",
+     "amountNgn": 343,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-12",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -343
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-13",
+   "group": "A",
+   "record": "Moniepoint 2026-10-13 ₦815",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-13 ₦815 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-13",
+     "amountNgn": 815,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-13",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -815
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-14",
+   "group": "A",
+   "record": "Moniepoint 2026-10-14 ₦787",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-14 ₦786.5 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-14",
+     "amountNgn": 787,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-14",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -787
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-15",
+   "group": "A",
+   "record": "Moniepoint 2026-10-15 ₦351",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-15 ₦351 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-15",
+     "amountNgn": 351,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-15",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -351
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R4-C7-10-16",
+   "group": "A",
+   "record": "Moniepoint 2026-10-16 ₦100",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 2026-10-16 ₦100 (stamp duty, VAT, transfer & POS fees); whole naira with rounding carried forward",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-16",
+     "amountNgn": 100,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-16",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD",
+     "postedAtISO": "2026-10-16T08:44:00.000Z"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -100
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  }
+ ]
+}

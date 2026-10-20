@@ -1,0 +1,17 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T14:20:01.931Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R3-9",
+   "record": "LE-KD-26-2150 Adam Suleiman (QT-KD-26-1818), split ₦1,215,000 (TM-KD-26-3320) + ₦464,000 (TM-KD-26-3321)",
+   "field": "receipt amount (finance-confirmed, split)",
+   "op": "receiptConfirmedSplit",
+   "outcome": "applied"
+  }
+ ]
+}

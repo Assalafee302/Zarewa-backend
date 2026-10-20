@@ -1,0 +1,19 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T18:24:07.214Z",
+ "plan": "mp-round5-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R5-4",
+   "record": "LE-KD-26-2051 Suleman Bello Zaria ₦36,500 (QT-KD-26-1772)",
+   "field": "receipt status",
+   "op": "receiptHoldRelease",
+   "outcome": "would apply",
+   "before": "Suspended — no bank receipt, awaiting credit check",
+   "after": "Pending clearance"
+  }
+ ]
+}

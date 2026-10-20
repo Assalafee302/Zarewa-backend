@@ -1,0 +1,89 @@
+{
+ "createdAtISO": "2026-10-17",
+ "source": "Owner 17 Oct 2026: round 8 bank charges 16/17 Oct. --per-item.",
+ "items": [
+  {
+   "id": "R8-1a",
+   "group": "A",
+   "record": "Moniepoint 2026-10-16 ₦72",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 16 Oct after 09:44: ₦20 transfer fee + ₦1.50 VAT + ₦50 stamp duty (17:53, Bashir Idris PO-92) = ₦71.50 → ₦72; 16 Oct total ₦172",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-16",
+     "postedAtISO": "2026-10-16T16:54:00.000Z",
+     "amountNgn": 72,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-16b",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -72
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R8-1b",
+   "group": "A",
+   "record": "Moniepoint 2026-10-17 ₦171",
+   "field": "new expense (Bank charges)",
+   "reason": "Moniepoint charges 17 Oct to 16:00: ₦100 POS fee (Wakili) + ₦20 transfer fee + ₦1.50 VAT + ₦50 stamp duty (car park) = ₦171.50 → ₦171",
+   "ops": [
+    {
+     "kind": "postExpense",
+     "date": "2026-10-17",
+     "postedAtISO": "2026-10-17T14:59:00.000Z",
+     "amountNgn": 171,
+     "category": "Bank charges",
+     "expenseType": "Bank charges — Moniepoint",
+     "paymentMethod": "Bank",
+     "reference": "BC-MP-2026-10-17",
+     "treasuryAccountId": 4,
+     "branchId": "BR-KD"
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": -171
+   },
+   "expectTypes": [
+    "EXPENSE"
+   ]
+  },
+  {
+   "id": "R8-1c",
+   "group": "A",
+   "record": "17 Oct VAT ₦1.50 + stamp duty ₦50 (bank-recon Review rows)",
+   "field": "bank_reconciliation_lines (Review → Matched)",
+   "reason": "The 17 Oct charge lines now have their BC line (R8-1b)",
+   "ops": [
+    {
+     "kind": "reconMatchToExpense",
+     "afterItem": "R8-1b",
+     "expenseReference": "BC-MP-2026-10-17",
+     "treasuryAccountId": 4,
+     "bankIds": [
+      "MP-TRF|2MPT2dqhf|2111449024856592384_DEBIT_1",
+      "MP-TRF|2MPT2dqhf|2111449024856592384_DEBIT_2"
+     ]
+    }
+   ],
+   "expectDeltaNgn": {
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "expectTypes": []
+  }
+ ]
+}

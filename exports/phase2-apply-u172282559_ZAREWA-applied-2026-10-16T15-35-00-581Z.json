@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T15:35:00.581Z",
+ "plan": "mp-round2-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-T1",
+   "record": "Moniepoint 14 Oct 16:49 ₦1,500,000 → Taj",
+   "field": "internal transfer (both sides)",
+   "op": "internalTransfer",
+   "outcome": "applied",
+   "batchId": "TR-26-00046",
+   "movements": [
+    "TM-KD-26-3326",
+    "TM-KD-26-3327"
+   ]
+  }
+ ]
+}

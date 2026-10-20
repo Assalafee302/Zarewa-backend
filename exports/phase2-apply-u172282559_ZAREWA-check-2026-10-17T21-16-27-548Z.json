@@ -1,0 +1,24 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T21:16:27.548Z",
+ "plan": "mp-round8b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R8b-5c1",
+   "record": "LE-KD-26-2167 Mamman Cap Zaria (QT-KD-26-1828) ₦1,562,900",
+   "field": "finance confirmation (bank received)",
+   "op": "receiptBankConfirm",
+   "outcome": "would apply",
+   "receipt": "LE-KD-26-2167",
+   "quotation": "QT-KD-26-1828",
+   "amountNgn": 1562900,
+   "bankRows": [
+    "BKR-KD-26-1747",
+    "BKR-KD-26-1748"
+   ]
+  }
+ ]
+}

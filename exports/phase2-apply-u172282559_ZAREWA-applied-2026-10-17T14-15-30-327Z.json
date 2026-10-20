@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T14:15:30.327Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R3-7c",
+   "record": "RF-KD-26-9782 Jibril Sule",
+   "field": "refund remainder (rounding)",
+   "op": "refundRoundingClose",
+   "outcome": "applied",
+   "remainderNgn": 95
+  }
+ ]
+}

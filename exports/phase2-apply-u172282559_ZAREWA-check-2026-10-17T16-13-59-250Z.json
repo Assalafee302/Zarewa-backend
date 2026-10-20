@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T16:13:59.250Z",
+ "plan": "mp-round4-2026-10-17.plan.json",
+ "failed": {
+  "item": "R4-B5-A132",
+  "error": "read ECONNRESET | sql=\"SELECT * FROM treasury_movements WHERE id = ?\" | binds=1/1"
+ },
+ "results": [
+  {
+   "id": "R4-B5-A132",
+   "outcome": "FAILED",
+   "why": "read ECONNRESET | sql=\"SELECT * FROM treasury_movements WHERE id = ?\" | binds=1/1"
+  }
+ ]
+}

@@ -1,0 +1,134 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T12:05:28.506Z",
+ "plan": "mp-round3-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R3-1",
+   "record": "RF-KD-26-9786 Engr Attah Nicholas (QT-KD-26-1548), approved ₦4,659,453",
+   "field": "refund payout (bank), partial",
+   "op": "refundPay",
+   "outcome": "would apply",
+   "status": "Approved",
+   "approvedNgn": 4659453,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 4659453,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 4659453,
+   "payNgn": 3251000,
+   "remainderAfterNgn": 1408453
+  },
+  {
+   "id": "R3-2a",
+   "record": "QT-KD-26-1394 Customer commission ₦1,000,000",
+   "field": "refund request (Pending)",
+   "op": "refundRequestCreate",
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-0510 Qs ISA",
+   "previewOk": true,
+   "suggestedNgn": 0,
+   "approver": "Approval by Suleiman Abdullahi Liman or the MD (Mustapha Ibn Sali) in the ERP — not self-approved"
+  },
+  {
+   "id": "R3-2b",
+   "record": "QT-KD-26-1722 Customer commission ₦16,600",
+   "field": "refund request (Pending)",
+   "op": "refundRequestCreate",
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-1111 jonnatan client",
+   "previewOk": true,
+   "suggestedNgn": 0,
+   "approver": "Approval by Suleiman Abdullahi Liman or the MD (Mustapha Ibn Sali) in the ERP — not self-approved"
+  },
+  {
+   "id": "R3-3",
+   "record": "QT-KD-26-1765 Overpayment ₦886,000",
+   "field": "refund request (Pending)",
+   "op": "refundRequestCreate",
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-1113 YUSUF ALIYU",
+   "previewOk": true,
+   "suggestedNgn": 1029920,
+   "approver": "Approval by Suleiman Abdullahi Liman or the MD (Mustapha Ibn Sali) in the ERP — not self-approved"
+  },
+  {
+   "id": "R3-4",
+   "record": "AP-PO-PO-KD-26-0093 Sectook Aluminium Abuja (invoice ₦4,409,800, paid ₦1,409,800)",
+   "field": "supplier payment (bank)",
+   "op": "apPay",
+   "outcome": "would apply",
+   "supplier": "Sectook Aluminium Abuja",
+   "invoiceNgn": 4409800,
+   "paidBeforeNgn": 1409800,
+   "payNgn": 500000,
+   "outstandingAfterNgn": 2500000
+  },
+  {
+   "id": "R3-5",
+   "record": "LE-KD-26-2044 Mohammed Haruna (QT-KD-26-1764), TM-KD-26-3181 ₦1,351,540",
+   "field": "receipt amount (finance-confirmed)",
+   "op": "receiptConfirmedAmount",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1764"
+  },
+  {
+   "id": "R3-6",
+   "record": "QT-KD-26-1777 Accessory shortfall ₦140,000",
+   "field": "refund request (Pending)",
+   "op": "refundRequestCreate",
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-0904 abbas gabdo",
+   "previewOk": true,
+   "suggestedNgn": 150000,
+   "approver": "Approval by Suleiman Abdullahi Liman or the MD (Mustapha Ibn Sali) in the ERP — not self-approved"
+  },
+  {
+   "id": "R3-8a",
+   "record": "Moniepoint 2026-10-14 ₦18,000",
+   "field": "new expense (Maintenance)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R3-8b",
+   "record": "Moniepoint 2026-10-05 ₦10,000",
+   "field": "new expense (Staff loan)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R3-9",
+   "record": "LE-KD-26-2150 Adam Suleiman (QT-KD-26-1818), split ₦1,215,000 (TM-KD-26-3320) + ₦464,000 (TM-KD-26-3321)",
+   "field": "receipt amount (finance-confirmed, split)",
+   "op": "receiptConfirmedSplit",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1818",
+   "lines": [
+    "TM-KD-26-3320 ₦1215000",
+    "TM-KD-26-3321 ₦464000"
+   ]
+  },
+  {
+   "id": "R3-10a",
+   "record": "RF-KD-26-9735 Adamu Ibrahim",
+   "field": "refund remainder (rounding)",
+   "op": "refundRoundingClose",
+   "outcome": "would apply",
+   "remainderNgn": 60
+  },
+  {
+   "id": "R3-10b",
+   "record": "RF-KD-26-9770 Suleiman Zaria",
+   "field": "refund remainder (rounding)",
+   "op": "refundRoundingClose",
+   "outcome": "BLOCKED",
+   "why": "₦240 is above the ERP rounding limit ₦200"
+  }
+ ]
+}

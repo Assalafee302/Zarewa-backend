@@ -1,0 +1,22 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T18:28:08.846Z",
+ "plan": "mp-round5-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R5-2b",
+   "record": "LE-KD-26-1981 (QT-KD-26-1717) Sanusi Dangiwa ₦4,000 (cash reversed as \"refund fund\")",
+   "field": "customer advance (cash received)",
+   "op": "customerAdvance",
+   "outcome": "applied",
+   "ledgerEntryId": "LE-KD-26-2174",
+   "customer": "CUS-KD-26-1103",
+   "treasuryMovementIds": [
+    "TM-KD-26-3382"
+   ]
+  }
+ ]
+}

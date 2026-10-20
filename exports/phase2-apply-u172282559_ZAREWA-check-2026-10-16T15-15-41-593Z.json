@@ -1,0 +1,209 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T15:15:41.593Z",
+ "plan": "mp-round2-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-R1",
+   "record": "RF-KD-26-9753",
+   "field": "refund payout (bank)",
+   "op": "refundPay",
+   "outcome": "would apply",
+   "status": "Approved",
+   "approvedNgn": 1499410,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 1499410,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 1499410,
+   "payNgn": 1499410,
+   "remainderAfterNgn": 0
+  },
+  {
+   "id": "R2-R2",
+   "record": "RF-KD-26-9776",
+   "field": "refund payout (bank)",
+   "op": "refundPay",
+   "outcome": "would apply",
+   "status": "Approved",
+   "approvedNgn": 1913200,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 1881080,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 1881080,
+   "payNgn": 1881080,
+   "remainderAfterNgn": 0
+  },
+  {
+   "id": "R2-R4",
+   "record": "RF-KD-26-9770",
+   "field": "refund payout (bank)",
+   "op": "refundPay",
+   "outcome": "would apply",
+   "status": "Partially paid",
+   "approvedNgn": 1625260,
+   "paidBeforeNgn": 1487120,
+   "cashOutstandingNgn": 100240,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 100240,
+   "payNgn": 100000,
+   "remainderAfterNgn": 240
+  },
+  {
+   "id": "R2-R5a",
+   "record": "RF-KD-26-9784",
+   "field": "refund payout (bank)",
+   "op": "refundPay",
+   "outcome": "would apply",
+   "status": "Approved",
+   "approvedNgn": 3000,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 2400,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 2400,
+   "payNgn": 2400,
+   "remainderAfterNgn": 0
+  },
+  {
+   "id": "R2-R5b",
+   "record": "RF-KD-26-9783",
+   "field": "refund payout (bank)",
+   "op": "refundPay",
+   "outcome": "would apply",
+   "status": "Approved",
+   "approvedNgn": 23050,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 18440,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 18440,
+   "payNgn": 18440,
+   "remainderAfterNgn": 0
+  },
+  {
+   "id": "R2-R6",
+   "record": "RF-KD-26-9735",
+   "field": "refund payout (bank)",
+   "op": "refundPay",
+   "outcome": "would apply",
+   "status": "Approved",
+   "approvedNgn": 1200,
+   "paidBeforeNgn": 0,
+   "cashOutstandingNgn": 960,
+   "heldUnclearedNgn": 0,
+   "walletOpenNgn": 0,
+   "tillPayableNgn": 960,
+   "payNgn": 900,
+   "remainderAfterNgn": 60
+  },
+  {
+   "id": "R2-T1",
+   "record": "Moniepoint 14 Oct 16:49 ₦1,500,000 → Taj",
+   "field": "internal transfer (both sides)",
+   "op": "internalTransfer",
+   "outcome": "would apply",
+   "from": "Zarewa Aluminum & Plastics Ltd",
+   "to": "Zaps Aluminum Enterprises"
+  },
+  {
+   "id": "R2-E1",
+   "record": "Moniepoint 2026-10-06 ₦30,000",
+   "field": "new expense (Carriage inward)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R2-E3",
+   "record": "PREQ-KD-26-0358 FORK LIFT ₦30,000 (approved, unpaid)",
+   "field": "payment request payout (bank)",
+   "op": "preqPay",
+   "outcome": "would apply",
+   "requested": 30000,
+   "paidBeforeNgn": 0,
+   "payNgn": 30000,
+   "approvedBy": "Suleiman Abdullahi Liman"
+  },
+  {
+   "id": "R2-E4",
+   "record": "PREQ-KD-26-0359 PURE WATER ₦5,000 (approved, unpaid)",
+   "field": "payment request payout (bank)",
+   "op": "preqPay",
+   "outcome": "would apply",
+   "requested": 5000,
+   "paidBeforeNgn": 0,
+   "payNgn": 5000,
+   "approvedBy": "Abdulrahman Uthman Sali"
+  },
+  {
+   "id": "R2-E5",
+   "record": "Moniepoint 2026-10-12 ₦15,000",
+   "field": "new expense (Staff loan)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R2-B26",
+   "record": "Moniepoint 2026-10-15 ₦150,000",
+   "field": "new expense (Staff loan)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R2-A106",
+   "record": "Moniepoint 2026-10-09 ₦30,000",
+   "field": "new expense (Office expenses)",
+   "op": "postExpense",
+   "outcome": "would apply",
+   "account": "Zarewa Aluminum & Plastics Ltd (Moniepoint)"
+  },
+  {
+   "id": "R2-C1",
+   "record": "LE-KD-26-1968 Nuhu Shittu (QT-KD-26-1705), TM-KD-26-3026 ₦22,000",
+   "field": "receipt amount + method",
+   "op": "receiptConfirmedAmount",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1705"
+  },
+  {
+   "id": "R2-C1",
+   "record": "LE-KD-26-1968 Nuhu Shittu (QT-KD-26-1705), TM-KD-26-3026 ₦22,000",
+   "field": "receipt amount + method",
+   "op": "relabelReceiptMethod",
+   "outcome": "would apply",
+   "after": "Bank — Zarewa Aluminum & Plastics Ltd"
+  },
+  {
+   "id": "R2-C2",
+   "record": "LE-KD-26-2042 Hakimi (QT-KD-26-1763), TM-KD-26-3180 ₦942,700",
+   "field": "receipt amount",
+   "op": "receiptConfirmedAmount",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1763"
+  },
+  {
+   "id": "R2-C4",
+   "record": "TM-KD-26-3250 Sani Haruna ₦2,240 (LE-KD-26-2120) on Cash Office",
+   "field": "treasury account",
+   "op": "moveTreasury",
+   "outcome": "would apply",
+   "amountNgn": 2240,
+   "glReclassNgn": 0
+  },
+  {
+   "id": "R2-C5a",
+   "record": "TM-KD-26-3296 Imran Ibraheem Jafar ₦49,540 (LE-KD-26-2135) posted 16 Oct",
+   "field": "treasury posting date",
+   "op": "redateTreasury",
+   "outcome": "would apply"
+  }
+ ]
+}

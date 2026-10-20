@@ -1,0 +1,24 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T15:45:13.041Z",
+ "plan": "mp-round2-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R2-C1",
+   "record": "LE-KD-26-1968 Nuhu Shittu (QT-KD-26-1705), TM-KD-26-3026 ₦22,000",
+   "field": "receipt amount + method",
+   "op": "receiptConfirmedAmount",
+   "outcome": "applied"
+  },
+  {
+   "id": "R2-C1",
+   "record": "LE-KD-26-1968 Nuhu Shittu (QT-KD-26-1705), TM-KD-26-3026 ₦22,000",
+   "field": "receipt amount + method",
+   "op": "relabelReceiptMethod",
+   "outcome": "applied"
+  }
+ ]
+}

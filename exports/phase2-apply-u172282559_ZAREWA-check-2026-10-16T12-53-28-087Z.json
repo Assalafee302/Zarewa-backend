@@ -1,0 +1,20 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-16T12:53:28.087Z",
+ "plan": "round6-2026-10-16.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R6-ALIGN",
+   "record": "Moniepoint (treasury account 4) at 30 Sep 2026",
+   "field": "statement alignment (BANK_RECON_ADJUSTMENT)",
+   "op": "bankAdjustment",
+   "outcome": "BLOCKED",
+   "why": "Alignment date falls in locked period 2026-09. Reason: Sales phase 1 September 2026. Later changes post as October adjustments.",
+   "balanceBeforeNgn": -10753432,
+   "amountNgn": 14165231
+  }
+ ]
+}

@@ -1,0 +1,18 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T18:23:46.417Z",
+ "plan": "mp-round5-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R5-2a",
+   "record": "LE-KD-26-1926 (QT-KD-26-1685) Anas Cap Zaria ₦4,700 (cash reversed as \"refund fund\")",
+   "field": "customer advance (cash received)",
+   "op": "customerAdvance",
+   "outcome": "would apply",
+   "customer": "CUS-KD-26-0036"
+  }
+ ]
+}

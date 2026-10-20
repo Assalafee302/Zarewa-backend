@@ -1,0 +1,25 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T21:16:06.378Z",
+ "plan": "mp-round8b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R8b-5a",
+   "record": "LE-KD-26-1597 Alhaji Mrido ₦20,000 (2 Sep 2026, QT-KD-26-1427)",
+   "field": "September unlock → hold release → finance confirm → relock",
+   "op": "septReceiptConfirm",
+   "outcome": "would apply",
+   "receipt": "LE-KD-26-1597",
+   "date": "2026-09-02",
+   "amountNgn": 20000,
+   "lock": {
+    "reason": "Sales phase 1 September 2026. Later changes post as October adjustments.",
+    "lockedAt": "2026-10-16T13:50:25.657Z",
+    "by": "Abdulrahman Uthman Sali"
+   }
+  }
+ ]
+}

@@ -1,0 +1,28 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T22:09:50.260Z",
+ "plan": "mp-round8b-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R8b-5c2",
+   "record": "LE-KD-26-2166 Abba Magaji ₦195,660",
+   "field": "finance confirmation (bank received)",
+   "op": "receiptBankConfirm",
+   "outcome": "applied",
+   "receipt": "LE-KD-26-2166",
+   "quotation": "QT-KD-26-1827",
+   "amountNgn": 195660,
+   "bankRows": [
+    "BKR-KD-26-1741"
+   ],
+   "after": {
+    "status": "Cleared",
+    "bank_confirmed_at_iso": "2026-10-17T22:10:00.219Z",
+    "bank_received_amount_ngn": 195660
+   }
+  }
+ ]
+}

@@ -1,0 +1,33 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-17T19:58:24.223Z",
+ "plan": "mp-oct-repoint-2026-10-17.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "R9-repoint-4",
+   "record": "TM-KD-26-3044: BKR-KD-26-0898 (Sep) → BKR-KD-26-1410 (Oct)",
+   "field": "bank_reconciliation_lines.system_match / status",
+   "op": "reconRepoint",
+   "outcome": "applied",
+   "from": {
+    "id": "BKR-KD-26-0898",
+    "date": "2026-09-29",
+    "ngn": -16020,
+    "before": "TM-KD-26-3044 · fee 20 (ERP 2026-10-03)",
+    "after": "— · was TM-KD-26-3044 · fee 20 (ERP 2026-10-03) · re-pointed to BKR-KD-26-1410 (owner 17 Oct: the payout is the October bank line; this September line has no ERP line of its amount)",
+    "status": "Review"
+   },
+   "to": {
+    "id": "BKR-KD-26-1410",
+    "date": "2026-10-03",
+    "ngn": -16020,
+    "before": "— · MP-TRF|2MPT2dqhf|2106410908143763456_DEBIT_0 · matches TM-KD-26-3044; fee 20; TM-KD-26-3044 is l",
+    "after": "TM-KD-26-3044 · MP-TRF|2MPT2dqhf|2106410908143763456_DEBIT_0 · fee 20",
+    "status": "Matched"
+   }
+  }
+ ]
+}

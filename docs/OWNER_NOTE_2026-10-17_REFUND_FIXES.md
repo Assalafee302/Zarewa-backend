@@ -16,10 +16,15 @@ Found during the Moniepoint Oct 2026 reconciliation. Code only: no database writ
   The rest already convert, or are not money sums.
 - **Tests:** `server/quotationActiveRefundedTotalMysqlString.test.js` and
   `server/dbIntegrityMigrateTreasuryBalance.test.js` feed text SUMs like MySQL does.
-- **Has `reconcileTreasuryBalances` ever run in production?** Not from this code: its only caller,
-  `runDbIntegrityHardening`, is not called anywhere, in any commit since the first one (19 Apr 2026). Note that if it
-  ever ran it would set each balance to the sum of movements only (no opening balance). Not yet checked against the
-  production dump (reading the dump needs your permission on this PC).
+- **Has `reconcileTreasuryBalances` ever run in production? No.**
+  - Code: its only caller, `runDbIntegrityHardening`, is not called anywhere, in any commit since the first one
+    (19 Apr 2026).
+  - Data (14 Oct dump, restored locally): `schema_patches` holds only `treasury_branch_legacy_repair_2026`
+    (13 Jun 2026), with no `db_integrity_hardening_v1` marker. No stored balance equals "movements only, no opening",
+    which is what the routine would have written.
+  - Side finding: on the 14 Oct copy, accounts 7 (stored ₦600,000 below ledger) and 8 (₦725,880 above ledger) differ
+    from opening + movements, and differ in the daily integrity runs 1–13 Oct. All other accounts tie. This is a
+    data-round item, not caused by these fixes.
 
 ## Fix 2 — a paid mixed refund kept its overpayment on offer as credit
 
@@ -34,6 +39,10 @@ Found during the Moniepoint Oct 2026 reconciliation. Code only: no database writ
   rejected → nothing used up. Overpayment-only refunds work as before.
 - Also reads a stored row's `calculation_lines_json` string directly, so no caller can miss the lines.
 - **Tests:** `shared/lib/refundCreditApply.mixedOverpay.test.js` (same file in both repos).
+- **Dry run on the 14 Oct copy (old vs new code, rolled back):** 78 quotations drop from ₦15,337,728 offered as
+  overpay credit to ₦0; 44 others keep ₦5,966,735 (refunds not yet paid out). The heal step changes nothing under
+  either version. Per the Moniepoint read-only scan (live, 17 Oct), six quotations already had the overpayment given twice (refunded in cash and applied as credit),
+  ₦2,055,279 in total: QT-KD-26-1739, 1751, 0758, 1594, 1137, 0304.
 - **After deploy:** QT-KD-26-1697 should stop offering the ₦42,766 credit. The fix stops new double credit; credit
   already applied a second time (Moniepoint session's read-only scan, `exports/overpay-double-credit-scan-readonly.json`,
   `givenTwiceNgn`) is a data correction for you to decide.

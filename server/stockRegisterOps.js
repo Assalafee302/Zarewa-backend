@@ -48,6 +48,8 @@ import {
 import { purchaseUnitPriceMapByProductPrefix, resolveBranchCoilCostPerKg } from './materialPricingOps.js';
 import { materialIncidentDamageSummaryForPeriod } from './materialIncidentOps.js';
 import { postCoilRollFinished } from './writeOps.js';
+import { attentionItemIsBeforeFromDate } from '../shared/lib/attentionFromDate.js';
+import { resolveAttentionFromDateWindow } from './office/attentionFromDateOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -972,8 +974,27 @@ export function listStockRegisterInbox(db, branchId, queue = 'manager') {
        ORDER BY period_key DESC`
     )
     .all(bid, ...statuses);
+  const window = resolveAttentionFromDateWindow(db, bid);
+  const mapped = rows.map((r) => mapPeriodRow(r));
+  const visible = [];
+  const hiddenOlderItems = [];
+  for (const item of mapped) {
+    const attentionItem = {
+      kind: 'stock_review',
+      listType: 'stock review',
+      recordDateIso: item.periodEndIso || '',
+      branchId: item.branchId || bid,
+      title: item.periodKey || item.id,
+      row: item,
+    };
+    if (attentionItemIsBeforeFromDate(attentionItem, window.dateISO)) hiddenOlderItems.push(item);
+    else visible.push(item);
+  }
   return {
     ok: true,
-    items: rows.map((r) => mapPeriodRow(r)),
+    items: visible,
+    attentionFromDate: window.dateISO,
+    hiddenOlderItems,
+    hiddenOlderCount: hiddenOlderItems.length,
   };
 }

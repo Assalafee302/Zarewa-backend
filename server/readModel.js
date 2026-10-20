@@ -752,13 +752,26 @@ export function getQuotation(db, id) {
   return enrichQuotationWithLineTable(db, mapQuotationRow(db, row));
 }
 
-export function listManagementItems(db, branchScope = 'ALL') {
+export function listManagementItems(db, branchScope = 'ALL', opts = {}) {
   const bQuo = branchWhere(db, 'quotations', branchScope);
   const bCL = branchWhere(db, 'cutting_lists', branchScope);
   const bRef = branchWhere(db, 'customer_refunds', branchScope);
   const bJob = branchWhere(db, 'production_jobs', branchScope);
+  const attentionFromDate = String(opts.attentionFromDate || '').trim().slice(0, 10);
+  const attentionDateMode = opts.attentionDateMode === 'hidden' ? 'hidden' : opts.attentionDateMode === 'visible' ? 'visible' : '';
+  const rowCap = attentionDateMode === 'hidden' ? 500 : 50;
+  /** Keep undated rows on the visible list. Hidden mode is strictly before the start date. */
+  function attentionDateClause(column) {
+    if (!attentionDateMode || !/^\d{4}-\d{2}-\d{2}$/.test(attentionFromDate)) return { sql: '', args: [] };
+    const expr = `SUBSTR(COALESCE(${column},''),1,10)`;
+    if (attentionDateMode === 'hidden') {
+      return { sql: ` AND ${expr} <> '' AND ${expr} < ?`, args: [attentionFromDate] };
+    }
+    return { sql: ` AND (${expr} = '' OR ${expr} >= ?)`, args: [attentionFromDate] };
+  }
 
   // 1. Quotations requiring clearance (Not cleared, not flagged yet, and has payments)
+  const clearanceDate = attentionDateClause('date_iso');
   const pendingClearance = db.prepare(`
     SELECT id, customer_name, total_ngn, paid_ngn, date_iso, status, branch_id
     FROM quotations 
@@ -766,29 +779,34 @@ export function listManagementItems(db, branchScope = 'ALL') {
       AND manager_flagged_at_iso IS NULL
       AND paid_ngn > 0
       ${bQuo.sql}
-    ORDER BY date_iso DESC LIMIT 50
-  `).all(...bQuo.args);
+      ${clearanceDate.sql}
+    ORDER BY date_iso DESC LIMIT ${rowCap}
+  `).all(...bQuo.args, ...clearanceDate.args);
 
   // 2. Flagged transactions
+  const flaggedDate = attentionDateClause('date_iso');
   const flagged = db.prepare(`
-    SELECT id, customer_name, total_ngn, manager_flag_reason, manager_flagged_at_iso, branch_id
+    SELECT id, customer_name, total_ngn, date_iso, manager_flag_reason, manager_flagged_at_iso, branch_id
     FROM quotations 
     WHERE manager_flagged_at_iso IS NOT NULL
       ${bQuo.sql}
-    ORDER BY manager_flagged_at_iso DESC LIMIT 50
-  `).all(...bQuo.args);
+      ${flaggedDate.sql}
+    ORDER BY manager_flagged_at_iso DESC LIMIT ${rowCap}
+  `).all(...bQuo.args, ...flaggedDate.args);
 
   // 3. Production Overrides (70% threshold bypass requirements)
+  const productionDate = attentionDateClause('cl.date_iso');
   const productionOverrides = db.prepare(`
-    SELECT cl.id, cl.customer_name, cl.quotation_ref, cl.total_meters, q.paid_ngn, q.total_ngn, cl.branch_id
+    SELECT cl.id, cl.customer_name, cl.quotation_ref, cl.date_iso, cl.total_meters, q.paid_ngn, q.total_ngn, cl.branch_id
     FROM cutting_lists cl
     JOIN quotations q ON cl.quotation_ref = q.id
     WHERE cl.status = 'Draft' 
       AND (q.paid_ngn < (q.total_ngn * 0.7))
       AND q.manager_production_approved_at_iso IS NULL
       ${bCL.sql.replace('branch_id', 'cl.branch_id')}
-    ORDER BY cl.date_iso DESC LIMIT 50
-  `).all(...bCL.args);
+      ${productionDate.sql}
+    ORDER BY cl.date_iso DESC LIMIT ${rowCap}
+  `).all(...bCL.args, ...productionDate.args);
 
   // 4. Refund Requests
   const pendingRefunds = db.prepare(`
@@ -797,8 +815,9 @@ export function listManagementItems(db, branchScope = 'ALL') {
     FROM customer_refunds
     WHERE status = 'Pending'
       ${bRef.sql}
-    ORDER BY requested_at_iso DESC LIMIT 50
-  `).all(...bRef.args);
+      ${attentionDateClause('requested_at_iso').sql}
+    ORDER BY requested_at_iso DESC LIMIT ${rowCap}
+  `).all(...bRef.args, ...attentionDateClause('requested_at_iso').args);
 
   // 5. Payment requests pending approval (column is approval_status, not status).
   // Branch is on expenses — must filter like listPaymentRequests or Yola sees Kaduna PRs.
@@ -807,6 +826,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
   const useExpenseBranch = branchScope !== 'ALL' && String(branchScope || '').trim();
   const expenseBranchSql = useExpenseBranch ? ` AND e.branch_id = ?` : '';
   const expenseBranchArgs = useExpenseBranch ? [String(branchScope).trim()] : [];
+  const paymentDate = attentionDateClause('pr.request_date');
   const pendingExpensesRaw = db.prepare(`
     SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.description, pr.approval_status,
            pr.request_reference, pr.line_items_json, pr.attachment_name${prHasJustification ? ', pr.category_justification' : ''},
@@ -816,8 +836,9 @@ export function listManagementItems(db, branchScope = 'ALL') {
     FROM payment_requests pr
     LEFT JOIN expenses e ON e.expense_id = pr.expense_id
     WHERE ${paymentRequestOpenApprovalSql('pr.approval_status')}${expenseBranchSql}
-    ORDER BY pr.request_date DESC LIMIT 50
-  `).all(...expenseBranchArgs);
+      ${paymentDate.sql}
+    ORDER BY pr.request_date DESC LIMIT ${rowCap}
+  `).all(...expenseBranchArgs, ...paymentDate.args);
   const pendingExpenses = pendingExpensesRaw.map((row) => {
     const status = paymentRequestStatusApiFields(row);
     const justification = String(row.category_justification || '').trim();
@@ -860,6 +881,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
   const pendingPaymentRequests = pendingExpenses;
 
   // 6. Completed production jobs awaiting conversion / manager review sign-off (High/Low or flag)
+  const conversionDate = attentionDateClause('completed_at_iso');
   const pendingConversionReviews = db.prepare(`
     SELECT job_id, cutting_list_id, quotation_ref, customer_name, product_name,
       conversion_alert_state, manager_review_required, actual_meters, actual_weight_kg, completed_at_iso, branch_id,
@@ -872,20 +894,23 @@ export function listManagementItems(db, branchScope = 'ALL') {
         OR UPPER(TRIM(COALESCE(conversion_alert_state, ''))) IN ('HIGH', 'LOW')
       )
       ${bJob.sql}
+      ${conversionDate.sql}
     ORDER BY completed_at_iso DESC
-    LIMIT 50
-  `).all(...bJob.args);
+    LIMIT ${rowCap}
+  `).all(...bJob.args, ...conversionDate.args);
 
   let pendingMaterialIncidents = [];
   if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_incidents'`).get()) {
     const bMex = branchWhere(db, 'material_incidents', branchScope);
+    const materialDate = attentionDateClause('date_iso');
     pendingMaterialIncidents = db
       .prepare(
         `SELECT id, incident_type, gauge_label, colour, total_meters, date_iso, storekeeper_remark, branch_id
          FROM material_incidents WHERE status = 'submitted'${bMex.sql}
-         ORDER BY date_iso DESC LIMIT 50`
+         ${materialDate.sql}
+         ORDER BY date_iso DESC LIMIT ${rowCap}`
       )
-      .all(...bMex.args);
+      .all(...bMex.args, ...materialDate.args);
   }
 
   let pendingPurchaseOrders = [];
@@ -920,6 +945,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
 
   let pendingPriceExceptions = [];
   try {
+    const priceDate = attentionDateClause('date_iso');
     pendingPriceExceptions = db
       .prepare(
         `SELECT id, customer_name, total_ngn, paid_ngn, date_iso, branch_id,
@@ -930,9 +956,10 @@ export function listManagementItems(db, branchScope = 'ALL') {
          WHERE ${SQL_PENDING_BELOW_FLOOR_EXCEPTION}
            AND IFNULL(paid_ngn, 0) > 0
            ${bQuo.sql}
-         ORDER BY date_iso DESC LIMIT 50`
+           ${priceDate.sql}
+         ORDER BY date_iso DESC LIMIT ${rowCap}`
       )
-      .all(...bQuo.args);
+      .all(...bQuo.args, ...priceDate.args);
   } catch {
     pendingPriceExceptions = [];
   }

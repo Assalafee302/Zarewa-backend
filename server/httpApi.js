@@ -402,6 +402,10 @@ import {
 import { registerAiProviderRoutes } from './aiProviders/index.js';
 import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
+import {
+  listAttentionFromDateSettings,
+  setBranchAttentionFromDate,
+} from './office/attentionFromDateOps.js';
 import { acknowledgeDualControlWarning, listDualControlAcknowledgements } from './dualControlAckOps.js';
 import { buildExecutiveDashboard, resolveExecDashboardBranchScope, resolveExecDashboardPeriod } from './execDashboardOps.js';
 import { buildExecCustomerBrief, buildMdCustomerIntelPack } from './mdCustomerIntelOps.js';
@@ -3025,6 +3029,18 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const branchScope = resolveBootstrapBranchScope(req);
+        const hiddenOnly = String(req.query?.hidden || '') === '1';
+        if (hiddenOnly) {
+          const hidden = listMdAttentionInbox(db, branchScope, { dateMode: 'hidden' });
+          res.json({
+            ok: true,
+            branchScope,
+            readOnly: true,
+            attentionFromDate: hidden.attentionFromDate,
+            hiddenOlderItems: hidden.items,
+          });
+          return;
+        }
         res.json(listMdAttentionInbox(db, branchScope));
       } catch (e) {
         console.error(e);
@@ -11402,6 +11418,35 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not run strict branch audit.' });
+    }
+  });
+
+  app.get('/api/org/attention-from-date', requireAuth, requirePermission('settings.view'), (req, res) => {
+    try {
+      res.json(listAttentionFromDateSettings(db));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load the attention start date.' });
+    }
+  });
+
+  app.patch('/api/branches/:branchId/attention-from-date', requirePermission('settings.manage'), (req, res) => {
+    try {
+      const raw = req.body?.attentionFromDate ?? req.body?.dateISO ?? req.body?.ATTENTION_FROM_DATE;
+      const r = setBranchAttentionFromDate(db, req.params.branchId, raw, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'branch.attention_from_date',
+        entityKind: 'branch',
+        entityId: r.branchId,
+        note: `Attention list start date set to ${r.attentionFromDate}`,
+        details: { attentionFromDate: r.attentionFromDate, setting: r.setting },
+      });
+      res.json({ ok: true, ...r });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not update the attention start date.' });
     }
   });
 

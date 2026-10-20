@@ -14,6 +14,11 @@ import {
   refundCategoriesRequireMdApproval,
 } from '../shared/refundConstants.js';
 import { explainAttentionItem } from '../shared/lib/attentionRules.js';
+import { attentionRecordDay, selectAttentionItemsByFromDate } from '../shared/lib/attentionFromDate.js';
+import {
+  countAttentionBeforeDate,
+  resolveAttentionFromDateWindow,
+} from './office/attentionFromDateOps.js';
 
 function daysSince(iso) {
   const s = String(iso || '').trim();
@@ -30,12 +35,27 @@ function pushItem(out, row) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} branchScope
+ * @param {{ dateMode?: 'visible' | 'hidden' | 'all', fromDate?: string }} [opts]
+ *   `hidden` returns only rows dated before ATTENTION_FROM_DATE (read-only reveal).
+ *   Default `visible` is the list, the counts, and the bell.
  */
-export function listMdAttentionInbox(db, branchScope = 'ALL') {
+export function listMdAttentionInbox(db, branchScope = 'ALL', opts = {}) {
   const limits = getOrgGovernanceLimits(db);
   const expenseHi = limits.expenseExecutiveThresholdNgn;
   const refundHi = limits.refundExecutiveThresholdNgn;
-  const raw = listManagementItems(db, branchScope);
+  const dateMode = opts.dateMode === 'hidden' ? 'hidden' : opts.dateMode === 'all' ? 'all' : 'visible';
+  const window = resolveAttentionFromDateWindow(db, branchScope);
+  if (opts.fromDate) {
+    const forced = String(opts.fromDate).trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(forced)) {
+      window.dateISO = forced;
+      window.uniform = true;
+    }
+  }
+  const raw = listManagementItems(db, branchScope, {
+    attentionFromDate: window.uniform && dateMode !== 'all' ? window.dateISO : '',
+    attentionDateMode: window.uniform && dateMode !== 'all' ? dateMode : '',
+  });
   const items = [];
 
   for (const q of raw.pendingClearance || []) {
@@ -112,7 +132,8 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       title: cl.quotation_ref || cl.id,
       subtitle: `${cl.customer_name || 'Customer'} · CL ${cl.id}`,
       amountNgn: Number(cl.total_ngn) || 0,
-      atIso: null,
+      atIso: cl.date_iso || null,
+      recordDateIso: cl.date_iso || '',
       branchId: cl.branch_id || '',
       reasons: [`Production blocked — ${pct}% paid on quote`, 'Cutting list still draft'],
       row: cl,
@@ -210,7 +231,7 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
   try {
     const otOpts = {
       status: OT_STATUS.PENDING_BM,
-      limit: 100,
+      limit: dateMode === 'hidden' ? 500 : 100,
     };
     if (branchScope && branchScope !== 'ALL') {
       otOpts.branchId = String(branchScope).trim();
@@ -259,7 +280,7 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
     });
   }
 
-  for (const e of listPendingEditApprovals(db, branchScope, 80)) {
+  for (const e of listPendingEditApprovals(db, branchScope, dateMode === 'hidden' ? 500 : 80)) {
     const ek = String(e.entityKind || '').trim();
     const eid = String(e.entityId || '').trim();
     pushItem(items, {
@@ -375,21 +396,37 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
     /* table may be mid-migrate */
   }
 
-  items.sort((a, b) => b.priority - a.priority || String(b.atIso || '').localeCompare(String(a.atIso || '')));
+  const kept =
+    dateMode === 'all' ? items : selectAttentionItemsByFromDate(items, window, dateMode === 'hidden' ? 'hidden' : 'visible');
+  kept.sort((a, b) => b.priority - a.priority || String(b.atIso || '').localeCompare(String(a.atIso || '')));
 
   // One sentence per flag from the shared rule (row, banner, bell and counts all read this).
   const nowIso = new Date().toISOString();
-  for (const it of items) {
+  for (const it of kept) {
+    const recordDay = attentionRecordDay(it);
+    if (recordDay) it.recordDateIso = recordDay;
     it.attention = explainAttentionItem(it, { limits, nowIso });
+    if (dateMode === 'hidden') it.readOnly = true;
   }
 
   const summary = {
-    total: items.length,
-    byKind: items.reduce((acc, it) => {
+    total: kept.length,
+    byKind: kept.reduce((acc, it) => {
       acc[it.kind] = (acc[it.kind] || 0) + 1;
       return acc;
     }, {}),
   };
 
-  return { ok: true, branchScope, summary, items };
+  const hiddenOlder =
+    dateMode === 'visible' ? countAttentionBeforeDate(db, branchScope, window) : { total: 0, byType: {} };
+
+  return {
+    ok: true,
+    branchScope,
+    attentionFromDate: window.dateISO,
+    summary,
+    items: kept,
+    hiddenOlderCount: hiddenOlder.total,
+    hiddenOlderByType: hiddenOlder.byType,
+  };
 }

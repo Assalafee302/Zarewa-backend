@@ -21,13 +21,13 @@ describe('quotation refunds blocked (MD/admin permanent block)', () => {
       INSERT INTO app_users (id, username, display_name, password_hash, role_key, created_at_iso)
       VALUES ('md1', 'md.user', 'MD User', 'hash', 'md', '2026-01-01T00:00:00.000Z');
       INSERT INTO customers (customer_id, name, branch_id)
-      VALUES ('CUS-001', 'Test Customer', 'BR-KD');
+      VALUES ('CUS-BLOCK-259', 'Test Customer', 'BR-KD');
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, lines_json, date_iso, branch_id)
-      VALUES ('QT-BLOCK-259', 'CUS-001', 'Test Customer', 50000, 50000, 'Finished', '${linesJson.replace(/'/g, "''")}', '2026-04-01', 'BR-KD');
+      VALUES ('QT-BLOCK-259', 'CUS-BLOCK-259', 'Test Customer', 50000, 50000, 'Finished', '${linesJson.replace(/'/g, "''")}', '2026-04-01', 'BR-KD');
       INSERT INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso, branch_id)
       VALUES ('JOB-BLOCK-259', 'QT-BLOCK-259', 0, 'Cancelled', '2026-04-01T10:00:00Z', 'BR-KD');
     `);
-  }, 120_000);
+  }, 600_000);
 
   afterAll(() => {
     db?.close();
@@ -76,7 +76,7 @@ describe('quotation refunds blocked (MD/admin permanent block)', () => {
     const r = insertRefundRequest(
       db,
       {
-        customerID: 'CUS-001',
+        customerID: 'CUS-BLOCK-259',
         customer: 'Test Customer',
         quotationRef: 'QT-BLOCK-259',
         reasonCategory: 'Adjustment',

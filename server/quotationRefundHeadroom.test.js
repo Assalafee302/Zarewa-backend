@@ -12,6 +12,8 @@ describe('quotation refund headroom (cash on quote − quote total)', () => {
   beforeEach(() => {
     db = createDatabase(':memory:');
     db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-X', 'Test', 'BR-KD');
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
       VALUES ('QT-OVR-SPLIT', 'CUS-X', 'Test', 172800, 172800, 'Paid', 'Finished', '{}');
       INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)

@@ -76,7 +76,8 @@ describe('receipt finance settlement aligns paid amount', () => {
          WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = 'LE-261'`
       )
       .get();
-    expect(treas.s).toBe(620_000);
+    // MySQL returns SUM() as text.
+    expect(Number(treas.s)).toBe(620_000);
 
     const qt = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get('QT-146');
     expect(qt.paid_ngn).toBe(620_000);

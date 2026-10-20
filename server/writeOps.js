@@ -60,6 +60,7 @@ import {
   roundCuttingListMetres2,
   validateCuttingListQuotedRoofingAlignment,
 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
+import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import {
   assessCuttingListQuotationConsumption,
   validateCuttingListTrimBlankForProduction,
@@ -6687,8 +6688,10 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
     return { ok: true };
   }
   const check = validateCuttingListQuotedRoofingAlignment({
+    quotedRoofingMetres: quotedRoofingSheetMetresFromLines(qrow.lines_json),
     quotationLinesJson: qrow.lines_json,
     cuttingListLines: lines,
+    cuttingListMetres: cuttingListTotalMetresFromLines(lines),
     accessoriesOnly,
   });
   if (!check.ok) return { ok: false, error: check.message, code: check.code };

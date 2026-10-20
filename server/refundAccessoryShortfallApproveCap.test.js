@@ -11,6 +11,8 @@ describe('accessory shortfall approve-time system cap', () => {
 
   beforeEach(() => {
     db = createDatabase(':memory:');
+    // Test-only: the quotation's customer must exist (quotations.customer_id is a FK on MySQL).
+    db.prepare(`INSERT INTO customers (customer_id, name, branch_id, status) VALUES ('CUS-X', 'Mal Sul', 'BR-KD', 'Active')`).run();
     const linesJson = JSON.stringify({
       products: [{ name: 'Roofing Sheet', qty: 54.2, unitPrice: 4300, amount: 232_660 }],
       accessories: [

@@ -1,0 +1,31 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T11:09:43.774Z",
+ "plan": "confirmed-field-sync-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "CF-10",
+   "record": "RF-KD-26-9796 Adam Suleiman (QT-KD-26-1818), Pending",
+   "field": "refund recalculated on confirmed ₦1,714,000",
+   "op": "refundRecalc",
+   "outcome": "would apply",
+   "status": "Pending",
+   "amountBefore": 268120,
+   "amountAfter": 303120,
+   "approvedBefore": 0,
+   "paid": 0,
+   "payableBefore": 257696,
+   "payableAfter": 292696,
+   "splitsAfter": [
+    "CUS-KD-26-1157 gross ₦251000 cut ₦0 net ₦251000",
+    "CUS-KD-26-0951 gross ₦52120 cut ₦10424 net ₦41696"
+   ],
+   "previewCashInNgn": 1679000,
+   "previewOverpaymentResidualNgn": 239960,
+   "previewNote": "after the confirmed-field fix the preview must show cash ₦1714000"
+  }
+ ]
+}

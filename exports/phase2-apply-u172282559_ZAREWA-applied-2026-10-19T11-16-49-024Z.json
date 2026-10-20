@@ -1,0 +1,21 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T11:16:49.024Z",
+ "plan": "confirmed-field-sync-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "CF-7",
+   "record": "LE-KD-26-2093 ENGR ATTAH NICHOLAS (QT-KD-26-1792) — corrected in R4-B5-A2",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "op": "receiptConfirmedField",
+   "outcome": "applied",
+   "quotation": "QT-KD-26-1792",
+   "paidBefore": 353184,
+   "paidAfterExpected": 353000,
+   "paidAfter": 353000
+  }
+ ]
+}

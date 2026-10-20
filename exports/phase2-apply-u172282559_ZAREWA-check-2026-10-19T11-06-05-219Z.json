@@ -1,0 +1,20 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T11:06:05.219Z",
+ "plan": "confirmed-field-sync-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "CF-9",
+   "record": "LE-KD-26-2150 Adam suleiman (QT-KD-26-1818) — corrected in R3-9",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "op": "receiptConfirmedField",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1818",
+   "paidBefore": 1679000,
+   "paidAfterExpected": 1714000
+  }
+ ]
+}

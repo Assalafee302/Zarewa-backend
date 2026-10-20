@@ -1,0 +1,20 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T11:07:02.168Z",
+ "plan": "confirmed-field-sync-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "CF-1",
+   "record": "LE-KD-26-1968 NUHU SHITTU (QT-KD-26-1705) — corrected in R2-C1",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "op": "receiptConfirmedField",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1705",
+   "paidBefore": 36455,
+   "paidAfterExpected": 56455
+  }
+ ]
+}

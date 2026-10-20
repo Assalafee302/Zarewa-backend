@@ -1,0 +1,20 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T11:07:21.397Z",
+ "plan": "confirmed-field-sync-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "CF-4",
+   "record": "LE-KD-26-2042 HAKIMI (QT-KD-26-1763) — corrected in R2-C2",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "op": "receiptConfirmedField",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1763",
+   "paidBefore": 952200,
+   "paidAfterExpected": 974500
+  }
+ ]
+}

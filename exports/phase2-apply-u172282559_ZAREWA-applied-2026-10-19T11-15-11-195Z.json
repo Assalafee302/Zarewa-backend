@@ -1,0 +1,21 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "apply",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T11:15:11.195Z",
+ "plan": "confirmed-field-sync-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "CF-2",
+   "record": "LE-KD-26-1986 aliyu mohd (QT-KD-26-1720) — corrected in R4-B5-A41",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "op": "receiptConfirmedField",
+   "outcome": "applied",
+   "quotation": "QT-KD-26-1720",
+   "paidBefore": 208918,
+   "paidAfterExpected": 209018,
+   "paidAfter": 209018
+  }
+ ]
+}

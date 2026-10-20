@@ -1,0 +1,20 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T11:07:13.951Z",
+ "plan": "confirmed-field-sync-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "CF-3",
+   "record": "LE-KD-26-2026 shamsudeen (QT-KD-26-1755) — corrected in R4-B5-A84",
+   "field": "sales_receipts.bank_received_amount_ngn (confirmed amount)",
+   "op": "receiptConfirmedField",
+   "outcome": "would apply",
+   "quotation": "QT-KD-26-1755",
+   "paidBefore": 43428,
+   "paidAfterExpected": 43450
+  }
+ ]
+}

@@ -1,0 +1,33 @@
+{"at":"2026-10-19T11:06:06.460Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:06:09.789Z","event":"item","item":"CF-9","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:06:09.790Z","event":"done","failed":null}
+{"at":"2026-10-19T11:06:12.409Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:00.573Z","event":"item","item":"CF-10","outcomes":["refundRecalc:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:00.573Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:03.341Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:06.500Z","event":"item","item":"CF-1","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:06.501Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:09.205Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:12.452Z","event":"item","item":"CF-2","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:12.453Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:15.156Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:19.269Z","event":"item","item":"CF-3","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:19.270Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:22.682Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:26.347Z","event":"item","item":"CF-4","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:26.348Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:28.951Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:32.246Z","event":"item","item":"CF-5","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:32.247Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:34.928Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:38.067Z","event":"item","item":"CF-6","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:38.068Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:40.670Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:43.899Z","event":"item","item":"CF-7","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:43.899Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:46.555Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:07:49.859Z","event":"item","item":"CF-8","outcomes":["receiptConfirmedField:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:07:49.860Z","event":"done","failed":null}
+{"at":"2026-10-19T11:07:52.525Z","event":"start","mode":"check","plan":"confirmed-field-sync-2026-10-19.plan.json","balances":{"4":{"ledger":6979651,"stored":6979651}}}
+{"at":"2026-10-19T11:08:18.237Z","event":"item","item":"CF-11","outcomes":["refundRecalc:would apply"],"expectDeltaNgn":{"4":0},"itemDelta":{"4":0},"concurrent":[],"before":{"4":{"ledger":6979651,"stored":6979651}},"after":{"4":{"ledger":6979651,"stored":6979651}},"mismatch":[]}
+{"at":"2026-10-19T11:08:18.238Z","event":"done","failed":null}

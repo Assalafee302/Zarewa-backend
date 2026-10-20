@@ -1,0 +1,30 @@
+{
+ "database": "u172282559_ZAREWA",
+ "mode": "check",
+ "approver": "Abdulrahman Uthman Sali",
+ "approvedAtISO": "2026-10-19T11:07:51.326Z",
+ "plan": "confirmed-field-sync-2026-10-19.plan.json",
+ "failed": null,
+ "results": [
+  {
+   "id": "CF-11",
+   "record": "RF-KD-26-9785 ENGR ATTAH NICHOLAS (QT-KD-26-1792), Approved, unpaid",
+   "field": "refund recalculated on confirmed ₦353,000",
+   "op": "refundRecalc",
+   "outcome": "would apply",
+   "status": "Approved",
+   "amountBefore": 353184,
+   "amountAfter": 353000,
+   "approvedBefore": 353184,
+   "paid": 0,
+   "payableBefore": 353184,
+   "payableAfter": 353000,
+   "splitsAfter": [
+    "CUS-KD-26-0758 gross ₦353000 cut ₦0 net ₦353000"
+   ],
+   "previewCashInNgn": 353184,
+   "previewOverpaymentResidualNgn": 26,
+   "previewNote": "after the confirmed-field fix the preview must show cash ₦353000"
+  }
+ ]
+}

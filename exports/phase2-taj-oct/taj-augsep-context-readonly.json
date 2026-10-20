@@ -1,0 +1,470 @@
+{
+ "readAtISO": "2026-10-19T14:41:29.634Z",
+ "locks": [
+  {
+   "period_key": "2026-09",
+   "locked_from_iso": "2026-09-01",
+   "locked_at_iso": "2026-10-17T22:07:51.539Z",
+   "locked_by_user_id": "USR-ADMIN",
+   "locked_by_name": "Abdulrahman Uthman Sali",
+   "reason": "Sales phase 1 September 2026. Later changes post as October adjustments."
+  }
+ ],
+ "taj": [
+  {
+   "id": 2,
+   "name": "Zaps Aluminum Enterprises",
+   "balance": 3465412,
+   "opening_balance_ngn": 12867939
+  }
+ ],
+ "tajLedgerAt": {
+  "2026-08-31": {
+   "s": "-23933688",
+   "n": 161
+  },
+  "2026-09-30": {
+   "s": "-22652381",
+   "n": 243
+  },
+  "2026-10-19": {
+   "s": "-9402527",
+   "n": 286
+  }
+ },
+ "tajAllMovements": {
+  "s": "-9402527",
+  "n": 286
+ },
+ "p1Line": [
+  {
+   "id": "TM-KD-26-3021",
+   "posted_at_iso": "2026-08-31T12:00:00.000Z",
+   "type": "PAYMENT_REQUEST_OUT",
+   "treasury_account_id": 2,
+   "amount_ngn": -13804390,
+   "reference": "",
+   "counterparty_kind": "EXPENSE",
+   "counterparty_id": "EXP-KD-26-0404",
+   "counterparty_name": "Account balnceing",
+   "source_kind": "PAYMENT_REQUEST",
+   "source_id": "PREQ-KD-26-0330",
+   "note": "",
+   "created_by": "Abdulrahman Uthman Sali",
+   "reverses_movement_id": null,
+   "batch_id": "TB-26-2885",
+   "finance_confirmed_at_iso": null,
+   "finance_confirmed_by_user_id": null,
+   "created_at_iso": null,
+   "created_by_user_id": null,
+   "source_doc_date": null,
+   "date_override_reason": null,
+   "amount_floor_reason": null,
+   "duplicate_override_reason": null,
+   "idempotency_key": null
+  }
+ ],
+ "p1Reversal": [],
+ "p1Legs": [
+  {
+   "id": "TM-KD-26-3021",
+   "type": "PAYMENT_REQUEST_OUT",
+   "treasury_account_id": 2,
+   "amount_ngn": -13804390,
+   "posted_at_iso": "2026-08-31T12:00:00.000Z",
+   "source_kind": "PAYMENT_REQUEST",
+   "reverses_movement_id": null
+  },
+  {
+   "id": "TM-KD-26-3022",
+   "type": "PAYMENT_REQUEST_OUT",
+   "treasury_account_id": 4,
+   "amount_ngn": -5110414,
+   "posted_at_iso": "2026-08-31T12:00:00.000Z",
+   "source_kind": "PAYMENT_REQUEST",
+   "reverses_movement_id": null
+  },
+  {
+   "id": "TM-KD-26-3023",
+   "type": "PAYMENT_REQUEST_OUT",
+   "treasury_account_id": 3,
+   "amount_ngn": -13386280,
+   "posted_at_iso": "2026-08-31T12:00:00.000Z",
+   "source_kind": "PAYMENT_REQUEST",
+   "reverses_movement_id": null
+  }
+ ],
+ "p1Journal": [
+  {
+   "id": "JE-KD-26-4365",
+   "source_kind": "EXPENSE_PAYMENT_GL",
+   "source_id": "TM-KD-26-3021",
+   "entry_date_iso": "2026-08-31",
+   "period_key": "2026-08",
+   "code": "6100",
+   "account_id": "acc-dep-exp",
+   "debit_ngn": 13804390,
+   "credit_ngn": 0
+  },
+  {
+   "id": "JE-KD-26-4365",
+   "source_kind": "EXPENSE_PAYMENT_GL",
+   "source_id": "TM-KD-26-3021",
+   "entry_date_iso": "2026-08-31",
+   "period_key": "2026-08",
+   "code": "1002",
+   "account_id": "acc-cash-2",
+   "debit_ngn": 0,
+   "credit_ngn": 13804390
+  }
+ ],
+ "p1Expense": [
+  {
+   "expense_id": "EXP-KD-26-0404",
+   "amount_ngn": 32811891,
+   "category": "Depreciation",
+   "branch_id": "BR-KD",
+   "date": "2026-08-31",
+   "expense_type": "Payment request (pending payout)"
+  }
+ ],
+ "p1Request": [
+  {
+   "request_id": "PREQ-KD-26-0330",
+   "expense_id": "EXP-KD-26-0404",
+   "amount_requested_ngn": 32610491,
+   "paid_amount_ngn": 32610491,
+   "approval_status": "Approved",
+   "paid_at_iso": "2026-08-31"
+  }
+ ],
+ "p4Ledger": [
+  {
+   "id": "LE-KD-26-1323",
+   "type": "RECEIPT",
+   "customer_id": "CUS-KD-26-0862",
+   "customer_name": "Abdullahi Mohammed",
+   "amount_ngn": 281880,
+   "quotation_ref": "QT-KD-26-1112",
+   "at_iso": "2026-08-03T12:00:00.000Z",
+   "payment_method": "Bank — Zaps Aluminum Enterprises"
+  }
+ ],
+ "p4Receipt": [
+  {
+   "id": "LE-KD-26-1323",
+   "customer_id": "CUS-KD-26-0862",
+   "amount_ngn": 451000,
+   "bank_received_amount_ngn": 451000,
+   "status": "Cleared",
+   "date_iso": "2026-08-03",
+   "method": "Bank — Zaps Aluminum Enterprises",
+   "ledger_entry_id": "LE-KD-26-1323"
+  }
+ ],
+ "p4Line": [
+  {
+   "id": "TM-KD-26-1888",
+   "type": "RECEIPT_IN",
+   "treasury_account_id": 2,
+   "amount_ngn": 451000,
+   "posted_at_iso": "2026-08-02T12:00:00.000Z",
+   "source_id": "LE-KD-26-1323"
+  }
+ ],
+ "p4Recon": [
+  {
+   "id": "BKR-KD-26-1019",
+   "bank_date_iso": "2026-08-02",
+   "description": "NIP FRM ABDULLAHI MOHAMMED MOB2UTOTo ZAP",
+   "amount_ngn": 451770,
+   "system_match": "TM-KD-26-1888 · TJ-000 · 1:1 · bank − ERP ₦770",
+   "status": "Matched",
+   "matched_system_amount_ngn": 451000,
+   "variance_ngn": 0
+  }
+ ],
+ "p4Customer": [
+  {
+   "customer_id": "CUS-KD-26-0862",
+   "name": "abdullahi mohammed",
+   "branch_id": "BR-KD"
+  }
+ ],
+ "p4Advances": [],
+ "p5Customer": [
+  {
+   "customer_id": "CUS-KD-26-1165",
+   "name": "Yunusa Ahmed",
+   "branch_id": "BR-KD"
+  }
+ ],
+ "p5Advances": [
+  {
+   "id": "LE-KD-26-2188",
+   "amount_ngn": 49000,
+   "at_iso": "2026-10-01T12:00:00.000Z"
+  },
+  {
+   "id": "LE-KD-26-2189",
+   "amount_ngn": 9800,
+   "at_iso": "2026-10-19T12:00:00.000Z"
+  }
+ ],
+ "p5Recon": [
+  {
+   "id": "BKR-KD-26-0062",
+   "bank_date_iso": "2026-09-18",
+   "description": "NIP FRM YUNUSA AHMED Col",
+   "amount_ngn": 49000,
+   "system_match": "NOT IN ERP",
+   "status": "Review"
+  },
+  {
+   "id": "BKR-KD-26-0063",
+   "bank_date_iso": "2026-09-19",
+   "description": "NIP FRM YUNUSA AHMED Col",
+   "amount_ngn": 49000,
+   "system_match": "NOT IN ERP",
+   "status": "Review"
+  },
+  {
+   "id": "BKR-KD-26-0083",
+   "bank_date_iso": "2026-09-26",
+   "description": "NIP FRM ZAREWA ALUMINIUM AND PLASTICS SE",
+   "amount_ngn": 120000,
+   "system_match": "NOT IN ERP",
+   "status": "Review"
+  },
+  {
+   "id": "BKR-KD-26-0084",
+   "bank_date_iso": "2026-09-26",
+   "description": "NIP FRM YUNUSA AHMED Col",
+   "amount_ngn": 49000,
+   "system_match": "NOT IN ERP",
+   "status": "Review"
+  }
+ ],
+ "receipt_LE-KD-26-1359": {
+  "receipt": [
+   {
+    "id": "LE-KD-26-1359",
+    "customer_id": "CUS-KD-26-0740",
+    "amount_ngn": 2387900,
+    "bank_received_amount_ngn": 2387900,
+    "status": "Cleared",
+    "date_iso": "2026-08-06",
+    "method": "Bank — Zaps Aluminum Enterprises",
+    "handled_by": "Muhammad Bakari",
+    "bank_confirmed_at_iso": "2026-08-06T14:16:21.850Z",
+    "bank_confirmed_by_user_id": "USR-ADMIN",
+    "finance_reconciliation_saved_at_iso": "2026-08-06T14:16:21.850Z"
+   }
+  ],
+  "confirmedBy": [
+   {
+    "id": "USR-ADMIN",
+    "username": "admin",
+    "display_name": "Abdulrahman Uthman Sali",
+    "role_key": "admin"
+   }
+  ],
+  "audit": [
+   {
+    "id": "AUD-26-017341",
+    "occurred_at_iso": "2026-08-06T14:16:21.903Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Zarewa Admin",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,387,900).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2387900,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-017342",
+    "occurred_at_iso": "2026-08-06T14:16:21.928Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Zarewa Admin",
+    "action": "receipt.finance_settlement",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Reconciliation finalized; cleared for delivery; bank received ₦2387900",
+    "details_json": "{\"bankReceivedAmountNgn\":2387900,\"bookAmountNgn\":2387900,\"clearForDelivery\":true,\"paymentLineCorrectionCount\":1}"
+   },
+   {
+    "id": "AUD-26-018475",
+    "occurred_at_iso": "2026-08-11T15:28:46.343Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Zarewa Admin",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,387,900).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2387900,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-019752",
+    "occurred_at_iso": "2026-08-18T13:51:57.589Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Zarewa Admin",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,167,402).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2167402,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-022841",
+    "occurred_at_iso": "2026-09-02T18:34:09.728Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Abdulrahman Uthman Sali",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,167,402).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2167402,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-023819",
+    "occurred_at_iso": "2026-09-05T13:40:16.694Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Abdulrahman Uthman Sali",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,167,402).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2167402,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-029241",
+    "occurred_at_iso": "2026-09-21T15:48:27.036Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Abdulrahman Uthman Sali",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,167,402).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2167402,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-030296",
+    "occurred_at_iso": "2026-09-21T19:09:51.464Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Abdulrahman Uthman Sali",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,167,402).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2167402,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-034001",
+    "occurred_at_iso": "2026-09-29T19:57:23.006Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Abdulrahman Uthman Sali",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,387,900).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2387900,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-036214",
+    "occurred_at_iso": "2026-10-01T20:10:38.309Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Abdulrahman Uthman Sali",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1359",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦2,387,900 (was ₦2,167,402).",
+    "details_json": "{\"confirmedAmountNgn\":2387900,\"previousAmountNgn\":2167402,\"quotationRef\":\"QT-KD-26-1166\",\"receiptLedgerNgn\":2167402,\"overpayLedgerNgn\":220498}"
+   },
+   {
+    "id": "AUD-26-041584",
+    "occurred_at_iso": "2026-10-15T00:07:09.517Z",
+    "actor_user_id": null,
+    "actor_name": "Abdulrahman Uthman Sali",
+    "action": "phase2.correction",
+    "entity_kind": "ledger_entries",
+    "entity_id": "LE-KD-26-1359",
+    "status": "applied",
+    "note": "C-LE-KD-26-1359 Method \"Bank — Zarewa Aluminum & Plastics Ltd\" but the treasury line is on Bank — Zaps Aluminum Enterprises; text only, no money moves",
+    "details_json": "{\"correctionId\":\"C-LE-KD-26-1359\",\"field\":\"payment method / reference text\",\"approver\":\"Abdulrahman Uthman Sali\",\"approvedAtISO\":\"2026-10-15T00:06:52.562Z\",\"table\":\"ledger_entries+sales_receipts\",\"key\":\"LE-KD-26-1359\",\"before\":{\"method\":\"Bank — Zarewa Aluminum & Plastics Ltd\",\"payment_method\":\"Bank — Zarewa Aluminum & Plastics Ltd\",\"bank_reference\":\"abdulganiu ₦2,387,900 Bank:Zarewa Aluminum & Plastics Ltd\"},\"after\":{\"method\":\"Bank — Zaps Aluminum Enterprises\",\"payment_method\":\"Bank — Zaps Aluminum Enterprises\",\"bank_reference\":\"abdulganiu ₦2,387,900 Bank:Zaps Aluminum Enterprises\"}}"
+   }
+  ]
+ },
+ "receipt_LE-KD-26-1329": {
+  "receipt": [
+   {
+    "id": "LE-KD-26-1329",
+    "customer_id": "CUS-009",
+    "amount_ngn": 219200,
+    "bank_received_amount_ngn": 219200,
+    "status": "Cleared",
+    "date_iso": "2026-08-03",
+    "method": "Bank — Zaps Aluminum Enterprises",
+    "handled_by": "Muhammad Bakari",
+    "bank_confirmed_at_iso": "2026-08-15T12:39:46.254Z",
+    "bank_confirmed_by_user_id": "USR-ADMIN",
+    "finance_reconciliation_saved_at_iso": "2026-08-15T12:39:46.254Z"
+   }
+  ],
+  "confirmedBy": [
+   {
+    "id": "USR-ADMIN",
+    "username": "admin",
+    "display_name": "Abdulrahman Uthman Sali",
+    "role_key": "admin"
+   }
+  ],
+  "audit": [
+   {
+    "id": "AUD-26-018907",
+    "occurred_at_iso": "2026-08-15T12:39:46.293Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Zarewa Admin",
+    "action": "receipt.finance_amount_sync",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1329",
+    "status": "success",
+    "note": "Sales receipt amount aligned to finance-confirmed ₦219,200 (was ₦219,240).",
+    "details_json": "{\"confirmedAmountNgn\":219200,\"previousAmountNgn\":219240,\"quotationRef\":\"QT-KD-26-1118\",\"receiptLedgerNgn\":219200,\"overpayLedgerNgn\":0}"
+   },
+   {
+    "id": "AUD-26-018908",
+    "occurred_at_iso": "2026-08-15T12:39:46.333Z",
+    "actor_user_id": "USR-ADMIN",
+    "actor_name": "Zarewa Admin",
+    "action": "receipt.finance_settlement",
+    "entity_kind": "sales_receipt",
+    "entity_id": "LE-KD-26-1329",
+    "status": "success",
+    "note": "Reconciliation finalized; cleared for delivery; bank received ₦219200",
+    "details_json": "{\"bankReceivedAmountNgn\":219200,\"bookAmountNgn\":219240,\"clearForDelivery\":true,\"paymentLineCorrectionCount\":1}"
+   },
+   {
+    "id": "AUD-26-041581",
+    "occurred_at_iso": "2026-10-15T00:07:02.735Z",
+    "actor_user_id": null,
+    "actor_name": "Abdulrahman Uthman Sali",
+    "action": "phase2.correction",
+    "entity_kind": "ledger_entries",
+    "entity_id": "LE-KD-26-1329",
+    "status": "applied",
+    "note": "C-LE-KD-26-1329 Method \"Bank — Zarewa Aluminum & Plastics Ltd\" but the treasury line is on Bank — Zaps Aluminum Enterprises; text only, no money moves",
+    "details_json": "{\"correctionId\":\"C-LE-KD-26-1329\",\"field\":\"payment method / reference text\",\"approver\":\"Abdulrahman Uthman Sali\",\"approvedAtISO\":\"2026-10-15T00:06:52.562Z\",\"table\":\"ledger_entries+sales_receipts\",\"key\":\"LE-KD-26-1329\",\"before\":{\"method\":\"Bank — Zarewa Aluminum & Plastics Ltd\",\"payment_method\":\"Bank — Zarewa Aluminum & Plastics Ltd\",\"bank_reference\":\"AHMED JJ ₦219,240 Bank:Zarewa Aluminum & Plastics Ltd\"},\"after\":{\"method\":\"Bank — Zaps Aluminum Enterprises\",\"payment_method\":\"Bank — Zaps Aluminum Enterprises\",\"bank_reference\":\"AHMED JJ ₦219,240 Bank:Zaps Aluminum Enterprises\"}}"
+   }
+  ]
+ }
+}

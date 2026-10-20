@@ -61,11 +61,11 @@ if (ctx.p4Advances.some((a) => n(a.amount_ngn) === 770)) stop(`₦770 advance al
 if (ctx.p4Recon.length !== 1) console.warn(`note: ${ctx.p4Recon.length} bank-recon rows name TM-KD-26-1888 — the advance is posted, the recon row is ${ctx.p4Recon.length ? 'the first' : 'not'} updated`);
 
 // ---- P5 facts
-const yun = one(ctx.p5Customer, 'CUS-KD-26-1165');
-if (!/yunusa/i.test(yun.name)) stop(`CUS-KD-26-1165 is "${yun.name}"`);
+// P5 on hold (OM 19 Oct: until we know who Yunusa Ahmed is) — facts are read, TA-5 is built but left out of the plan.
+const yun = ctx.p5Customer?.[0] || { name: 'Yunusa Ahmed' };
 const P5 = ['2026-09-18', '2026-09-19', '2026-09-26'];
-for (const day of P5) if (ctx.p5Advances.some((a) => String(a.at_iso).startsWith(day) && n(a.amount_ngn) === 49000)) stop(`Yunusa ₦49,000 advance already posted on ${day}`);
-const reviewRows = (day) => ctx.p5Recon.filter((r) => r.bank_date_iso === day && n(r.amount_ngn) === 49000 && r.status === 'Review');
+for (const day of P5) if ((ctx.p5Advances || []).some((a) => String(a.at_iso).startsWith(day) && n(a.amount_ngn) === 49000)) console.warn(`note: Yunusa ₦49,000 advance already posted on ${day}`);
+const reviewRows = (day) => (ctx.p5Recon || []).filter((r) => r.bank_date_iso === day && n(r.amount_ngn) === 49000 && r.status === 'Review');
 
 const items = [
   {
@@ -138,7 +138,11 @@ const items = [
 
 // Expected Taj gaps after (ERP ledger − bank), from the context ledger totals.
 const BANK = { '2026-08-31': 132311.01, '2026-09-30': 1680619.29, '2026-10-19': 1279577.34 };
-const MOVE = { '2026-08-31': 13804390 + 770, '2026-09-30': 13804390 + 770 + 147000, '2026-10-19': 13804390 + 770 + 147000 };
+const HOLD = ['TA-5'];
+const planned = items.filter((i) => !HOLD.includes(i.id));
+const net = planned.reduce((s, i) => s + i.expectDeltaNgn[TAJ], 0);
+if (net !== 13805160) stop(`plan moves Taj by ₦${net}, expected ₦13,805,160 (TA-1 + TA-4)`);
+const MOVE = { '2026-08-31': net, '2026-09-30': net, '2026-10-19': net };
 const opening = n(ctx.taj[0]?.opening_balance_ngn);
 const gaps = Object.fromEntries(
   Object.keys(BANK).map((day) => {
@@ -150,6 +154,6 @@ const gaps = Object.fromEntries(
 
 fs.mkdirSync(dir, { recursive: true });
 const out = path.join(dir, 'taj-augsep-r1-2026-10-19.plan.json');
-fs.writeFileSync(out, JSON.stringify({ createdAtISO: '2026-10-19', source: 'OM 19 Oct 2026: Aug–Sep Taj report — P1 (Taj leg), P4, P5. --per-item.', contextReadAtISO: ctx.readAtISO, expectedGaps: gaps, items }, null, 1));
-console.log(`wrote ${out} — ${items.length} items; Taj net ₦${items.reduce((s, i) => s + i.expectDeltaNgn[TAJ], 0).toLocaleString('en-NG')}`);
+fs.writeFileSync(out, JSON.stringify({ createdAtISO: '2026-10-19', source: 'OM 19 Oct 2026: Aug–Sep Taj report — P1 (Taj leg), P4. P5 (TA-5) on hold. --per-item.', contextReadAtISO: ctx.readAtISO, expectedGaps: gaps, hold: HOLD, items: planned }, null, 1));
+console.log(`wrote ${out} — ${planned.length} items (${planned.map((i) => i.id).join(', ')}; held ${HOLD.join(', ')}); Taj net ₦${net.toLocaleString('en-NG')}`);
 console.table(gaps);

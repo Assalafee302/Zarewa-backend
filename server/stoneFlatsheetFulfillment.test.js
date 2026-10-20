@@ -8,6 +8,7 @@ import {
 describe('stoneFlatsheetFulfillment — quotation line detection', () => {
   it('parses Stone flatsheet suffixed names', () => {
     const lines = parseQuotationStoneFlatsheetLines({
+      materialTypeId: 'MAT-005',
       materialColor: 'Black',
       products: [{ id: 'L1', name: 'Stone flatsheet 2', qty: '48' }],
     });
@@ -29,6 +30,7 @@ describe('stoneFlatsheetFulfillment — quotation line detection', () => {
   it('flags stone flatsheet with qty but no length', () => {
     expect(
       quotationHasStoneFlatsheetWithQtyButMissingLength({
+        materialTypeId: 'MAT-005',
         products: [{ name: 'Stone flatsheet', qty: '10' }],
       })
     ).toBe(true);

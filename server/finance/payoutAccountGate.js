@@ -56,7 +56,7 @@ export function stampCashOfficeLines(db, lines = [], cash = {}) {
 
 /**
  * Payees on a refund that still have cash to receive, with the account each would be paid to.
- * @param {(target: object) => boolean} [skip] payees paid another way (A7 weekly staff batch)
+ * @param {(target: object) => boolean} [skip] payees already covered another way
  */
 export function refundPayeesAwaitingCash(db, refundRow, { skip } = {}) {
   const approved = roundMoney(refundRow?.approved_amount_ngn || refundRow?.amount_ngn);

@@ -5,7 +5,10 @@
  */
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
 import { appendAuditLog } from '../controlOps.js';
-import { PAYOUT_ROUNDING_CLOSE_MAX_NGN } from '../../shared/lib/payoutRoundingClose.js';
+import {
+  PAYOUT_ROUNDING_CLOSE_MAX_NGN,
+  payoutRemainderOffersRoundingClose,
+} from '../../shared/lib/payoutRoundingClose.js';
 import {
   buildRefundSettlementSummary,
   resolveRefundStatus,
@@ -13,6 +16,7 @@ import {
 
 const NOTE = 'Sept 2026 bank reconciliation – investigation';
 const ROUNDING_LABEL = 'settled – rounding';
+const REFUND_AUTO_ROUNDING_REASON = 'bank fee/rounding';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -38,9 +42,24 @@ function appendNote(existing, sentence) {
 }
 
 /**
+ * After a refund payout, a remainder of ₦200 or less closes as rounding
+ * ("bank fee/rounding"). Audited; no cash moves.
+ */
+export function autoCloseRefundRoundingRemainder(db, refundId, actor = null) {
+  const id = String(refundId || '').trim();
+  const row = id ? db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id) : null;
+  if (!row) return { ok: true, skipped: 'not_found' };
+  const outstanding = roundMoney(buildRefundSettlementSummary(db, row).cashOutstandingNgn);
+  if (!payoutRemainderOffersRoundingClose(outstanding)) {
+    return { ok: true, skipped: 'not_rounding', outstandingNgn: outstanding };
+  }
+  return closeRefundUnpaidRemainder(db, id, actor, 'rounding', { note: REFUND_AUTO_ROUNDING_REASON, auto: true });
+}
+
+/**
  * @param {'rounding' | 'cancelled'} kind
  * @param {{ note?: string, auto?: boolean }} [opts] note replaces the default reason; auto marks a
- *   system close after a payout (Finance Phase A, A7: "bank fee/rounding").
+ *   system close after a payout ("bank fee/rounding").
  */
 export function closeRefundUnpaidRemainder(db, refundId, actor, kind = 'rounding', opts = {}) {
   const id = String(refundId || '').trim();

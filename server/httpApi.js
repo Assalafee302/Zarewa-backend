@@ -654,14 +654,6 @@ import { assertBmOmOverride, overQuoteApprovalFromBody } from './finance/manager
 import { receiptDuplicatesWithin24h } from './finance/receiptDuplicateOps.js';
 import { receiptDuplicateRefusal } from '../shared/lib/receiptDuplicateGuard.js';
 import { cancelReceiptForRefundCredit } from './sales/receiptUseRefundCreditOps.js';
-import {
-  autoCloseRefundRoundingRemainder,
-  listStaffShareBatches,
-  payStaffShareBatch,
-  refundStaffBatchState,
-  setStaffShareBatchThresholdNgn,
-} from './finance/staffShareBatchOps.js';
-import { staffShareBatchedRefusal } from '../shared/lib/staffShareBatch.js';
 import { listStatementFreshness, recordBankStatementImport } from './finance/bankStatementImportOps.js';
 import { setRefundPayoutHold } from './sales/refundPayoutHoldOps.js';
 import { holdReceiptAwaitingCreditCheck } from './sales/receiptBankCheckHold.js';
@@ -671,6 +663,7 @@ import {
   settlePoHaulageAtAmountAlreadyPaidTx,
 } from './procurement/poHaulageLinkOps.js';
 import {
+  autoCloseRefundRoundingRemainder,
   closePaymentRequestRemainderAsRounding,
   closeRefundUnpaidRemainder,
 } from './sales/payoutRoundingCloseOps.js';
@@ -11105,51 +11098,6 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  /** Finance Phase A (A7): this week's staff-share batches (refund staff splits under the threshold). */
-  app.get('/api/staff-share-batches', requirePermission(['finance.pay', 'finance.view', 'cashier.desk.view']), (req, res) => {
-    try {
-      return res.json(listStaffShareBatches(db, resolveBootstrapBranchScope(req)));
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ ok: false, error: 'Could not load staff-share batches.' });
-    }
-  });
-
-  /** A7: pay one staff member's weekly batch (one payout per staff per week). */
-  app.post('/api/staff-share-batches/pay', requirePermission('finance.pay'), (req, res) => {
-    try {
-      const body = req.body || {};
-      const r = payStaffShareBatch(
-        db,
-        {
-          ...body,
-          branchScope: resolveBootstrapBranchScope(req),
-          workspaceBranchId: req.workspaceBranchId,
-          workspaceViewAll: Boolean(req.workspaceViewAll),
-        },
-        req.user
-      );
-      const refunds = (r.paid || [])
-        .map((l) => getCustomerRefundDetail(db, l.refundId, { heal: true }))
-        .filter(Boolean);
-      return res.status(r.ok ? 201 : 400).json(withWriteDelta({ ...r }, { refunds }));
-    } catch (e) {
-      console.error(e);
-      res.status(400).json({ ok: false, error: String(e.message || e) });
-    }
-  });
-
-  /** A7: staff-share batch threshold (default ₦5,000). */
-  app.put('/api/staff-share-batches/threshold', requirePermission('settings.manage'), (req, res) => {
-    try {
-      const r = setStaffShareBatchThresholdNgn(db, req.body?.thresholdNgn, req.user);
-      return res.status(r.ok ? 200 : 400).json(r);
-    } catch (e) {
-      console.error(e);
-      res.status(400).json({ ok: false, error: String(e.message || e) });
-    }
-  });
-
   /** Finance Phase A (A1): fill a payee's missing bank + 10-digit account from the pay desk. */
   app.post('/api/payout-accounts', requirePermission('finance.pay'), (req, res) => {
     try {
@@ -11201,33 +11149,15 @@ export function registerHttpApi(app, db) {
       if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
       const treasuryLines = normalizeTreasuryLines(req.body || {});
       const body = req.body || {};
-      // A7: staff shares under the batch threshold are paid from the weekly staff-share batch.
-      const refundRowForPay = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(String(req.params.refundId || ''));
-      const staffBatch = refundRowForPay ? refundStaffBatchState(db, refundRowForPay) : null;
-      const batchedKeys = new Set((staffBatch?.batched || []).map((t) => `${t.partyKind}::${t.partyId}`));
       // A1: every payee this payout can reach needs a usable account.
       // D2: bank / POS lines need the payee account; Cash Office lines need name + voucher.
       const cashOffice = cashOfficeFromBody(body);
       const accountBlock = refundPayoutAccountBlock(db, req.params.refundId, {
-        skip: (t) => batchedKeys.has(`${t.partyKind}::${t.partyId}`),
         lines: treasuryLines,
         cash: cashOffice,
       });
       if (accountBlock) return res.status(400).json(accountBlock);
       stampCashOfficeLines(db, treasuryLines, cashOffice);
-      if (staffBatch && staffBatch.batchedOwedNgn > 0) {
-        const requestedNgn = treasuryLines.reduce((s, l) => s + Math.max(0, Math.round(Number(l?.amountNgn) || 0)), 0);
-        if (requestedNgn > staffBatch.individualOwedNgn || (requestedNgn === 0 && staffBatch.individualOwedNgn === 0)) {
-          return res.status(400).json(
-            staffShareBatchedRefusal({
-              refundId: String(req.params.refundId || ''),
-              requestedNgn,
-              individualOwedNgn: staffBatch.individualOwedNgn,
-              batchedOwedNgn: staffBatch.batchedOwedNgn,
-            })
-          );
-        }
-      }
       const r = payRefundEntryWithOptionalWalletRelease(db, req.params.refundId, {
         ...body,
         paymentLines: treasuryLines,

@@ -431,6 +431,7 @@ function mapQuotationRow(db, row, opts = {}) {
   const stoneMeterQuote = Boolean(db && linesJsonForStone && isStoneMeterQuotationLinesJson(db, linesJsonForStone));
   const stainMeterQuote = Boolean(db && linesJsonForStone && isStainMeterQuotationLinesJson(db, linesJsonForStone));
   const branchId = row.branch_id ?? '';
+  const investigation = db ? quotationUnderInvestigation(db, row.id) : { underInvestigation: false, caseIds: [] };
   return {
     id: row.id,
     customerID: row.customer_id,
@@ -442,7 +443,8 @@ function mapQuotationRow(db, row, opts = {}) {
     totalNgn: row.total_ngn,
     paidNgn: row.paid_ngn,
     paymentStatus: row.payment_status,
-    investigationUnderReview: quotationUnderInvestigation(db, row.id).underInvestigation,
+    investigationUnderReview: investigation.underInvestigation,
+    investigationCaseId: investigation.caseIds?.[0] || '',
     status: row.status,
     approvalDate: row.approval_date,
     customerFeedback: row.customer_feedback,

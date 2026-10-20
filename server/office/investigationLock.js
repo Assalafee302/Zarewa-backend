@@ -3,7 +3,7 @@
  * cannot be deleted or have their cash edited. Customer, staff, and quotation
  * links stay as flags so a new sale is warned rather than the whole customer frozen.
  */
-import { isInvestigationOpenStatus } from '../../shared/lib/investigationRegister.js';
+import { investigationCaseFreezes } from '../../shared/lib/investigationRegister.js';
 
 function tablesReady(db) {
   try {
@@ -14,19 +14,53 @@ function tablesReady(db) {
   }
 }
 
+function linkRows(db, sql, args) {
+  try {
+    return db.prepare(sql).all(...args);
+  } catch {
+    return [];
+  }
+}
+
 export function openInvestigationLinksForEntity(db, entityType, entityId) {
   const type = String(entityType || '').trim();
   const id = String(entityId || '').trim();
   if (!type || !id || !tablesReady(db)) return [];
-  const rows = db
-    .prepare(
-      `SELECT l.case_id, l.entity_type, l.entity_id, l.role, c.status, c.title
-       FROM investigation_links l
-       JOIN investigation_cases c ON c.id = l.case_id
-       WHERE l.entity_type = ? AND l.entity_id = ?`
-    )
-    .all(type, id);
-  return rows.filter((r) => isInvestigationOpenStatus(r.status));
+  const legacy = linkRows(
+    db,
+    `SELECT l.case_id, l.entity_type, l.entity_id, l.role, c.status, c.title, c.hold_active
+     FROM investigation_links l
+     JOIN investigation_cases c ON c.id = l.case_id
+     WHERE l.entity_type = ? AND l.entity_id = ?`,
+    [type, id]
+  );
+  const legacyFallback = legacy.length
+    ? legacy
+    : linkRows(
+        db,
+        `SELECT l.case_id, l.entity_type, l.entity_id, l.role, c.status, c.title
+         FROM investigation_links l
+         JOIN investigation_cases c ON c.id = l.case_id
+         WHERE l.entity_type = ? AND l.entity_id = ?`,
+        [type, id]
+      );
+  const platform = linkRows(
+    db,
+    `SELECT l.case_id, l.record_kind AS entity_type, l.record_id AS entity_id, 'linked' AS role,
+            c.status, c.title, c.hold_active
+     FROM investigation_case_links l
+     JOIN investigation_cases c ON c.id = l.case_id
+     WHERE l.record_kind = ? AND l.record_id = ?`,
+    [type, id]
+  );
+  const seen = new Set();
+  const rows = [];
+  for (const row of [...legacyFallback, ...platform]) {
+    if (seen.has(row.case_id)) continue;
+    seen.add(row.case_id);
+    rows.push(row);
+  }
+  return rows.filter((r) => investigationCaseFreezes(r.status, r.hold_active));
 }
 
 export function assertInvestigationAllowsMutation(db, entityType, entityId) {
@@ -55,7 +89,7 @@ export function quotationUnderInvestigation(db, quotationId) {
          WHERE l.entity_type = 'receipt' AND sr.quotation_ref = ? AND l.role LIKE 'suspend%'`
       )
       .all(qid)
-      .filter((r) => isInvestigationOpenStatus(r.status));
+      .filter((r) => investigationCaseFreezes(r.status, r.hold_active));
   } catch {
     viaReceipt = [];
   }

@@ -5,6 +5,7 @@ import {
   userMayManageInvestigations,
 } from '../shared/lib/investigationRegister.js';
 import { assertInvestigationAllowsMutation } from './office/investigationLock.js';
+import { investigationHoldBlock } from './office/investigationHoldGate.js';
 import { heldReceiptClearanceBlock } from './sales/receiptClearanceHold.js';
 import { receiptInvestigationClearanceBlock } from './sales/receiptInvestigationClearance.js';
 import { syncReceiptConfirmedBankAmountTx } from './sales/receiptConfirmedAmountSync.js';
@@ -7983,6 +7984,11 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
     db.prepare(`SELECT customer_id, name, branch_id FROM customers WHERE customer_id = ?`).get(customerID) ||
     null;
   if (!customer) return { ok: false, error: 'Customer not found.' };
+  const investigationHold = investigationHoldBlock(db, {
+    customerId: customer.customer_id,
+    quotationId: quotationRef,
+  });
+  if (investigationHold) return investigationHold;
   const qCheck = validateQuotationForCuttingList(db, quotationRef, null, { forDraft: isDraft });
   if (!qCheck.ok) return qCheck;
   if (isDraft && qCheck.existingDraftId) {
@@ -8113,6 +8119,11 @@ function loadCuttingListLineRows(db, cuttingListId) {
 export function updateCuttingList(db, cuttingListId, payload, actor = null) {
   const existing = db.prepare(`SELECT * FROM cutting_lists WHERE id = ?`).get(cuttingListId);
   if (!existing) return { ok: false, error: 'Cutting list not found.' };
+  const investigationHold = investigationHoldBlock(db, {
+    customerId: existing.customer_id,
+    quotationId: existing.quotation_ref,
+  });
+  if (investigationHold) return investigationHold;
   const isAutosave = Boolean(payload.autosave);
   const existingIsDraft = isCuttingListDraftStatus(existing.status);
   // Save list: explicit finalize, or any non-autosave write while still Draft.
@@ -8407,6 +8418,9 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
     };
   }
   const quotationRef = String(payload.quotationRef ?? cuttingList?.quotation_ref ?? '').trim();
+  const customerID = String(payload.customerID ?? cuttingList?.customer_id ?? '').trim();
+  const investigationHold = investigationHoldBlock(db, { customerId: customerID, quotationId: quotationRef });
+  if (investigationHold) return investigationHold;
   let priceFloorWarn = null;
   if (quotationRef) {
     const prodBlock = assertQuotationProductionNotBlockedByRefund(db, quotationRef);
@@ -8420,7 +8434,6 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
       };
     }
   }
-  const customerID = String(payload.customerID ?? cuttingList?.customer_id ?? '').trim();
   const customerName = String(payload.customerName ?? cuttingList?.customer_name ?? '').trim();
   const productID = String(payload.productID ?? cuttingList?.product_id ?? '').trim();
   const productName = String(payload.productName ?? cuttingList?.product_name ?? '').trim();
@@ -10476,6 +10489,12 @@ export function payRefundEntry(db, refundId, payload) {
   repairRefundPayoutStateTx(db, refundId);
   let row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
   if (!row) return { ok: false, error: 'Refund not found.' };
+  const investigationHold = investigationHoldBlock(db, {
+    customerId: row.customer_id,
+    quotationId: row.quotation_ref,
+    refundId: row.refund_id,
+  });
+  if (investigationHold) return investigationHold;
   const branchGate = assertEntityBranchForWorkspaceWrite(
     payload.actor,
     row.branch_id,

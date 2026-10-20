@@ -3,7 +3,10 @@
  * cashier confirm action. Amounts and dates are unchanged. Unlike the
  * Attah manager hold, nobody can confirm these — including a manager.
  */
-import { isInvestigationOpenStatus } from '../../shared/lib/investigationRegister.js';
+import {
+  investigationCaseFreezes,
+  investigationHoldMessage,
+} from '../../shared/lib/investigationRegister.js';
 
 export function receiptStatusIsSuspended(status) {
   return /suspended/i.test(String(status || ''));
@@ -28,18 +31,29 @@ export function openInvestigationCaseIdsForReceipt(db, receiptId, ledgerEntryId 
   try {
     rows = db
       .prepare(
-        `SELECT l.entity_id, l.case_id, c.status
+        `SELECT l.entity_id, l.case_id, c.status, c.hold_active
          FROM investigation_links l
          JOIN investigation_cases c ON c.id = l.case_id
          WHERE l.entity_type = 'receipt' AND l.entity_id IN (${ph})`
       )
       .all(...ids);
   } catch {
-    return [];
+    try {
+      rows = db
+        .prepare(
+          `SELECT l.entity_id, l.case_id, c.status
+           FROM investigation_links l
+           JOIN investigation_cases c ON c.id = l.case_id
+           WHERE l.entity_type = 'receipt' AND l.entity_id IN (${ph})`
+        )
+        .all(...ids);
+    } catch {
+      return [];
+    }
   }
   return [
     ...new Set(
-      rows.filter((r) => isInvestigationOpenStatus(r.status)).map((r) => String(r.case_id || '').trim())
+      rows.filter((r) => investigationCaseFreezes(r.status, r.hold_active)).map((r) => String(r.case_id || '').trim())
     ),
   ].filter(Boolean);
 }
@@ -68,7 +82,7 @@ export function attachReceiptInvestigationFlags(db, receipts) {
   }
   const byEntity = new Map();
   for (const row of rows) {
-    if (!isInvestigationOpenStatus(row.status)) continue;
+    if (!investigationCaseFreezes(row.status, row.hold_active)) continue;
     const id = String(row.entity_id || '').trim();
     const caseId = String(row.case_id || '').trim();
     if (!id || !caseId) continue;
@@ -101,12 +115,12 @@ export function receiptInvestigationClearanceBlock(db, row) {
   const suspended = receiptStatusIsSuspended(row.status);
   const caseIds = openInvestigationCaseIdsForReceipt(db, row.id, row.ledger_entry_id || row.ledgerEntryId);
   if (!suspended && !caseIds.length) return null;
-  const caseLabel = caseIds[0] || 'an open investigation';
+  const caseLabel = caseIds[0] || '';
   return {
     ok: false,
     code: 'UNDER_INVESTIGATION',
-    error: suspended
-      ? `This receipt is suspended (${caseLabel}) and cannot be confirmed.`
-      : `This receipt is linked to open investigation ${caseLabel} and cannot be confirmed.`,
+    error: caseLabel
+      ? investigationHoldMessage(caseLabel)
+      : 'Under investigation: this receipt cannot be confirmed.',
   };
 }

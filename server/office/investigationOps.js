@@ -5,6 +5,7 @@
  * Open-case suspense (suspended − recovered) must equal the suspense GL balance.
  */
 import { actorName } from '../auth.js';
+import { ensureInvestigationPlatformSchema } from './investigationPlatformOps.js';
 import { appendAuditLog } from '../controlOps.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
 import { postBalancedJournalTx } from '../glOps.js';
@@ -103,6 +104,7 @@ export function ensureInvestigationSchema(db) {
     /* already wide, or the host dialect has no MODIFY */
   }
   ensureInvestigationGlAccounts(db);
+  ensureInvestigationPlatformSchema(db);
 }
 
 function ensureInvestigationGlAccounts(db) {

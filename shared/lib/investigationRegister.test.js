@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  actorConflictsWithTouches,
   casesPastReviewDate,
+  investigationCaseFreezes,
   investigationCasesToCsv,
+  investigationHoldMessage,
+  investigationMoneySummary,
   investigationTotals,
+  isInvestigationOpenStatus,
   openSuspenseExpectedNgn,
   userMayManageInvestigations,
+  userMayViewInvestigationCase,
   userMayWriteOffInvestigation,
 } from './investigationRegister.js';
 
@@ -69,5 +75,50 @@ describe('investigation register rules', () => {
     ]);
     expect(csv.split('\n')[0]).toContain('amount_at_risk_ngn');
     expect(csv).toContain('"Yusuf, ""unbacked"""');
+  });
+
+  it('freezes an open platform case until the MD lifts the hold', () => {
+    expect(isInvestigationOpenStatus('Open')).toBe(true);
+    expect(isInvestigationOpenStatus('Reported')).toBe(false);
+    expect(isInvestigationOpenStatus('Closed')).toBe(false);
+    expect(investigationCaseFreezes('Open', 1)).toBe(true);
+    expect(investigationCaseFreezes('Open', 0)).toBe(false);
+    expect(investigationCaseFreezes('open', null)).toBe(true);
+    expect(investigationHoldMessage('INV-KD-26-0001')).toBe('Under investigation: INV-KD-26-0001');
+  });
+
+  it('hides a case from anyone who is not the MD, the case officer, or a member', () => {
+    const access = { caseOfficerUserId: 'USR-OM', ownerUserId: '', memberUserIds: ['USR-CASH'] };
+    expect(userMayViewInvestigationCase({ id: 'USR-MD', roleKey: 'md' }, access)).toBe(true);
+    expect(userMayViewInvestigationCase({ id: 'USR-OM', roleKey: 'operations_manager' }, access)).toBe(true);
+    expect(userMayViewInvestigationCase({ id: 'USR-CASH', roleKey: 'cashier' }, access)).toBe(true);
+    expect(userMayViewInvestigationCase({ id: 'USR-SALES', roleKey: 'sales' }, access)).toBe(false);
+  });
+
+  it('treats a name or user id on a linked record as a conflict', () => {
+    const touches = [
+      { userId: 'USR-BM', name: 'Aminu Bello', field: 'approved_by' },
+      { name: 'Front Desk', field: 'created_by' },
+    ];
+    expect(actorConflictsWithTouches({ id: 'USR-BM', displayName: 'Someone Else' }, touches)?.field).toBe(
+      'approved_by'
+    );
+    expect(actorConflictsWithTouches({ id: 'USR-OM', displayName: 'Aminu Bello' }, touches)?.field).toBe(
+      'approved_by'
+    );
+    expect(actorConflictsWithTouches({ id: 'USR-OM', displayName: 'Case Officer' }, touches)).toBeNull();
+  });
+
+  it('sums Yusuf exposure as goods released plus money paid out', () => {
+    const money = investigationMoneySummary({
+      goodsReleasedNgn: 971_400 + 1_071_000,
+      moneyPaidOutNgn: 51_000 + 40_600,
+      recoveredNgn: 0,
+      writtenOffNgn: 0,
+    });
+    expect(money.goodsReleasedNgn).toBe(2_042_400);
+    expect(money.moneyPaidOutNgn).toBe(91_600);
+    expect(money.exposureNgn).toBe(2_134_000);
+    expect(money.stillAtStakeNgn).toBe(2_134_000);
   });
 });

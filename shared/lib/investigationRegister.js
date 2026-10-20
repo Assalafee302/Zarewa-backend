@@ -18,6 +18,32 @@ export const INVESTIGATION_STATUSES = ['open', 'under_review', 'recovered', 'wri
 
 export const INVESTIGATION_OPEN_STATUSES = ['open', 'under_review'];
 
+/** Phase 1 case workflow. Outcome is stored separately and only when status is Closed. */
+export const INVESTIGATION_PLATFORM_STATUSES = [
+  'Reported',
+  'Open',
+  'Referred to police',
+  'Recovery',
+  'Closed',
+];
+
+export const INVESTIGATION_PLATFORM_OUTCOMES = ['Recovered', 'Written off', 'Cleared'];
+
+/** Statuses that freeze linked money until the MD lifts the hold or closes the case. */
+export const INVESTIGATION_PLATFORM_HOLD_STATUSES = ['Open', 'Referred to police', 'Recovery'];
+
+export const INVESTIGATION_RECORD_KINDS = [
+  'customer',
+  'quotation',
+  'receipt',
+  'production_job',
+  'refund',
+  'payout',
+  'expense',
+  'staff',
+  'bank_line',
+];
+
 export const INVESTIGATION_ENTITY_TYPES = [
   'receipt',
   'receipt_line',
@@ -30,6 +56,9 @@ export const INVESTIGATION_ENTITY_TYPES = [
   'cutting_list',
   'production_job',
   'ledger_entry',
+  'payout',
+  'expense',
+  'bank_line',
 ];
 
 export const INVESTIGATION_SUSPENSE_GL_CODE = '1060';
@@ -59,7 +88,97 @@ export function userMayWriteOffInvestigation(actor) {
 }
 
 export function isInvestigationOpenStatus(status) {
-  return INVESTIGATION_OPEN_STATUSES.includes(String(status || '').trim());
+  const s = String(status || '').trim();
+  return INVESTIGATION_OPEN_STATUSES.includes(s) || INVESTIGATION_PLATFORM_HOLD_STATUSES.includes(s);
+}
+
+/**
+ * True while linked money stays frozen.
+ * holdActive 0 means the MD has lifted the hold. Null keeps the legacy open-case lock.
+ */
+export function investigationCaseFreezes(status, holdActive) {
+  if (holdActive === 0 || holdActive === false || holdActive === '0') return false;
+  return isInvestigationOpenStatus(status);
+}
+
+/** Refusal shown on receipts, refunds, payouts, cutting lists, and production. */
+export function investigationHoldMessage(caseId) {
+  const id = String(caseId || '').trim() || 'INV';
+  return `Under investigation: ${id}`;
+}
+
+export function userIsManagingDirector(actor) {
+  if (!actor) return false;
+  const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (perms.includes('*')) return true;
+  const rk = String(actor.roleKey || actor.role_key || '').trim().toLowerCase();
+  return rk === 'md';
+}
+
+export function userMayViewInvestigationCase(actor, access = {}) {
+  if (!actor) return false;
+  if (userIsManagingDirector(actor)) return true;
+  const id = String(actor.id || actor.userId || '').trim();
+  if (!id) return false;
+  if (id === String(access.caseOfficerUserId || '').trim()) return true;
+  if (id === String(access.ownerUserId || '').trim()) return true;
+  const members = Array.isArray(access.memberUserIds) ? access.memberUserIds : [];
+  return members.some((m) => String(m || '').trim() === id);
+}
+
+export function normalizePersonKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * A user whose id or name is on a linked record (created, approved, confirmed, or paid)
+ * cannot be the case officer or a case member.
+ * @returns {object | null} the matching touch
+ */
+export function actorConflictsWithTouches(actor, touches) {
+  const id = String(actor?.id || actor?.userId || '').trim();
+  const names = [actor?.displayName, actor?.display_name, actor?.name, actor?.username]
+    .map(normalizePersonKey)
+    .filter((n) => n.length >= 3);
+  for (const touch of Array.isArray(touches) ? touches : []) {
+    const tid = String(touch?.userId || touch?.user_id || '').trim();
+    if (id && tid && id === tid) return touch;
+    const tn = normalizePersonKey(touch?.name);
+    if (tn.length >= 3 && names.includes(tn)) return touch;
+  }
+  return null;
+}
+
+export function investigationMoneySummary({
+  goodsReleasedNgn = 0,
+  moneyPaidOutNgn = 0,
+  recoveredNgn = 0,
+  writtenOffNgn = 0,
+} = {}) {
+  const goods = Math.round(Number(goodsReleasedNgn) || 0);
+  const paid = Math.round(Number(moneyPaidOutNgn) || 0);
+  const recovered = Math.round(Number(recoveredNgn) || 0);
+  const writtenOff = Math.round(Number(writtenOffNgn) || 0);
+  const exposure = goods + paid;
+  return {
+    goodsReleasedNgn: goods,
+    moneyPaidOutNgn: paid,
+    exposureNgn: exposure,
+    recoveredNgn: recovered,
+    writtenOffNgn: writtenOff,
+    stillAtStakeNgn: exposure - recovered - writtenOff,
+  };
+}
+
+export function investigationCaseAgeDays(openedAtISO, closedAtISO, asOf = new Date()) {
+  const start = Date.parse(String(openedAtISO || ''));
+  if (!Number.isFinite(start)) return 0;
+  const endRaw = closedAtISO ? Date.parse(String(closedAtISO)) : asOf.getTime();
+  if (!Number.isFinite(endRaw)) return 0;
+  return Math.max(0, Math.floor((endRaw - start) / 86400000));
 }
 
 /** Cash still sitting in suspense for open cases. */

@@ -24,6 +24,7 @@ import {
   ensureTreasuryBalanceIntegritySchema,
 } from './finance/treasuryBalanceIntegrityOps.js';
 import { ensureInvestigationSchema } from './office/investigationOps.js';
+import { ensureInvestigationPlatformSchema } from './office/investigationPlatformOps.js';
 import { ensureExplainedItemsSchema } from './finance/explainedItemsOps.js';
 import { seedTreasuryPostingPolicyIfAbsent } from './finance/treasuryPostingPolicy.js';
 import {
@@ -1631,6 +1632,12 @@ function runMigrationsUnlocked(db) {
   }
   migrateControlsPhase3(db);
   migrateFinanceGuardrailsPhaseA(db);
+  try {
+    ensureInvestigationSchema(db);
+    ensureInvestigationPlatformSchema(db);
+  } catch (e) {
+    console.warn('[migrate] investigation platform schema skipped:', e?.message || e);
+  }
 }
 
 /**
@@ -7853,6 +7860,7 @@ function migrateHrRoleComplianceLifecycle2026(db) {
   }
   try {
     ensureInvestigationSchema(db);
+    ensureInvestigationPlatformSchema(db);
   } catch {
     /* host dialect */
   }

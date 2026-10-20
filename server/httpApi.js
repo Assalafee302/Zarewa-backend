@@ -1121,6 +1121,7 @@ import { registerCashierTillTruthRoutes } from './http/cashierTillTruthRoutes.js
 import { registerReceiptBulkUnconfirmRoutes } from './http/receiptBulkUnconfirmRoutes.js';
 import { registerCoilNumberCorrectionRoutes } from './http/coilNumberCorrectionRoutes.js';
 import { registerInvestigationRoutes } from './http/investigationRoutes.js';
+import { registerInvestigationPlatformRoutes } from './http/investigationPlatformRoutes.js';
 import { registerControlsPhase3Routes } from './http/controlsPhase3Routes.js';
 import { receiptAdvanceRepeats } from './controlsPhase3Ops.js';
 import { OVERRIDE_REASON_MIN_LEN, receiptPaidByName } from '../shared/lib/controlsPhase3.js';
@@ -1205,6 +1206,7 @@ export function registerHttpApi(app, db) {
   registerCoilNumberCorrectionRoutes(app, db);
   registerControlsPhase3Routes(app, db);
   registerInvestigationRoutes(app, db);
+  registerInvestigationPlatformRoutes(app, db);
   registerWorkspaceChatRoutes(app, db);
 
   /** Accounting sub-ledgers — Creditors, Debtors, Assets register. */

@@ -1,0 +1,26 @@
+{
+  "createdAtISO": "2026-10-20",
+  "id": "INV-KD-26-0001",
+  "title": "Yusuf — goods released on receipts that never reached Taj",
+  "branchId": "BR-KD",
+  "status": "Open",
+  "caseType": "unbacked_receipt",
+  "doNotWriteOffNgn": 2083200,
+  "note": "Opens the case and places the hold. Does not write off the September bad-debt figure. The MD names the case officer because the Branch Manager is on the records. Receipts already suspended stay suspended; receipts that are not yet suspended are set to Suspended - investigation.",
+  "expectedMoney": {
+    "goodsReleasedNgn": 2042400,
+    "moneyPaidOutNgn": 91600,
+    "exposureNgn": 2134000
+  },
+  "links": [
+    { "recordKind": "customer", "recordId": "CUS-KD-26-1069" },
+    { "recordKind": "quotation", "recordId": "QT-KD-26-1594" },
+    { "recordKind": "quotation", "recordId": "QT-KD-26-1606" },
+    { "recordKind": "receipt", "recordId": "LE-KD-26-1767" },
+    { "recordKind": "receipt", "recordId": "LE-KD-26-1778" },
+    { "recordKind": "production_job", "recordId": "PRO-KD-26-1303" },
+    { "recordKind": "production_job", "recordId": "PRO-KD-26-1314" },
+    { "recordKind": "refund", "recordId": "RF-KD-26-9638" },
+    { "recordKind": "refund", "recordId": "RF-KD-26-9679" }
+  ]
+}

@@ -7,6 +7,7 @@ import {
 } from './sales/refundPayeeControl.js';
 import { accessoryFulfillmentSummaryForQuotation, normAccessoryNameKey } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
+import { investigationHoldBlock } from './office/investigationHoldGate.js';
 import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
 import { DEFAULT_BRANCH_ID, getBranch } from './branches.js';
 import {
@@ -3384,6 +3385,11 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         error: `Refund customer must be the quotation customer (${quoteCustomerId}).`,
       };
     }
+    const investigationHold = investigationHoldBlock(db, {
+      customerId: customerID,
+      quotationId: quotationRef,
+    });
+    if (investigationHold) return investigationHold;
     const product = String(payload.product ?? '').trim() || '—';
     const requestedCats = normalizeRefundReasonCategoriesForApi(payload.reasonCategory);
     if (requestedCats.length === 0) {

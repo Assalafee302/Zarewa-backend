@@ -1163,7 +1163,9 @@ function listLegacyManagementWorkItems(db, scope, user) {
           status: 'flagged',
           priority: 'high',
           title: `Flagged quotation ${row.id}`,
-          summary: row.manager_flag_reason || 'Manager flag raised for audit review.',
+          summary: [row.customer_name, row.manager_flag_reason || 'Manager flag raised for audit review.']
+            .filter(Boolean)
+            .join(' · '),
           createdAtIso: row.manager_flagged_at_iso || '',
           sourceKind: 'flagged_transaction',
           sourceId: row.id,

@@ -430,7 +430,41 @@ export function listPendingEditApprovals(db, limitOrBranchScope = 100, limit = 1
           `SELECT * FROM edit_approval_tokens WHERE status = 'pending' ORDER BY requested_at_iso DESC LIMIT ?`
         )
         .all(lim);
-  return rows.map(mapApprovalRow);
+  return attachEditApprovalCustomerNames(db, rows.map(mapApprovalRow));
+}
+
+/** Quotation-linked edit requests: the list shows the record id, so the customer has to travel with it. */
+const EDIT_APPROVAL_CUSTOMER_SOURCES = {
+  quotation: { table: 'quotations', idCol: 'id', nameCol: 'customer_name' },
+  production_job: { table: 'production_jobs', idCol: 'job_id', nameCol: 'customer_name' },
+  cutting_list: { table: 'cutting_lists', idCol: 'id', nameCol: 'customer_name' },
+  sales_receipt: { table: 'sales_receipts', idCol: 'id', nameCol: 'customer_name' },
+};
+
+function attachEditApprovalCustomerNames(db, approvals) {
+  const list = Array.isArray(approvals) ? approvals : [];
+  for (const [kind, spec] of Object.entries(EDIT_APPROVAL_CUSTOMER_SOURCES)) {
+    const mine = list.filter((a) => String(a?.entityKind || '').trim().toLowerCase() === kind);
+    const ids = [...new Set(mine.map((a) => String(a.entityId || '').trim()).filter(Boolean))];
+    if (!ids.length) continue;
+    const marks = ids.map(() => '?').join(', ');
+    let found = [];
+    try {
+      found = db
+        .prepare(
+          `SELECT ${spec.idCol} AS id, ${spec.nameCol} AS customer_name FROM ${spec.table} WHERE ${spec.idCol} IN (${marks})`
+        )
+        .all(...ids);
+    } catch {
+      continue;
+    }
+    const byId = new Map(found.map((r) => [String(r.id), String(r.customer_name || '').trim()]));
+    for (const row of mine) {
+      const name = byId.get(String(row.entityId || '').trim()) || '';
+      if (name) row.customerName = name;
+    }
+  }
+  return list;
 }
 
 /**

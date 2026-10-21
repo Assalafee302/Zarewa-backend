@@ -439,7 +439,7 @@ export function computePoolSummary(db, branchScope) {
  * Creates a material incident (coil_stain or production_error) and optionally submits for manager approval.
  */
 export function listPendingCoilDamageIncidents(db, branchScope) {
-  return listMaterialIncidents(db, branchScope, { status: 'submitted' })
+  const rows = listMaterialIncidents(db, branchScope, { status: 'submitted' })
     .filter(isCoilDamageIncident)
     .map((row) => {
       let supplierConv = row.conversionKgPerM;
@@ -456,6 +456,22 @@ export function listPendingCoilDamageIncidents(db, branchScope) {
       });
       return { ...row, preview };
     });
+  const missingName = rows.filter((row) => String(row.quotationRef || '').trim() && !String(row.customerLabel || '').trim());
+  const quoteIds = [...new Set(missingName.map((row) => String(row.quotationRef).trim()))];
+  if (quoteIds.length) {
+    try {
+      const marks = quoteIds.map(() => '?').join(', ');
+      const found = db.prepare(`SELECT id, customer_name FROM quotations WHERE id IN (${marks})`).all(...quoteIds);
+      const byId = new Map(found.map((r) => [String(r.id), String(r.customer_name || '').trim()]));
+      for (const row of missingName) {
+        const name = byId.get(String(row.quotationRef).trim()) || '';
+        if (name) row.customerLabel = name;
+      }
+    } catch {
+      /* quotation lookup is display-only */
+    }
+  }
+  return rows;
 }
 
 function listActiveProductionJobsForCoil(db, coilNo) {

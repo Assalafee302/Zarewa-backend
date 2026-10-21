@@ -503,7 +503,29 @@ function mapRequestRow(row) {
     paymentNote: row.payment_note,
     paymentMethod: row.payment_method,
     totalPayableNgn: Math.round(Number(row.total_payable_ngn) || 0),
+    customerName: String(row.customer_name || '').trim(),
   };
+}
+
+/** Approval lists show the quotation number; the customer name has to be on the same row. */
+function attachOtCustomerNames(db, requests) {
+  const list = (Array.isArray(requests) ? requests : []).filter(Boolean);
+  const missing = list.filter((r) => !String(r.customerName || '').trim() && String(r.quotationRef || '').trim());
+  const ids = [...new Set(missing.map((r) => String(r.quotationRef).trim()))];
+  if (!ids.length) return list;
+  let found = [];
+  try {
+    const marks = ids.map(() => '?').join(', ');
+    found = db.prepare(`SELECT id, customer_name FROM quotations WHERE id IN (${marks})`).all(...ids);
+  } catch {
+    return list;
+  }
+  const byId = new Map(found.map((r) => [String(r.id), String(r.customer_name || '').trim()]));
+  for (const row of missing) {
+    const name = byId.get(String(row.quotationRef || '').trim()) || '';
+    if (name) row.customerName = name;
+  }
+  return list;
 }
 
 /**
@@ -565,9 +587,10 @@ export function getOtRequest(db, requestId) {
       detailsJson: undefined,
     }));
 
+  const request = attachOtCustomerNames(db, [mapRequestRow(row)])[0];
   return {
     ok: true,
-    request: mapRequestRow(row),
+    request,
     staffLines: staff,
     workDetails: work || null,
     paymentLine: payment || null,
@@ -618,7 +641,7 @@ export function listOtRequests(db, opts = {}) {
   sql += ` ORDER BY day_iso DESC, created_at_iso DESC`;
   const limit = Math.min(500, Math.max(1, Math.round(Number(opts.limit) || 100)));
   sql += ` LIMIT ${limit}`;
-  return db.prepare(sql).all(...args).map(mapRequestRow);
+  return attachOtCustomerNames(db, db.prepare(sql).all(...args).map(mapRequestRow));
 }
 
 /**
